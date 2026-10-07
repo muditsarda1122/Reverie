@@ -1,0 +1,53 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# --- Virtual environments ---
+.venv/
+venv/
+
+# --- Testing / tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Embedding model cache (re-downloads on first use) ---
+.fastembed_cache/
+
+# --- EC runtime artefacts ---
+runs/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# --- Environment / secrets ---
+.env
+.env.*
+*.pem
+*.key
+
+# --- macOS / editor noise ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- Local working files (not part of the public release) ---
+.ec/
+/demo/
+/starlette-baseline/
+/prompt.md
+/AGENTS.md
+docs/handoffs/
+docs/ASSESSMENT.md
+docs/SPEC_AUDIT.md
+docs/SPEC_AUDIT_FINAL.md
+docs/EC_TECHNICAL_REFERENCE.md

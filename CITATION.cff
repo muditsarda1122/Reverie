@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+title: Reverie
+message: >-
+  If you use Reverie in your work, please cite it using this
+  metadata.
+type: software
+authors:
+  - given-names: Mudit
+    family-names: Sarda
+    email: muditsarda23@gmail.com
+identifier: https://github.com/muditsarda1122/Reverie
+repository-code: https://github.com/muditsarda1122/Reverie
+url: https://ems-gold-seven.vercel.app/
+abstract: >-
+  Memory for coding agents. Reverie keeps the engineering
+  conclusions your agent reaches, reviewed by you, grounded in
+  your code and revised as evidence changes, in one local SQLite
+  file. Ships as an MCP server.
+keywords:
+  - mcp
+  - model-context-protocol
+  - coding-agents
+  - ai-agents
+  - agent-memory
+  - llm
+  - developer-tools
+  - sqlite
+  - python
+license: Apache-2.0
+version: 0.1.0
+date-released: "2026-10-07"

@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "engineering-cognition"
+version = "0.1.0"
+description = "Persistent cognition layer for AI coding agents"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Mudit Sarda", email = "muditsarda23@gmail.com" }]
+dependencies = [
+    "torch==2.2.2",
+    "numpy<2",
+    "scipy<1.13",
+    "scikit-learn<1.5",
+    "transformers<5",
+    "sentence-transformers==3.0.1",
+    "hdbscan>=0.8.33",
+    "requests",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://ems-gold-seven.vercel.app/"
+Repository = "https://github.com/muditsarda1122/Reverie.git"
+Issues = "https://github.com/muditsarda1122/Reverie/issues"
+
+[project.scripts]
+ec = "ec.install:main"
+ec-mcp = "ec.mcp_server:main"
+ec-repair = "ec.repair:main"
+ec-start = "ec.session:main_start"
+ec-stop = "ec.session:main_stop"
+ec-status = "ec.session:main_status"
+
+[tool.setuptools.packages.find]
+include = ["ec*"]
+
+[tool.setuptools.package-data]
+ec = ["prompts/*.md", "schema.sql"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["demo", "starlette-baseline", "runs", ".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "I",   # isort (import ordering)
+    "F",   # pyflakes
+]
+ignore = [
+    "E501", # long lines — existing codebase style, no logic-safe autofix
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ec"]
