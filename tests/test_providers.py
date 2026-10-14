@@ -89,11 +89,12 @@ class TestLlmBlock:
             "provider": "ollama",
             "base_url": "http://localhost:11434/v1",
             "model": "qwen2.5-coder:14b",
+            "wire_format": "openai",
         }
 
     def test_zen_block_keeps_model_name_routing(self):
         block = llm_block("opencode_zen")
-        assert block["wire_format"] is None or "wire_format" not in block
+        assert "wire_format" not in block
 
     def test_custom_block_writes_nothing_but_the_name(self):
         assert llm_block("custom") == {"provider": "custom"}
