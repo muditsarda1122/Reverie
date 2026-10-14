@@ -1,6 +1,7 @@
 # Reverie (Engineering Cognition) — Installation & Harness Integration Audit
 
 **Date of audit:** 2026-10-04
+**Updated:** 2026-10-14 for the bring-your-own-provider step (`feat/providers`): the LLM dependency check became a full provider-selection flow (registry in `ec/providers.py`, `--provider`, `--no-verify`, live ping). Line citations refer to the audit date and may have shifted.
 **Scope:** read-only archaeology of how Reverie is currently installed and wired into coding-agent harnesses. Every claim cites repository code (`ec/install.py` unless noted). No source, config, or environment was modified. Read together with `PRODUCT.md` (same directory) for the product-level map.
 
 ---
@@ -117,17 +118,20 @@ Banner: "Engineering Cognition — Installation"  (+ dry-run notice)
    • ~/.ec/AGENTS.md        → write verbatim (163 lines) if different
    • ~/.ec/commands/ec-start.md | ec-stop.md | ec-status.md → write verbatim
  ↓
-5. LLM DEPENDENCY CHECK (informational + one optional action):
-   ├── OPENCODE_ZEN_API_KEY set
-   │     → "✓ key found"; note Ollama availability if binary exists
-   └── key NOT set
-         → "✗ key not set" + Zen guidance (opencode.ai/auth)
-         ├── ollama on PATH  → offer (y/n):
-         │     ├── y → merge config.yaml llm block to Ollama (qwen2.5-coder:14b,
-         │     │        base_url http://localhost:11434/v1) + `ollama pull`
-         │     │       (pull failure → printed, NEVER fatal)
-         │     └── n → print the manual yaml snippet
-         └── no ollama     → print Ollama install instructions (curl one-liner)
+5. LLM PROVIDER STEP (feat/providers; replaces the old Zen-only check):
+    ├── --provider given    → validate registry key (unknown → InstallError);
+    │                         merge the resolved llm block (non-interactive)
+    ├── keys detected       → each reported ("✓ VAR detected (Name)");
+    │     ├── exactly one   → offered as default ("(Y/n)"; default = yes)
+    │     └── several       → menu of all providers (detected marked "✓ key set")
+    ├── no keys + interactive → provider menu (cloud providers, "Local via
+    │                         Ollama", "Skip for now")
+    ├── no keys + EOF/--all → "Skip" + provider guidance + Ollama instructions
+    └── chosen              → merge llm block into ~/.ec/config.yaml (registry
+                              fills base_url/model/api_key_env/wire_format; the
+                              KEY IS NEVER WRITTEN) → print the exact
+                              `export VAR=...` line → one cheap live ping
+                              (skipped by --no-verify; failures reported, never fatal)
  ↓
 6. FINAL TRANSCRIPT ("EC is ready!") — lists /ec-start, /ec-stop, /ec-status and
    the 4-step usage story (open agent → /ec-start → work → /ec-stop)
@@ -189,7 +193,7 @@ Known deviation (documented in-code): the design doc's literal `"ec"` command wo
 
 | Prerequisite | Behavior when absent |
 |---|---|
-| `OPENCODE_ZEN_API_KEY` | Install completes; at runtime extraction fails with the actionable `LLMError` ("…Get one at https://opencode.ai/auth — then: export OPENCODE_ZEN_API_KEY='your-key'"), mode detection falls back to keywords, `ec_reconsolidate` works only with an explicit relationship |
+| Any registry provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_ZEN_API_KEY`) | Install completes; the provider menu runs. At runtime extraction fails with a provider-aware, actionable `LLMError` naming the configured provider's key env var and key URL, the interaction is persisted to `pending_extractions` (retried at the next successful `ec_observe` or via `ec-retry`), mode detection falls back to keywords, and `ec_reconsolidate` works only with an explicit relationship |
 | `ollama` binary + `qwen2.5-coder:14b` | Offline fallback; installer prints `curl -fsSL https://ollama.com/install.sh | sh` instructions if absent |
 | `pytest` (dev extra) | only for the test suite |
 
@@ -251,8 +255,10 @@ Server: hand-rolled stdio NDJSON JSON-RPC 2.0 (`PROTOCOL_VERSION = "2024-11-05"`
 | Malformed agent config (invalid JSON/TOML/YAML) | `InstallError` naming the file, the parse error, and "Fix or remove it, then re-run `python -m ec.install`. **No changes were made to it.**" Exit 1 | `install.py:438-457, 535-540, 330-348` |
 | Existing Reverie config in a harness file | Idempotent merge — only the `ec` entry upserted; identical state → `· <path> already has the ec MCP server — unchanged` | `_json_merge`/`_codex_toml` |
 | Repeated installation | Everything re-planned; already-correct targets → `unchanged` lines; spec-owned files rewritten only if content differs; safe | `_verbatim_file`, tests |
-| Missing API key at install | Install still succeeds; prints `✗ OPENCODE_ZEN_API_KEY is not set` + guidance + Ollama offer | `install.py:885-916` |
-| Missing Ollama binary (no key) | Prints curl install instructions + the manual yaml snippet | `install.py:915-916` |
+| No provider key at install | Install still succeeds; the provider menu runs (or, non-interactively, guidance lists every registry provider's `export` line); Ollama remains available as "Local via Ollama" | `install.py` LLM-provider section (feat/providers) |
+| Missing Ollama binary (no key) | Prints curl install instructions + the manual yaml snippet | `install.py` skip-path of the provider step |
+| `--provider vllm` (unknown key) | `InstallError`: "unknown provider 'vllm'. Known providers: …" → stderr, exit 1 | `install.py` provider validation (feat/providers) |
+| Provider ping fails at install | Reported clearly ("✗ Ping failed: …") and never fatal; the config stands | `install.py::_verify_provider` (feat/providers) |
 | Ollama present, user accepts, `ollama pull` fails | "! Could not run `ollama pull` (<exc>). Run it manually, then EC works offline." — **never fatal** | `install.py:903-910` |
 | Not a git repo at `ec-start` | `SessionError`: "Could not detect a git repository from <cwd> … run /ec-start from inside a git repository." exit 1 | `ec/session.py:76-87, 405-409` |
 | No active session on `ec_observe`/`ec_query`/`ec_reconsolidate` | Structured error payload: "No active EC session. Suggest the user run /ec-start to begin a session." (`isError: true`) — the server keeps running | `mcp_server.py:83-85, 473-479` |
@@ -272,7 +278,7 @@ Server: hand-rolled stdio NDJSON JSON-RPC 2.0 (`PROTOCOL_VERSION = "2024-11-05"`
 ### What the README can truthfully say today
 
 1. **What Reverie is** — a local MCP server + Python package that stores engineering *conclusions* (ECUs) with confidence, scope, grounding, and typed relationships in one SQLite file, and serves them to coding agents on demand.
-2. **Prerequisites** — Python ≥ 3.12; git; a clone of this repository; `pip install -e .` (heavy pinned ML deps); an LLM key (`OPENCODE_ZEN_API_KEY`) *or* Ollama for offline mode.
+2. **Prerequisites** — Python ≥ 3.12; git; a clone of this repository; `pip install -e .` (heavy pinned ML deps); a key for any registry provider (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_ZEN_API_KEY`) *or* Ollama for offline mode.
 3. **Install** — `pip install -e .` then `ec` (interactive) / `ec --all` / `ec --only …` / `ec --dry-run`.
 4. **Harness selection/configuration** — auto-detects Claude Code, Cursor, OpenCode, Codex (binary-on-PATH or marker file); prompts "Add EC to all detected agents? (y/n)" with a numbered picker; `--only` can force-configure undetected agents.
 5. **MCP setup** — automatic for the four supported agents (exact files/keys in §5). For other MCP clients: launch `ec-mcp` (pip-installed) or `<venv python> -m ec.mcp_server` with `PYTHONPATH=<repo root>` over stdio.
@@ -289,11 +295,11 @@ Also truthful today: idempotent re-install (running `ec` again refreshes `AGENTS
 - **Uninstall/removal** — nothing exists; README cannot claim "remove with one command."
 - **Slash-command registration** — templates are written to `~/.ec/commands/` but not registered natively in any harness; whether `/ec-start` actually appears in the agent's command palette depends on the harness. README must say "run the template's CLI or type the command your agent recognizes" until native registration exists.
 - **PyPI availability** — the package is not published (no publish workflow in repo); "pip install engineering-cognition" cannot be claimed; onboarding must be clone + `pip install -e .`.
-- **API key setup** — installer checks presence only; a keyless "paste your key" flow does not exist.
+- **API key setup** — the installer detects registry provider keys, offers/asks, merges the resolved `llm` block, and prints the `export` line; a "paste your key" flow still does not exist (keys are never written to disk).
 - **Non-tty install** — interactive selection needs a TTY (EOF-safe but effectively requires interactivity unless `--all`/`--only`).
 - **Broader harness support** — only 4 agents; any "works with your favorite agent" copy needs the manual-MCP-instructions paragraph instead.
 - **Windows** — path handling has partial support; nothing tested; cannot claim.
-- **Post-install verification** — no "ec doctor"/connectivity test exists to put behind a "Verify your install" heading (closest is `ec-repair`, which checks DB integrity, not harness wiring).
+- **Post-install verification** — the provider step now includes a one-call live ping (`--no-verify` skips it), covering LLM connectivity; harness wiring and the DB have no dedicated check (closest is `ec-repair`, which checks DB integrity).
 
 ---
 
@@ -337,7 +343,7 @@ Classification boundary notes: not "ready for public onboarding" (no distributio
 2. **A distribution story** — publish to PyPI (name `engineering-cognition` is already the distribution name) or document the exact clone + `pip install -e .` flow as the supported install.
 3. **`README.md` itself** — none exists; the ten-step onboarding in §10 is fully implementable from current behavior.
 4. **Document (or implement) slash-command reality** — state that `/ec-start` etc. are defined by `~/.ec/commands/*.md` + `~/.ec/AGENTS.md`, and either register them natively per harness or tell users to run the console scripts (`ec-start`/`ec-stop`/`ec-status`) directly.
-5. **API-key onboarding copy** — document `export OPENCODE_ZEN_API_KEY=…` (and the Ollama alternative) as a manual step; optionally add a post-install connectivity check if one is ever implemented.
+5. **API-key onboarding copy** — document the registry providers and their `export` lines (any one works; Ollama is the offline alternative); the post-install connectivity check now exists as the provider ping (`--no-verify` skips it).
 6. **(Optional, small) uninstall guidance** — since no uninstaller exists, the README should at minimum list the files created (§5) so users can remove them manually — or an `ec uninstall` would close the loop.
 7. **(Optional) `--only`-style non-interactive default note** — document that headless/CI setup must use `--all`/`--only` because the default path prompts.
 

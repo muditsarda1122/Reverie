@@ -2002,12 +2002,25 @@ lightweight_diffusion:
 #   - GPT models    → https://opencode.ai/zen/v1/responses (OpenAI Responses API)
 #   - Others        → https://opencode.ai/zen/v1/chat/completions (OpenAI Chat)
 #
+# Any registry provider works (ec/providers.py): setting `provider` fills the
+# unset fields from the registry; fields set explicitly always win. `custom`
+# keeps today's behaviour (every field used as written).
+#
 # Ollama is supported as a fallback for offline use (lower quality extraction).
 llm:
-  provider: "opencode_zen"               # "opencode_zen" | "ollama" | "openai" | "anthropic"
-  model: "claude-haiku-4-5"             # best extraction quality per cost (tested)
+  provider: "opencode_zen"               # registry key: opencode_zen | anthropic | openai | google | openrouter | ollama | custom
+  model: "claude-haiku-4-5"             # best extraction quality per cost (tested); filled from the registry when omitted
   base_url: "https://opencode.ai/zen/v1"
   api_key_env: "OPENCODE_ZEN_API_KEY"   # env var name for API key
+  wire_format: null                     # optional: "anthropic" | "openai" (null = derive from model name)
+  openai_reasoning: null                # null = auto; true/false force the reasoning-model request shape
+  retry_attempts: 3                     # total attempts on 429/5xx/timeouts (1 = no retry)
+  retry_backoff: 0.5                    # seconds before the first retry
+  retry_backoff_cap: 8.0                # ceiling on a single backoff (excl. jitter); honours Retry-After
+  models:                               # optional per-task models; each null falls back to `model`
+    extraction: null
+    classification: null
+    mode_detection: null
   timeout: 60                           # seconds per LLM call
   temperature: 0.3                      # low temp for consistent extraction
   # Fallback for offline use (lower quality — see extractor test results):
@@ -2526,10 +2539,12 @@ Creating ~/.ec/ directory...
   ✓ Created ~/.ec/AGENTS.md (agent instructions)
   ✓ Created ~/.ec/commands.md (command reference)
 
-Checking LLM dependency...
-  ✓ OpenCode Zen API key found (OPENCODE_ZEN_API_KEY env var)
-  (EC uses Claude Haiku 4.5 via Zen for extraction, diffusion, and mode detection.)
-  (Fallback: set up Ollama with qwen2.5-coder:14b for offline use.)
+Checking LLM provider...
+  ✓ ANTHROPIC_API_KEY detected (Anthropic)
+  ✓ Configured ~/.ec/config.yaml for Anthropic (anthropic)
+  · Ollama detected — available as an offline fallback (provider "ollama", model "qwen2.5-coder:14b").
+  Verifying with a live ping...
+  ✓ 'OK' — EC's LLM features are live
 
 EC is ready!
 
@@ -2590,15 +2605,22 @@ The install script detects agents by checking for their config files or binaries
 - If `~/.config/opencode/opencode.json` already exists, merge the `ec` entry into the existing `mcp` object.
 - Agent instructions: OpenCode reads `AGENTS.md` in the project root. For global instructions, the install script creates `~/.config/opencode/AGENTS.md` with a reference to `~/.ec/AGENTS.md`. (OpenCode's global config directory.)
 
-**OpenCode Zen (LLM dependency, default):**
-- Detection: Check if `OPENCODE_ZEN_API_KEY` environment variable is set.
-- If not found: print "EC needs an OpenCode Zen API key for LLM inference (extraction, relationship classification, mode detection). Get one at https://opencode.ai/auth — then run: export OPENCODE_ZEN_API_KEY='your-key'"
-- The MCP server uses `litellm` (Python library) to call the configured LLM via the Zen API. Different model families use different endpoints (Anthropic Messages API for Claude, OpenAI Responses API for GPT, OpenAI Chat for others). The `litellm` library abstracts this.
+**LLM provider (bring your own; default OpenCode Zen):**
+- Detection: check the environment for every registry provider's key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY / GOOGLE_API_KEY, OPENROUTER_API_KEY, OPENCODE_ZEN_API_KEY) — `ec/providers.py` is the registry.
+- Exactly one key found: the installer offers it as the default ("Configure EC for <provider> using <VAR>? (Y/n)").
+- Several found: the installer lists them (marked "✓ key set") and asks the user to pick.
+- None found: the installer lists the providers plus "Local via Ollama" and "Skip for now".
+- Selection merges the resolved `llm` block (provider, base_url, model, api_key_env, wire_format from the registry) into `~/.ec/config.yaml` — existing keys are preserved. The key itself is NEVER written to disk (environment variables only).
+- The installer prints the exact `export VAR='your-key'` line for the chosen provider.
+- Verification: one cheap live ping through the configured model, skippable with `--no-verify` (`--provider <name>` works non-interactively). Success/failure is reported clearly; a failure is never fatal.
+- The MCP server calls the configured LLM directly (`requests`, two wire formats — Anthropic Messages and OpenAI Chat; `llm.wire_format` overrides model-name routing). Different model families use different endpoints (Anthropic Messages API for Claude, OpenAI Chat for others). No LLM SDK is used.
+- Transient failures (429, 5xx, timeouts) are retried with capped exponential backoff and jitter, honouring `Retry-After`; other 4xx errors fail immediately.
+- Extraction failures after retries are persisted (`pending_extractions`) and retried automatically at the next successful `ec_observe`, or manually via `ec-retry` (which also re-diffuses promoted-but-undiffused ECUs).
 - JSON post-processing: Claude models wrap JSON in markdown code fences. The Extractor strips these before parsing (see config block for implementation).
 
 **Ollama (offline fallback):**
 - If the user wants offline/local inference, they can switch the config to `provider: "ollama"` with `model: "qwen2.5-coder:14b"`.
-- Detection: `ollama` binary on PATH. Offer to pull: `ollama pull qwen2.5-coder:14b`
+- Detection: `ollama` binary on PATH. Offer to pull: `ollama pull qwen2.5-coder:14b` (also reachable as the "Local via Ollama" menu option and via `ec install --provider ollama`)
 - Warning: local model extraction quality is significantly lower than Zen (tested: missed deep invariants, no Self-Review Pass, format compliance issues).
 
 **Codex:**

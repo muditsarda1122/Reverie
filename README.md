@@ -37,9 +37,11 @@ Requirements: Python 3.12 (pinned dependencies ship wheels for 3.12), pip, git.
 pip install git+https://github.com/muditsarda1122/Reverie.git
 # (published package name: engineering-cognition)
 
-# 2. Provide an LLM key — hosted by default (OpenCode Zen),
-#    or skip via Ollama (see Configuration below)
-export OPENCODE_ZEN_API_KEY=...
+# 2. Provide an LLM key — any major provider works (see Configuration below),
+#    or skip via Ollama. `ec install` detects keys already in your
+#    environment and asks at most one question.
+export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY,
+                               # OPENROUTER_API_KEY, OPENCODE_ZEN_API_KEY
 
 # 3. Configure your agent and bootstrap ~/.ec
 #    (interactive; --all for non-interactive, --dry-run to preview)
@@ -53,7 +55,7 @@ ec-stop         # runs the review gate in your terminal, then diffuses
                 # accepted candidates into the canonical brain
 ```
 
-Handy extras: `ec-status` (current session + brain stats), `ec --dry-run` (show exactly what the installer would write), `ec-repair` (ops recovery). Full details, including per-agent config files the installer touches, are in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+Handy extras: `ec-status` (current session + brain stats), `ec --dry-run` (show exactly what the installer would write), `ec-retry` (recover failed extractions / re-diffuse), `ec-repair` (ops recovery). Full details, including per-agent config files the installer touches, are in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
 After `ec install`, your agent config points at the MCP server (`ec-mcp`). Restart your agent and the four tools below appear.
 
@@ -74,20 +76,20 @@ The short version: observe → extract → review → ground → retrieve. The l
 
 Everything lives in one YAML file, `~/.ec/config.yaml`, deep-merged over the defaults in [`ec/config.py`](ec/config.py). Useful blocks:
 
-- `llm` — provider, model, `base_url`, `api_key_env`. Default: OpenCode Zen (`https://opencode.ai/zen/v1`) with `claude-haiku-4-5`. Temperature 0.0 for classification, 0.3 for extraction.
+- `llm` — `provider` selects from a registry (`opencode_zen`, `anthropic`, `openai`, `google`, `openrouter`, `ollama`, `custom`); fields you don't set (`model`, `base_url`, `api_key_env`, `wire_format`) are filled from the registry, and anything you set explicitly wins. Extras: `wire_format` (`anthropic`/`openai`) overrides the model-name request shape (use it for `claude-*` models on OpenAI-compatible gateways); `openai_reasoning: true` forces the reasoning-model parameter shape (`max_completion_tokens`, no temperature — auto-detected otherwise); `retry_attempts` / `retry_backoff` / `retry_backoff_cap` tune retry-with-backoff on 429/5xx/timeouts; `models.extraction` / `models.classification` / `models.mode_detection` optionally give each task its own model. Default: OpenCode Zen (`https://opencode.ai/zen/v1`) with `claude-haiku-4-5`. Temperature 0.0 for classification, 0.3 for extraction.
 - `confidence` — base priors per source type, scope multipliers, decay, thresholds.
 - `ranking` / `retrieval` / `activation` — retrieval weights and budgets.
 - `maintainer` / `clustering` — background maintenance intervals and HDBSCAN settings.
 
 Set the `EC_HOME` environment variable to relocate the whole `~/.ec` directory (useful for tests and sandboxes).
 
-**Offline / local model:** if the `ollama` binary is present, `ec install` offers to configure it automatically and pull `qwen2.5-coder:14b` — no hosted API involved.
+**Offline / local model:** `provider: ollama` with any locally pulled model (the installer's default is `qwen2.5-coder:14b`). If the `ollama` binary is present, `ec install` offers to configure it automatically and pull that model — no hosted API involved.
 
 ## Data and privacy
 
 - Your memory is **one SQLite file**: `~/.ec/ec.db`. No account, no cloud storage, no telemetry.
-- What leaves your machine is exactly what the LLM features need: the extraction prompt, your agent's reasoning and final output, and candidate pairs of conclusions (for diffusion and review). That goes to the configured LLM endpoint — **hosted by default, or a local model through Ollama** if you prefer nothing leaving your machine.
-- API keys are read from environment variables only; Reverie never writes them anywhere.
+- What leaves your machine is exactly what the LLM features need: the extraction prompt, your agent's reasoning and final output, and candidate pairs of conclusions (for diffusion and review). That goes to the LLM endpoint **you** configure — any major hosted provider, or a local model through Ollama if you prefer nothing leaving your machine.
+- API keys are read from environment variables only — including by `ec install` and its live ping; Reverie never writes them anywhere.
 - Benchmark run outputs (`runs/`), databases and logs are gitignored — nothing from your `~/.ec` is committed.
 
 ## Research
