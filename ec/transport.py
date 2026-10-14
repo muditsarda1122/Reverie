@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 import tempfile
 import zipfile
@@ -189,13 +190,35 @@ def import_brain(
             backup = str(backup_path)
             print_fn(f"Automatic backup written to {backup}")
 
-        brain.clear_all_data()
-        brain._conn.execute("ATTACH ? AS imported",
-                            (str(Path(tmp) / BRAIN_NAME),))
+        # (feat/flow review fix) upgrade the extracted snapshot through the
+        # normal Brain schema/migration path BEFORE attaching: an export
+        # made by an older Reverie (its schema may lack later tables or
+        # columns) is brought up to the current schema in place.
+        snapshot = Path(tmp) / BRAIN_NAME
         try:
-            counts = brain.copy_from_attached("imported")
+            snapshot_brain = Brain(snapshot)
+            snapshot_brain.close()
+        except BrainError as exc:
+            raise TransportError(
+                f"The export's database could not be read: {exc}") from exc
+
+        # (feat/flow review fix) the delete and the insert run in ONE
+        # transaction — a failure anywhere rolls the whole import back and
+        # the local brain is left exactly as it was.
+        brain._conn.execute("ATTACH ? AS imported", (str(snapshot),))
+        try:
+            try:
+                counts = brain.replace_all_from_attached("imported")
+            except (BrainError, sqlite3.Error) as exc:
+                raise TransportError(
+                    "Import failed — the local brain was left exactly as "
+                    f"it was. ({exc})") from exc
         finally:
             brain._conn.execute("DETACH imported")
+    skipped = counts.pop("skipped_tables", [])
+    if skipped:
+        print_fn("Skipped — these tables are absent from the export: "
+                 + ", ".join(skipped))
     print_fn(
         "Imported: {ecus} ECUs, {sessions} sessions, {repos} repo "
         "state(s).".format(ecus=counts["ecus"],

@@ -10,6 +10,7 @@ import os
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import json
+import sqlite3
 import subprocess
 import zipfile
 from datetime import datetime, timezone
@@ -206,6 +207,220 @@ def test_import_refuses_not_an_export(brain, tmp_path):
 def test_import_refuses_missing_file(brain, tmp_path):
     with pytest.raises(TransportError, match="No such file"):
         import_brain(brain, tmp_path / "nope.zip")
+
+
+# ---------------------------------------------------------------------------
+# import robustness (feat/flow review fixes): atomicity, schema mismatch
+# ---------------------------------------------------------------------------
+
+def _repack(export: Path, tmp_path, mutate_db=None,
+            manifest_updates: dict | None = None) -> Path:
+    """Take a valid export, patch the raw brain.db member (and/or the
+    manifest), re-zip."""
+    with zipfile.ZipFile(export) as zf:
+        members = {name: zf.read(name) for name in zf.namelist()}
+    if mutate_db is not None or manifest_updates is not None:
+        raw = tmp_path / "raw-brain.db"
+        raw.write_bytes(members["brain.db"])
+        conn = sqlite3.connect(raw)
+        try:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            if mutate_db is not None:
+                mutate_db(conn)
+            conn.commit()
+        finally:
+            conn.close()
+        members["brain.db"] = raw.read_bytes()
+    if manifest_updates:
+        manifest = json.loads(members["manifest.json"])
+        manifest.update(manifest_updates)
+        members["manifest.json"] = json.dumps(manifest).encode()
+    out = tmp_path / "repacked.zip"
+    with zipfile.ZipFile(out, "w") as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+    return out
+
+
+def test_import_failure_leaves_brain_untouched(brain, tmp_path):
+    """Fix 1: import is atomic. The copy fails midway (NOT NULL violation
+    on a deliberately corrupted snapshot table, after earlier tables
+    copied) — the local brain must be exactly as it was."""
+    seed(brain, "precious local")
+    sid = session_with_candidate(brain)
+    brain.upsert_repo("/git/a/.git", state="enabled")
+
+    incoming = Brain(tmp_path / "incoming" / "ec.db")
+    try:
+        seed(incoming, "incoming one")
+        seed(incoming, "incoming two")
+        other = tmp_path / "other.zip"
+        export_brain(incoming, other)
+        # corrupt the snapshot's edges table: no constraints, a row with a
+        # NULL created_at — the destination copy fails right after `ecus`
+        bad = _repack(other, tmp_path, mutate_db=lambda c: c.executescript(
+            "DROP TABLE edges;"
+            "CREATE TABLE edges (id TEXT, source_id TEXT, target_id TEXT,"
+            " type TEXT, weight REAL, created_at TEXT);"
+            "INSERT INTO edges VALUES"
+            " ('e1', 'x', 'y', 'supports', 1.0, NULL);"))
+        with pytest.raises(TransportError, match="left exactly as it was"):
+            import_brain(brain, bad, replace=True)
+        assert brain.count_ecus() == 1
+        assert brain.list_ecus()[0]["cognition"] == "precious local"
+        assert brain.list_sessions()[0]["id"] == sid
+        assert brain.get_repo("/git/a/.git")["state"] == "enabled"
+        # the connection is still usable
+        seed(brain, "still works")
+        assert brain.count_ecus() == 2
+    finally:
+        incoming.close()
+
+
+def test_import_fk_violation_rolls_back(brain, tmp_path):
+    """Fix 3: the foreign-key check runs BEFORE the commit and raises a
+    real exception that rolls everything back (not an assert after it)."""
+    seed(brain, "precious local")
+    sid = session_with_candidate(brain)
+
+    incoming = Brain(tmp_path / "incoming" / "ec.db")
+    try:
+        seed(incoming, "incoming one")
+        s2 = session_with_candidate(incoming)
+        other = tmp_path / "fk.zip"
+        export_brain(incoming, other)
+        # orphan session_edge (raw connection: FK enforcement is off by
+        # default) — caught only by PRAGMA foreign_key_check
+        bad = _repack(other, tmp_path, mutate_db=lambda c: c.execute(
+            "INSERT INTO session_edges (id, session_id, source_id,"
+            " target_type, target_id, type) VALUES"
+            " ('orphan', ?, 'ghost', 'session_ecu', 'ghost', 'supports')",
+            (s2,)))
+        with pytest.raises(TransportError, match="rolled back"):
+            import_brain(brain, bad, replace=True)
+        assert brain.count_ecus() == 1
+        assert brain.list_sessions()[0]["id"] == sid
+        assert brain.list_session_ecus(sid)[0]["cognition"] == "a candidate"
+    finally:
+        incoming.close()
+
+
+def test_import_from_previous_schema_without_new_tables(brain, tmp_path):
+    """Fix 2a: an export from an older schema (no `repos` /
+    `review_decisions` tables, lower user_version) is upgraded through the
+    normal schema/migration path before the copy."""
+    seed(brain, "local")
+    export = tmp_path / "export.zip"
+    export_brain(brain, export)
+
+    incoming = Brain(tmp_path / "incoming" / "ec.db")
+    try:
+        seed(incoming, "from the old schema")
+        other = tmp_path / "old.zip"
+        export_brain(incoming, other)
+
+        def strip_new_tables(conn):
+            conn.execute("DROP TABLE repos")
+            conn.execute("DROP TABLE review_decisions")
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+
+        old = _repack(other, tmp_path, mutate_db=strip_new_tables,
+                      manifest_updates={"schema_version": SCHEMA_VERSION - 1})
+        import_brain(brain, old, replace=True)
+        assert brain.count_ecus() == 1
+        assert brain.list_ecus()[0]["cognition"] == "from the old schema"
+        # the upgraded snapshot's (empty) new tables copied cleanly
+        assert brain.list_repos() == []
+        assert brain.list_review_decisions() == []
+    finally:
+        incoming.close()
+
+
+def test_import_survives_altered_column_order(brain, tmp_path):
+    """Fix 2b: a snapshot whose maintenance_log got `ecus_affected` at a
+    different position (ALTER TABLE order vs fresh-schema order) imports
+    correctly — columns are matched by name, never by position."""
+    seed(brain, "local")
+    export = tmp_path / "export.zip"
+    export_brain(brain, export)
+
+    incoming = Brain(tmp_path / "incoming" / "ec.db")
+    try:
+        seed(incoming, "from altered schema")
+        incoming._conn.execute(
+            "INSERT INTO maintenance_log (id, run_at, action, details,"
+            " ecus_affected) VALUES ('m1', '2026-10-14T00:00:00+00:00',"
+            " 'grounding', '{\"checked\": 4}', 3)")
+        incoming._conn.commit()
+        other = tmp_path / "altered.zip"
+        export_brain(incoming, other)
+
+        def reorder_maintenance_log(conn):
+            conn.executescript(
+                "CREATE TABLE maintenance_log_new ("
+                " id TEXT PRIMARY KEY, run_at TEXT NOT NULL,"
+                " action TEXT NOT NULL, ecus_affected INTEGER DEFAULT 0,"
+                " details TEXT);"
+                "INSERT INTO maintenance_log_new"
+                " SELECT id, run_at, action, ecus_affected, details"
+                " FROM maintenance_log;"
+                "DROP TABLE maintenance_log;"
+                "ALTER TABLE maintenance_log_new RENAME TO maintenance_log;")
+
+        altered = _repack(other, tmp_path,
+                          mutate_db=reorder_maintenance_log)
+        import_brain(brain, altered, replace=True)
+        row = brain.list_maintenance_log()[0]
+        assert row["ecus_affected"] == 3
+        assert row["details"] == '{"checked": 4}'
+        assert row["action"] == "grounding"
+        assert brain.list_ecus()[0]["cognition"] == "from altered schema"
+    finally:
+        incoming.close()
+
+
+def test_replace_reports_tables_missing_from_source(brain, tmp_path):
+    """Fix 2c: tables absent from the source are skipped, not errors, and
+    reported in the result."""
+    sid = session_with_candidate(brain)
+    seed(brain)
+    snap = tmp_path / "partial.db"
+    brain._conn.execute("VACUUM INTO ?", (str(snap),))
+    conn = sqlite3.connect(snap)
+    try:
+        conn.execute("DROP TABLE clusters")
+        conn.execute("DROP TABLE cluster_memberships")
+        conn.commit()
+    finally:
+        conn.close()
+    brain._conn.execute("ATTACH ? AS partial", (str(snap),))
+    try:
+        counts = brain.replace_all_from_attached("partial")
+    finally:
+        brain._conn.execute("DETACH partial")
+    assert "clusters" in counts["skipped_tables"]
+    assert "cluster_memberships" in counts["skipped_tables"]
+    assert counts["ecus"] == 1
+    assert counts["sessions"] == 1
+    # the skipped tables still exist locally (empty after the wipe)
+    assert "clusters" in brain.table_names()
+
+
+def test_clear_all_data_is_atomic(brain, monkeypatch):
+    """Fix 3 (reset side): a failure mid-wipe rolls back — nothing is lost."""
+    seed(brain)
+    sid = session_with_candidate(brain)
+    real = Brain.table_names
+
+    def ghost_table_names(self):
+        return real(self) + ["ghost_table"]
+
+    monkeypatch.setattr(Brain, "table_names", ghost_table_names)
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        brain.clear_all_data()
+    monkeypatch.undo()
+    assert brain.count_ecus() == 1
+    assert brain.list_sessions()[0]["id"] == sid
 
 
 # ---------------------------------------------------------------------------

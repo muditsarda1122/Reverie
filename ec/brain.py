@@ -20,6 +20,7 @@ import json
 import logging
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1541,42 +1542,133 @@ class Brain:
 
     # -- bulk data operations (feat/flow: export/import/reset, D58) ------
 
+    @contextmanager
+    def _manual_txn(self):
+        """Suspend sqlite3's implicit-transaction mode for the duration so
+        BEGIN/COMMIT/ROLLBACK below are the only transaction control."""
+        previous = self._conn.isolation_level
+        self._conn.isolation_level = None
+        try:
+            yield
+        finally:
+            self._conn.isolation_level = previous
+
+    def _check_fk_or_raise(self) -> None:
+        """Raise (rolling the open transaction back) when the database has
+        foreign-key violations. A real exception, checked BEFORE the commit
+        — not an assert after it (feat/flow review fix)."""
+        violations = self._conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            sample = [tuple(v)[:3] for v in violations[:5]]
+            raise BrainError(
+                "Foreign-key violations found — the operation was rolled "
+                f"back. First few: {sample}")
+
+    def _wipe_all_tables(self) -> None:
+        for table in self.table_names():
+            self._conn.execute(f'DELETE FROM main."{table}"')
+
+    def _copy_tables_from(self, alias: str) -> tuple[dict[str, int], list[str]]:
+        """Copy every destination table from the ATTACHed database using
+        EXPLICIT column lists — the intersection of source and destination
+        columns by name (feat/flow review fix). Column order is irrelevant
+        (a database migrated with ALTER TABLE ... ADD COLUMN has columns at
+        different positions than a fresh schema) and `SELECT *` is never
+        used. Tables absent from the source are skipped and reported.
+        Returns (per-table row counts, skipped table names)."""
+        for table in self.table_names():
+            dest_cols = [
+                r["name"] for r in
+                self._conn.execute(f'PRAGMA main.table_info("{table}")')
+            ]
+            src_cols = [
+                r["name"] for r in
+                self._conn.execute(f'PRAGMA {alias}.table_info("{table}")')
+            ]
+            if not src_cols:
+                continue                        # absent from the source
+            common = [c for c in dest_cols if c in src_cols]
+            collist = ", ".join(f'"{c}"' for c in common)
+            self._conn.execute(
+                f'INSERT INTO main."{table}" ({collist}) '
+                f'SELECT {collist} FROM "{alias}"."{table}"'
+            )
+        counts: dict[str, int] = {}
+        for table in self.table_names():
+            counts[table] = self._conn.execute(
+                f'SELECT COUNT(*) FROM main."{table}"').fetchone()[0]
+        skipped = [t for t in self.table_names()
+                   if not self._conn.execute(
+                       f'PRAGMA {alias}.table_info("{t}")').fetchall()]
+        return counts, skipped
+
     def clear_all_data(self) -> None:
         """Delete every row from every table, keeping the schema (reset).
-        Foreign-key enforcement is suspended for the operation and verified
-        afterwards."""
+
+        One transaction: foreign-key enforcement is suspended for the bulk
+        delete and `PRAGMA foreign_key_check` runs BEFORE the commit — any
+        failure rolls the whole wipe back, leaving the data untouched."""
         self._conn.execute("PRAGMA foreign_keys=OFF")
         try:
-            for table in self.table_names():
-                self._conn.execute(f"DELETE FROM {table}")
-            self._conn.commit()
-            violations = self._conn.execute(
-                "PRAGMA foreign_key_check").fetchall()
-            assert not violations, violations
+            with self._manual_txn():
+                self._conn.execute("BEGIN")
+                try:
+                    self._wipe_all_tables()
+                    self._check_fk_or_raise()
+                    self._conn.execute("COMMIT")
+                except BaseException:
+                    if self._conn.in_transaction:
+                        self._conn.execute("ROLLBACK")
+                    raise
         finally:
             self._conn.execute("PRAGMA foreign_keys=ON")
 
     def copy_from_attached(self, alias: str) -> dict:
-        """Copy every table from an ATTACHed database into this one
-        (import --replace). Both schemas must already match; FK enforcement
-        is suspended for the operation and verified afterwards. Returns
-        per-table row counts."""
+        """Copy every shared table from an ATTACHed database into this one
+        (import). Column-robust and atomic — see `_copy_tables_from` and
+        `replace_all_from_attached`. Returns per-table row counts plus
+        ``skipped_tables`` (present locally but absent from the source)."""
         self._conn.execute("PRAGMA foreign_keys=OFF")
-        counts: dict[str, int] = {}
         try:
-            for table in self.table_names():
-                self._conn.execute(
-                    f"INSERT INTO main.{table} SELECT * FROM {alias}.{table}"
-                )
-            self._conn.commit()
-            violations = self._conn.execute(
-                "PRAGMA foreign_key_check").fetchall()
-            assert not violations, violations
+            with self._manual_txn():
+                self._conn.execute("BEGIN")
+                try:
+                    counts, skipped = self._copy_tables_from(alias)
+                    self._check_fk_or_raise()
+                    self._conn.execute("COMMIT")
+                except BaseException:
+                    if self._conn.in_transaction:
+                        self._conn.execute("ROLLBACK")
+                    raise
         finally:
             self._conn.execute("PRAGMA foreign_keys=ON")
-        for table in self.table_names():
-            counts[table] = self._conn.execute(
-                f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        counts["skipped_tables"] = skipped
+        return counts
+
+    def replace_all_from_attached(self, alias: str) -> dict:
+        """ATOMIC replace (feat/flow review fix): wipe this brain and copy
+        every shared table from the ATTACHed database — the delete and the
+        insert happen in ONE transaction, so a failure anywhere in the copy
+        (missing table, column mismatch, disk full, constraint) leaves the
+        local brain exactly as it was. The foreign-key check runs before the
+        commit and rolls everything back on violations. Returns per-table
+        row counts plus ``skipped_tables`` (absent from the source)."""
+        self._conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            with self._manual_txn():
+                self._conn.execute("BEGIN")
+                try:
+                    self._wipe_all_tables()
+                    counts, skipped = self._copy_tables_from(alias)
+                    self._check_fk_or_raise()
+                    self._conn.execute("COMMIT")
+                except BaseException:
+                    if self._conn.in_transaction:
+                        self._conn.execute("ROLLBACK")
+                    raise
+        finally:
+            self._conn.execute("PRAGMA foreign_keys=ON")
+        counts["skipped_tables"] = skipped
         return counts
 
     # -- maintenance_state (Phase 6): trigger-check bookkeeping -----------
