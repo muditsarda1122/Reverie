@@ -14,7 +14,7 @@ import logging
 import re
 
 from .config import MODES, get_config
-from .llm import LLMError, api_key, call_llm
+from .llm import LLMError, call_llm, key_missing, model_for
 
 log = logging.getLogger("ec.mode_detection")
 
@@ -92,6 +92,7 @@ def _llm_mode(query: str, config=None) -> str:
         system=_CLASSIFY_SYSTEM,
         temperature=cfg.llm.temperature_mode_detection,
         max_tokens=16,
+        model=model_for(cfg, "mode_detection"),
         config=cfg,
     )
     cleaned = raw.strip().lower().strip('."\'`')
@@ -105,9 +106,14 @@ def _llm_mode(query: str, config=None) -> str:
 
 
 def detect_mode(query: str, use_llm: bool = True, config=None) -> str:
-    """Detect the engineering mode of a query. Always returns a valid mode."""
+    """Detect the engineering mode of a query. Always returns a valid mode.
+
+    The LLM path is skipped only when the configured provider requires a key
+    and none is set (keyless providers such as Ollama still classify via the
+    LLM); any LLM failure falls back to keywords.
+    """
     cfg = config or get_config()
-    if use_llm and api_key(cfg):
+    if use_llm and key_missing(cfg) is None:
         try:
             return _llm_mode(query, cfg)
         except LLMError as exc:
