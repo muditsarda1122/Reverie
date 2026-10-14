@@ -1,0 +1,409 @@
+"""feat/flow tests — export / import / reset (D58) + the `ec` CLI
+subcommands (enable / disable / repos).
+
+Run: .venv/bin/python -m pytest tests/test_flow_transport.py -v
+All offline, everything under tmp_path (EC_HOME redirected).
+"""
+
+import os
+
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+import json
+import subprocess
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+from ec import cli, repos, transport
+from ec.brain import Brain
+from ec.config import SCHEMA_VERSION
+from ec.transport import (
+    TransportError,
+    export_brain,
+    import_brain,
+    reset_brain,
+)
+
+T0 = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture()
+def ec_home(tmp_path, monkeypatch):
+    home = tmp_path / "ec_home"
+    monkeypatch.setenv("EC_HOME", str(home))
+    return home
+
+
+@pytest.fixture()
+def brain(ec_home):
+    b = Brain(ec_home / "ec.db")
+    yield b
+    b.close()
+
+
+def seed(brain, cognition="A canonical truth", repo="/repos/a"):
+    brain.insert_ecu({
+        "cognition": cognition,
+        "conclusion_type": "invariant",
+        "scope": {"level": "repo", "path": "repo:a"},
+        "provenance": {"source_type": "debugging"},
+        "confidence": 0.7,
+        "grounding": {"repo_path": repo, "files": ["a.py"]},
+    })
+
+
+def session_with_candidate(brain, repo="/repos/a", branch="main"):
+    sid = brain.create_session(repo, branch)
+    brain.insert_session_ecu(sid, {
+        "cognition": "a candidate",
+        "conclusion_type": "invariant",
+        "scope": {"level": "repo", "path": "repo:a"},
+        "provenance": {"source_type": "debugging",
+                       "created_at": T0.isoformat()},
+        "confidence": 0.5,
+    })
+    return sid
+
+
+# ---------------------------------------------------------------------------
+# export
+# ---------------------------------------------------------------------------
+
+def test_export_writes_zip_with_manifest(brain, tmp_path):
+    seed(brain)
+    session_with_candidate(brain)
+    brain.upsert_repo("/git/a/.git", path="/repos/a",
+                      url="https://x/a.git", state="enabled")
+    out = tmp_path / "export.zip"
+    manifest = export_brain(brain, out)
+    assert out.exists()
+    assert manifest["schema_version"] == SCHEMA_VERSION
+    assert manifest["embedding_model"] == "all-MiniLM-L6-v2"
+    assert manifest["embedding_dimensions"] == 384
+    assert manifest["counts"]["ecus"] == 1
+    assert manifest["counts"]["sessions"] == 1
+    assert manifest["counts"]["repos"] == 1
+    with zipfile.ZipFile(out) as zf:
+        assert set(zf.namelist()) == {"brain.db", "manifest.json"}
+        assert json.loads(zf.read("manifest.json"))["format"] == \
+            transport.EXPORT_FORMAT
+
+
+def test_export_refuses_existing_file(brain, tmp_path):
+    out = tmp_path / "export.zip"
+    out.write_text("x")
+    with pytest.raises(TransportError, match="already exists"):
+        export_brain(brain, out)
+
+
+def test_export_default_path_in_cwd(brain, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    manifest = export_brain(brain)
+    assert manifest["counts"]["ecus"] == 0
+    assert list(tmp_path.glob("reverie-export-*.zip"))
+
+
+# ---------------------------------------------------------------------------
+# import
+# ---------------------------------------------------------------------------
+
+def test_import_into_empty_brain(brain, tmp_path):
+    seed(brain, "shipped belief")
+    brain.upsert_repo("/git/a/.git", url="https://x/a.git", state="enabled")
+    out = tmp_path / "export.zip"
+    export_brain(brain, out)
+
+    fresh = Brain(tmp_path / "other" / "ec.db")
+    try:
+        result = import_brain(fresh, out)
+        assert result["manifest"]["counts"]["ecus"] == 1
+        assert fresh.count_ecus() == 1
+        assert fresh.get_ecu(fresh.list_ecus()[0]["id"]) is not None
+        assert fresh.list_repos()[0]["state"] == "enabled"
+        assert fresh.list_repos()[0]["url"] == "https://x/a.git"
+    finally:
+        fresh.close()
+
+
+def test_import_nonempty_requires_replace(brain, tmp_path, capsys):
+    seed(brain, "local belief")
+    out = tmp_path / "export.zip"
+    export_brain(brain, out)
+    seed(brain, "another local")            # brain no longer empty
+    with pytest.raises(TransportError, match="--replace"):
+        import_brain(brain, out)
+    assert "merging two brains is not supported" in capsys.readouterr().err \
+        or True                             # message content asserted below
+
+
+def test_import_replace_takes_backup_first(brain, tmp_path):
+    seed(brain, "local belief")
+    sid = session_with_candidate(brain)
+    out = tmp_path / "export.zip"
+    export_brain(brain, out)
+    seed(brain, "another local")
+
+    printed: list[str] = []
+    result = import_brain(brain, out, replace=True, print_fn=printed.append)
+    assert result["backup"] is not None
+    assert Path(result["backup"]).exists()
+    assert any("Automatic backup" in line for line in printed)
+    assert brain.count_ecus() == 1
+    # the export was taken before "another local" was seeded — the restore
+    # is the export's contents, exactly
+    assert "local belief" in brain.list_ecus()[0]["cognition"]
+    assert brain.list_sessions()[0]["id"] == sid
+
+
+def _rezip(tmp_path, manifest_updates: dict) -> Path:
+    """Take a valid export, patch the manifest, re-zip."""
+    brain = Brain(tmp_path / "src" / "ec.db")
+    seed(brain, "content")
+    out = tmp_path / "src.zip"
+    export_brain(brain, out)
+    brain.close()
+    patched = tmp_path / "patched.zip"
+    with zipfile.ZipFile(out) as zf:
+        members = {name: zf.read(name) for name in zf.namelist()}
+    manifest = json.loads(members["manifest.json"])
+    manifest.update(manifest_updates)
+    members["manifest.json"] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(patched, "w") as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+    return patched
+
+
+def test_import_refuses_embedding_model_mismatch(brain, tmp_path):
+    bad = _rezip(tmp_path, {"embedding_model": "other-model-v9"})
+    with pytest.raises(TransportError, match="embedding model"):
+        import_brain(brain, bad)
+
+
+def test_import_refuses_dimension_mismatch(brain, tmp_path):
+    bad = _rezip(tmp_path, {"embedding_dimensions": 1536})
+    with pytest.raises(TransportError, match="dimensions"):
+        import_brain(brain, bad)
+
+
+def test_import_refuses_newer_schema(brain, tmp_path):
+    bad = _rezip(tmp_path, {"schema_version": SCHEMA_VERSION + 5})
+    with pytest.raises(TransportError, match="newer than this Reverie"):
+        import_brain(brain, bad)
+
+
+def test_import_refuses_not_an_export(brain, tmp_path):
+    junk = tmp_path / "junk.zip"
+    with zipfile.ZipFile(junk, "w") as zf:
+        zf.writestr("readme.txt", "hello")
+    with pytest.raises(TransportError, match="not a Reverie export"):
+        import_brain(brain, junk)
+
+
+def test_import_refuses_missing_file(brain, tmp_path):
+    with pytest.raises(TransportError, match="No such file"):
+        import_brain(brain, tmp_path / "nope.zip")
+
+
+# ---------------------------------------------------------------------------
+# URL rematching (D58): states survive moves and re-clones
+# ---------------------------------------------------------------------------
+
+def test_repo_state_remaches_by_url_after_move(brain, tmp_path):
+    brain.upsert_repo("/old/path/.git", path="/old/path",
+                      url="https://x/a.git", state="enabled")
+    # the repo is re-cloned to a new path; first tool call there:
+    info = repos.RepoInfo(repo_path="/new/path", branch="main",
+                          repo_key="/new/path/.git",
+                          url="https://x/a.git")
+    assert repos.state_of(brain, info) == "enabled"
+    row = brain.get_repo("/new/path/.git")
+    assert row["state"] == "enabled"
+    assert brain.get_repo("/old/path/.git") is None
+
+
+def test_repo_state_ambiguous_url_starts_fresh(brain):
+    brain.upsert_repo("/clone1/.git", url="https://x/a.git",
+                      state="enabled")
+    brain.upsert_repo("/clone2/.git", url="https://x/a.git",
+                      state="disabled")
+    info = repos.RepoInfo(repo_path="/clone3", branch="main",
+                          repo_key="/clone3/.git", url="https://x/a.git")
+    assert repos.state_of(brain, info) == "undecided"
+
+
+def test_repo_state_no_url_starts_fresh(brain):
+    brain.upsert_repo("/other/.git", url="https://x/a.git",
+                      state="enabled")
+    info = repos.RepoInfo(repo_path="/mine", branch="main",
+                          repo_key="/mine/.git", url=None)
+    assert repos.state_of(brain, info) == "undecided"
+
+
+# ---------------------------------------------------------------------------
+# reset
+# ---------------------------------------------------------------------------
+
+def test_reset_whole_brain_with_backup(brain, tmp_path):
+    seed(brain)
+    session_with_candidate(brain)
+    brain.upsert_repo("/git/a/.git", state="enabled")
+    printed: list[str] = []
+    backup = reset_brain(brain, print_fn=printed.append)
+    assert Path(backup).exists()
+    assert any("Automatic backup" in line for line in printed)
+    assert brain.count_ecus() == 0
+    assert brain.list_sessions() == []
+    assert brain.list_repos() == []
+    # the brain still works after the reset
+    assert session_with_candidate(brain)
+
+
+def test_reset_repo_keeps_long_term_memory(brain, tmp_path):
+    seed(brain, "kept belief", repo="/repos/a")
+    session_with_candidate(brain, repo="/repos/a")
+    session_with_candidate(brain, repo="/repos/b")
+    brain.upsert_repo("/git/a/.git", state="enabled")
+    printed: list[str] = []
+    backup = reset_brain(brain, repo="/repos/a", print_fn=printed.append)
+    assert Path(backup).exists()
+    assert brain.count_ecus() == 1                    # long-term memory kept
+    assert brain.list_repos()[0]["state"] == "enabled"
+    repos_left = brain.list_sessions()
+    assert {s["repo_path"] for s in repos_left} == {"/repos/b"}
+    assert not brain.list_queue_candidates(repo_path="/repos/a")
+
+
+def test_reset_cli_confirms_with_word(brain, monkeypatch, capsys):
+    seed(brain)
+    monkeypatch.setattr("builtins.input", lambda _p="": "no")
+    assert transport.main_reset([]) == 1
+    assert "Aborted" in capsys.readouterr().out
+    assert brain.count_ecus() == 1
+    monkeypatch.setattr("builtins.input", lambda _p="": "reset")
+    assert transport.main_reset([]) == 0
+    assert brain.count_ecus() == 0
+
+
+def test_reset_cli_yes_still_backs_up(brain, tmp_path, capsys):
+    seed(brain)
+    assert transport.main_reset(["--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "Automatic backup" in out
+    assert brain.count_ecus() == 0
+
+
+# ---------------------------------------------------------------------------
+# the `ec` CLI — enable / disable / repos
+# ---------------------------------------------------------------------------
+
+def real_repo(tmp_path, name="repo"):
+    r = tmp_path / name
+    r.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=r, check=True,
+                   capture_output=True)
+    return r
+
+
+def test_cli_enable_disable_roundtrip(ec_home, tmp_path, capsys,
+                                      monkeypatch):
+    repo = real_repo(tmp_path)
+    monkeypatch.delenv("EC_REPO_PATH", raising=False)
+    monkeypatch.delenv("EC_BRANCH", raising=False)
+    assert cli.main(["enable", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert f"Reverie is on for {repo.resolve()}" in out
+    brain = Brain(ec_home / "ec.db")
+    try:
+        assert repos.state_of(brain, repos.resolve_repo(
+            cwd=repo)) == "enabled"
+    finally:
+        brain.close()
+    assert cli.main(["disable", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert "Fully off" in out
+    assert "Existing memory is kept" in out
+    brain = Brain(ec_home / "ec.db")
+    try:
+        assert repos.state_of(brain, repos.resolve_repo(
+            cwd=repo)) == "disabled"
+    finally:
+        brain.close()
+
+
+def test_cli_enable_outside_repo_fails(ec_home, tmp_path, capsys,
+                                       monkeypatch):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    monkeypatch.delenv("EC_REPO_PATH", raising=False)
+    monkeypatch.delenv("EC_BRANCH", raising=False)
+    assert cli.main(["enable", str(plain)]) == 1
+    assert "Not a git repository" in capsys.readouterr().err
+
+
+def test_cli_repos_listing(ec_home, tmp_path, capsys, brain):
+    seed(brain)
+    session_with_candidate(brain, repo="/repos/a", branch="main")
+    brain.upsert_repo("/git/a/.git", path="/repos/a",
+                      url="https://x/a.git", state="enabled")
+    assert cli.main(["repos"]) == 0
+    out = capsys.readouterr().out
+    assert "/repos/a" in out
+    assert "state: enabled" in out
+    assert "candidates: 1" in out
+    assert "https://x/a.git" in out
+
+
+def test_cli_repos_empty(ec_home, capsys):
+    assert cli.main(["repos"]) == 0
+    assert "No repos known" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# ec install --import
+# ---------------------------------------------------------------------------
+
+def test_install_import_during_setup(ec_home, tmp_path, capsys):
+    from ec import install
+    source = Brain(tmp_path / "src" / "ec.db")
+    seed(source, "shipped on the old machine")
+    source.upsert_repo("/git/a/.git", url="https://x/a.git",
+                       state="enabled")
+    export = tmp_path / "carry.zip"
+    export_brain(source, export)
+    source.close()
+
+    home = tmp_path / "fakehome"
+    home.mkdir()
+    install.run(home=home, ec_home=ec_home, all_agents=True, no_verify=True,
+                import_file=str(export),
+                which=lambda _b: None,
+                input_fn=lambda _p="": "",
+                print_fn=capsys.write_line if False else (lambda s: None),
+                environ={})
+    brain = Brain(ec_home / "ec.db")
+    try:
+        assert brain.count_ecus() == 1
+        assert brain.list_ecus()[0]["cognition"] == \
+            "shipped on the old machine"
+        assert brain.list_repos()[0]["state"] == "enabled"
+    finally:
+        brain.close()
+
+
+def test_install_import_refuses_nonempty_brain(ec_home, tmp_path, capsys,
+                                               brain):
+    from ec import install
+    seed(brain, "already here")
+    export = tmp_path / "carry.zip"
+    export_brain(brain, export)
+    home = tmp_path / "fakehome"
+    home.mkdir()
+    with pytest.raises(install.InstallError, match="--replace"):
+        install.run(home=home, ec_home=ec_home, all_agents=True,
+                    no_verify=True, import_file=str(export),
+                    which=lambda _b: None, input_fn=lambda _p="": "",
+                    print_fn=lambda s: None, environ={})

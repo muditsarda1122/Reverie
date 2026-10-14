@@ -930,7 +930,7 @@ def _select_interactive(detected: list[AgentSpec], input_fn, print_fn
 def run(*, home: Path | None = None, ec_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
         dry_run: bool = False, provider: str | None = None,
-        no_verify: bool = False, verify_fn=None,
+        no_verify: bool = False, verify_fn=None, import_file: str | None = None,
         input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
         runner=subprocess.run) -> int:
@@ -940,7 +940,11 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
     (registry key; ``ollama`` runs the D42 local setup). ``no_verify``
     skips the live ping; ``verify_fn`` (returning ``(ok, detail)``) replaces
     the ping in tests. ``runner`` executes the Ollama model pull (injectable;
-    failures are reported, never fatal).
+    failures are reported, never fatal). ``import_file`` (``--import``)
+    restores a brain export during setup on a new machine (feat/flow D58):
+    allowed into the fresh (empty) brain this installer just bootstrapped;
+    when the local brain already holds data the import refuses with
+    guidance to run `ec import --replace` manually.
     """
     home = Path(home) if home else Path.home()
     ec_home = Path(ec_home) if ec_home else _default_ec_home()
@@ -1000,6 +1004,10 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
     print_fn(f"\nCreating {_display(ec_home, home)}/ directory...")
     for write in _ec_home_plans(home, ec_home):
         _emit(write, home, dry_run, print_fn)
+
+    # -- brain import (feat/flow --import, D58) -----------------------------
+    if import_file is not None and not dry_run:
+        _import_during_install(ec_home, import_file, print_fn)
 
     # -- LLM provider (§28.8 + feat/providers) -----------------------------
     print_fn("\nChecking LLM provider...")
@@ -1072,6 +1080,25 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
     print_fn("  4. Run /ec-stop when done to review and save engineering "
              "cognition")
     return 0
+
+
+def _import_during_install(ec_home: Path, import_file: str, print_fn) -> None:
+    """feat/flow (D58): `ec install --import <file>` — restore a brain
+    export during setup on a new machine. Only an empty brain (the fresh
+    bootstrap) accepts it; anything else refuses with guidance."""
+    from . import transport
+    brain = Brain(ec_home / "ec.db")
+    try:
+        if not transport._brain_is_empty(brain):
+            raise InstallError(
+                "The local brain already holds data, so `--import` would "
+                "replace it. Run `ec import <file> --replace` explicitly "
+                "(it takes an automatic backup first).")
+        transport.import_brain(brain, import_file, print_fn=print_fn)
+    except transport.TransportError as exc:
+        raise InstallError(str(exc)) from exc
+    finally:
+        brain.close()
 
 
 def _emit(write: PlannedWrite, home: Path, dry_run: bool, print_fn) -> None:

@@ -1510,6 +1510,35 @@ class Brain:
         self._conn.commit()
         return cur.rowcount > 0
 
+    def delete_repo_data(self, repo_path: str) -> dict:
+        """Delete one repo's sessions, candidates and pending extractions
+        (feat/flow `ec reset --repo`). Long-term memory — canonical ECUs,
+        edges — and the enablement row are kept."""
+        session_ids = [r["id"] for r in
+                       self.list_sessions(repo_path=repo_path)]
+        counts = {"sessions": len(session_ids), "session_ecus": 0,
+                  "session_edges": 0, "pending_updates": 0,
+                  "pending_extractions": 0}
+        for sid in session_ids:
+            rows = self.list_session_ecus(sid)
+            ecu_ids = [r["id"] for r in rows]
+            counts["session_edges"] += self.delete_session_edges_for(ecu_ids)
+            for row in rows:
+                self.delete_session_ecu(row["id"])
+            counts["session_ecus"] += len(rows)
+            for pu in self.list_pending_updates(session_id=sid):
+                self.delete_pending_update(pu["id"])
+                counts["pending_updates"] += 1
+            self.delete_session_activation(sid)
+        self._conn.execute(
+            "DELETE FROM sessions WHERE repo_path = ?", (repo_path,))
+        cur = self._conn.execute(
+            "DELETE FROM pending_extractions WHERE repo_path = ?",
+            (repo_path,))
+        counts["pending_extractions"] = cur.rowcount
+        self._conn.commit()
+        return counts
+
     # -- bulk data operations (feat/flow: export/import/reset, D58) ------
 
     def clear_all_data(self) -> None:
