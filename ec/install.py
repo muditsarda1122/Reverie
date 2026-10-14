@@ -1,6 +1,6 @@
 """``ec install`` — one command configures EC for all detected coding agents.
 
-Spec §28.8 (detection + per-agent installation logic + Zen key check),
+Spec §28.8 (detection + per-agent installation logic + LLM provider step),
 §28.9 (``~/.ec/AGENTS.md``, written verbatim), §28.10 (command templates),
 §28.2 (the ``~/.ec/`` directory structure).
 
@@ -8,15 +8,18 @@ Safety contract: the installer writes ONLY inside the EC home (``~/.ec`` or
 ``$EC_HOME``) and the four agents' own config locations. Existing agent
 config is merged, never overwritten (only the ``ec`` entry is
 added/replaced). ``--dry-run`` prints every planned write with its full
-resulting content and writes nothing.
+resulting content and writes nothing. API keys are NEVER written to disk —
+the installer only reads the environment to detect what is available.
 
 Entry points: ``python -m ec.install`` or the ``ec`` console script. When
 the package is pip-installed (D45), agent configs carry the ``ec`` console
 script; otherwise the absolute venv-python form is written (B2/D28).
 
-Offline fallback (D42): when no Zen key is set, the installer detects the
-``ollama`` binary, offers to configure ``~/.ec/config.yaml`` for local
-inference, and pulls ``qwen2.5-coder:14b`` (never fatal).
+LLM provider step (feat/providers): the installer detects provider keys in
+the environment (registry in ``ec/providers.py``), offers the detected one
+as the default, merges the resolved ``llm`` block into ``~/.ec/config.yaml``
+(D42-style), and verifies with one cheap live ping (``--no-verify`` skips).
+Ollama remains the offline fallback (D42).
 """
 
 from __future__ import annotations
@@ -34,9 +37,11 @@ from pathlib import Path
 
 import yaml
 
+from . import providers
 from .brain import Brain
-from .config import DEFAULT_CONFIG
+from .config import DEFAULT_CONFIG, load_config
 from .config import ec_home as _default_ec_home
+from .llm import call_llm
 
 # ---------------------------------------------------------------------------
 # Verbatim spec texts (§28.9, §28.10) — tests assert equality with SPEC.md
@@ -275,16 +280,6 @@ tool returns the same brain statistics and works without an active session.
 """,
 }
 
-ZEN_KEY_ENV = "OPENCODE_ZEN_API_KEY"
-ZEN_GUIDANCE = (
-    "EC needs an OpenCode Zen API key for LLM inference (extraction, "
-    "relationship classification, mode detection). Get one at "
-    "https://opencode.ai/auth — then run: export OPENCODE_ZEN_API_KEY='your-key'"
-)
-_OLLAMA_FALLBACK = (
-    "(Fallback: set up Ollama with qwen2.5-coder:14b for offline use.)"
-)
-
 # Ollama offline fallback (§28.8, auto-setup D42 / design doc §6.4).
 # base_url includes /v1: Ollama serves its OpenAI-compatible endpoint at
 # http://localhost:11434/v1/chat/completions (Phase 13, D48).
@@ -315,13 +310,45 @@ _OLLAMA_OFFER = (
     "(y/n): "
 )
 
+_OLLAMA_FALLBACK_NOTE = (
+    "  · Ollama detected — available as an offline fallback (provider "
+    f"\"ollama\", model \"{OLLAMA_MODEL}\")."
+)
 
-def _ollama_config_plan(ec_home: Path, home: Path) -> PlannedWrite:
-    """Planned config.yaml write switching the LLM block to Ollama (D42).
+#: The default config's key env var (kept for tests/readers; the flow is
+#: registry-driven now — this is simply REGISTRY["opencode_zen"].api_key_env).
+ZEN_KEY_ENV = providers.REGISTRY["opencode_zen"].api_key_env
+
+
+def _export_hint(entry: providers.Provider) -> str:
+    """One line of key-setup guidance for a provider."""
+    url = f" — get one at {entry.key_url}" if entry.key_url else ""
+    return f"export {entry.api_key_env}='your-key'{url}"
+
+
+def _provider_guidance() -> str:
+    """Provider-agnostic key guidance (non-interactive no-key output)."""
+    lines = [
+        "EC needs one LLM provider for extraction, relationship "
+        "classification, and mode detection. Export a key for any of these, "
+        "then re-run `ec install` (or use --provider):"
+    ]
+    for key in providers.MENU_KEYS:
+        entry = providers.REGISTRY[key]
+        if entry.api_key_env and entry.key_required:
+            lines.append(f"  {_export_hint(entry)}")
+    lines.append("  (or run a local model via Ollama — see the Ollama "
+                 "section below when the binary is absent)")
+    return "\n".join(lines)
+
+
+def _llm_block_config_plan(ec_home: Path, home: Path, block: dict,
+                           detail: str) -> PlannedWrite:
+    """Merge a resolved ``llm`` block into ``~/.ec/config.yaml`` (D42-style).
 
     Existing config is merged (user keys preserved); a missing file gets the
-    full defaults with the Ollama block applied. Idempotent: unchanged when
-    the file already carries exactly the merged content.
+    full defaults with the block applied. Idempotent: unchanged when the
+    file already carries exactly the merged content.
     """
     path = ec_home / "config.yaml"
     disp = _display(path, home)
@@ -348,15 +375,114 @@ def _ollama_config_plan(ec_home: Path, home: Path) -> PlannedWrite:
             f"{disp}: `llm` is not a YAML mapping. Fix or remove it, then "
             "re-run `python -m ec.install`. No changes were made to it."
         )
-    llm.update(OLLAMA_LLM_BLOCK)
+    llm.update(block)
     content = yaml.safe_dump(merged, sort_keys=False)
     if existed and content == path.read_text(encoding="utf-8"):
         return PlannedWrite(path, "unchanged", None,
-                            f"{disp} already configured for Ollama — unchanged")
+                            f"{disp} already carries this llm block — unchanged")
     return PlannedWrite(
-        path, "merge" if existed else "create", content,
-        f"Configured {disp} for offline Ollama inference ({OLLAMA_MODEL})",
+        path, "merge" if existed else "create", content, detail,
     )
+
+
+def _configure_provider(ec_home: Path, home: Path, entry: providers.Provider,
+                        *, dry_run: bool, print_fn, environ, runner,
+                        ollama_path: str | None) -> None:
+    """Write the provider's llm block and report its key status (no secrets)."""
+    write = _llm_block_config_plan(
+        ec_home, home, providers.llm_block(entry.key),
+        f"Configured {_display(ec_home / 'config.yaml', home)} for "
+        f"{entry.name} ({entry.key})",
+    )
+    _emit(write, home, dry_run, print_fn)
+    if entry.key == "ollama":
+        if ollama_path:
+            print_fn(f"  ✓ Ollama detected ({ollama_path})")
+        if dry_run:
+            print_fn(f"  [dry-run] would pull {OLLAMA_MODEL} via "
+                     f"`{OLLAMA_BINARY} pull {OLLAMA_MODEL}`")
+        else:
+            print_fn(f"  Pulling {OLLAMA_MODEL} (this may take a while)...")
+            try:
+                runner([ollama_path or OLLAMA_BINARY, "pull", OLLAMA_MODEL])
+                print_fn(f"  ✓ Model {OLLAMA_MODEL} available")
+            except Exception as exc:      # never fatal (D42)
+                print_fn(
+                    f"  ! Could not run `{OLLAMA_BINARY} pull` ({exc})."
+                    f" Run it manually, then EC works offline.")
+    else:
+        env_var = providers.key_env_for(entry, environ)
+        if env_var:
+            print_fn(f"  ✓ {env_var} is set")
+        elif entry.key_required:
+            print_fn(f"  ✗ {entry.api_key_env} is not set — export it before "
+                     "using EC's LLM features:")
+            print_fn(f"      {_export_hint(entry)}")
+    if entry.key != "ollama" and ollama_path:
+        print_fn(_OLLAMA_FALLBACK_NOTE)
+
+
+def _live_ping(config) -> tuple[bool, str]:
+    """One cheap live call: the model must answer a short prompt."""
+    try:
+        out = call_llm("Reply with the single word: OK", temperature=0.0,
+                       max_tokens=64, config=config)
+    except Exception as exc:          # report anything — never fatal
+        return False, str(exc)
+    first = out.strip().splitlines()[0] if out.strip() else "(empty response)"
+    return True, first[:40]
+
+
+def _verify_provider(ec_home: Path, *, dry_run: bool, no_verify: bool,
+                     verify_fn, print_fn) -> None:
+    """One live ping against the freshly written config (skippable)."""
+    if dry_run:
+        print_fn("  [dry-run] would verify the provider with one cheap "
+                 "live ping (skipped)")
+        return
+    if no_verify:
+        print_fn("  (live verification skipped — --no-verify)")
+        return
+    print_fn("  Verifying with a live ping...")
+    ping = verify_fn or _live_ping
+    ok, detail = ping(load_config(ec_home / "config.yaml"))
+    if ok:
+        print_fn(f"  ✓ {detail!r} — EC's LLM features are live")
+    else:
+        print_fn(f"  ✗ Ping failed: {detail}")
+        print_fn("    The provider is configured; fix the key or model name "
+                 "and re-run `ec install --provider <name> --no-verify`.")
+
+
+def _provider_menu(input_fn, print_fn, environ) -> str | None:
+    """Interactive provider picker. Returns a registry key, or None (skip)."""
+    print_fn("\nSelect the LLM provider EC should use:")
+    options: list[str | None] = []
+    for key in providers.MENU_KEYS:
+        if key == "ollama":
+            continue                  # offered last, before skip
+        entry = providers.REGISTRY[key]
+        marked = ""
+        if entry.api_key_env and providers.key_env_for(entry, environ):
+            marked = "  ✓ key set"
+        print_fn(f"  [{len(options) + 1}] {entry.name}{marked}")
+        options.append(key)
+    ollama = providers.REGISTRY["ollama"]
+    print_fn(f"  [{len(options) + 1}] Local via Ollama ({ollama.default_model})")
+    options.append("ollama")
+    print_fn(f"  [{len(options) + 1}] Skip for now")
+    options.append(None)
+    try:
+        raw = input_fn("\nEnter number: ")
+    except EOFError:
+        raw = ""
+    try:
+        idx = int(raw.strip())
+    except ValueError:
+        return None
+    if 1 <= idx <= len(options):
+        return options[idx - 1]
+    return None
 
 
 #: The distribution name importlib.metadata looks up (pyproject.toml).
@@ -803,13 +929,18 @@ def _select_interactive(detected: list[AgentSpec], input_fn, print_fn
 
 def run(*, home: Path | None = None, ec_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
-        dry_run: bool = False, input_fn=input, print_fn=print,
+        dry_run: bool = False, provider: str | None = None,
+        no_verify: bool = False, verify_fn=None,
+        input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
         runner=subprocess.run) -> int:
     """§28.8 `ec install`. Returns 0 on success, raises InstallError otherwise.
 
-    ``runner`` executes the Ollama model pull when the user accepts the D42
-    offer (injectable for tests; failures are reported, never fatal).
+    ``provider`` (--provider) selects the LLM provider non-interactively
+    (registry key; ``ollama`` runs the D42 local setup). ``no_verify``
+    skips the live ping; ``verify_fn`` (returning ``(ok, detail)``) replaces
+    the ping in tests. ``runner`` executes the Ollama model pull (injectable;
+    failures are reported, never fatal).
     """
     home = Path(home) if home else Path.home()
     ec_home = Path(ec_home) if ec_home else _default_ec_home()
@@ -870,52 +1001,59 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
     for write in _ec_home_plans(home, ec_home):
         _emit(write, home, dry_run, print_fn)
 
-    # -- LLM dependency (§28.8) + Ollama auto-setup (D42, design doc §6.4) --
-    print_fn("\nChecking LLM dependency...")
-    zen_found = bool(environ.get(ZEN_KEY_ENV))
+    # -- LLM provider (§28.8 + feat/providers) -----------------------------
+    print_fn("\nChecking LLM provider...")
     ollama_path = which(OLLAMA_BINARY)
-    if zen_found:
-        print_fn(f"  ✓ OpenCode Zen API key found ({ZEN_KEY_ENV} env var)")
-        print_fn("  (EC uses Claude Haiku 4.5 via Zen for extraction, "
-                 "diffusion, and mode detection.)")
-        if ollama_path:
-            print_fn(f"  · Ollama detected — available as an offline fallback "
-                     f"(switch via ~/.ec/config.yaml: provider \"ollama\", "
-                     f"model \"{OLLAMA_MODEL}\").")
-        else:
-            print_fn(f"  {_OLLAMA_FALLBACK}")
+
+    chosen: providers.Provider | None = None
+    if provider is not None:
+        entry = providers.get(provider)
+        if entry is None or provider == "custom":
+            raise InstallError(
+                f"unknown provider {provider!r}. Known providers: "
+                f"{', '.join(providers.provider_names())}"
+            )
+        chosen = entry
     else:
-        print_fn(f"  ✗ {ZEN_KEY_ENV} is not set")
-        print_fn(f"  {ZEN_GUIDANCE}")
-        if ollama_path:
-            print_fn(f"  ✓ Ollama detected ({ollama_path})")
+        detected = [
+            key for key in providers.MENU_KEYS
+            if providers.key_env_for(providers.REGISTRY[key], environ)
+        ]
+        for key in detected:
+            entry = providers.REGISTRY[key]
+            print_fn(f"  ✓ {providers.key_env_for(entry, environ)} detected "
+                     f"({entry.name})")
+        if len(detected) == 1:
             try:
-                answer = input_fn(_OLLAMA_OFFER)
+                answer = input_fn(
+                    f"\nConfigure EC for {providers.REGISTRY[detected[0]].name} "
+                    f"using {providers.key_env_for(providers.REGISTRY[detected[0]], environ)}? "
+                    "(Y/n): ")
             except EOFError:
                 answer = ""
-            if answer.strip().lower().startswith("y"):
-                _emit(_ollama_config_plan(ec_home, home), home, dry_run,
-                      print_fn)
-                if dry_run:
-                    print_fn(f"  [dry-run] would pull {OLLAMA_MODEL} via "
-                             f"`{OLLAMA_BINARY} pull {OLLAMA_MODEL}`")
-                else:
-                    print_fn(f"  Pulling {OLLAMA_MODEL} (this may take a "
-                             "while)...")
-                    try:
-                        runner([ollama_path or OLLAMA_BINARY, "pull",
-                                OLLAMA_MODEL])
-                        print_fn(f"  ✓ Model {OLLAMA_MODEL} available")
-                    except Exception as exc:      # never fatal (D42)
-                        print_fn(
-                            f"  ! Could not run `{OLLAMA_BINARY} pull` ({exc})."
-                            f" Run it manually, then EC works offline.")
-            else:
-                print_fn("  Ollama left unconfigured. To enable later, set "
-                         "these keys in ~/.ec/config.yaml:")
-                print_fn(_OLLAMA_CONFIG_SNIPPET)
+            if answer.strip().lower() in ("", "y", "yes"):
+                chosen = providers.REGISTRY[detected[0]]
+        if chosen is None:
+            menu_choice = _provider_menu(input_fn, print_fn, environ)
+            chosen = providers.get(menu_choice)
+
+    if chosen is None:
+        print_fn("\nNo provider configured — EC's LLM features stay off "
+                 "until one is set.")
+        print_fn(_provider_guidance())
+        if ollama_path:
+            print_fn("\n  To set up Ollama later, re-run `ec install` and "
+                     "choose \"Local via Ollama\", or set these keys in "
+                     "~/.ec/config.yaml:")
+            print_fn(_OLLAMA_CONFIG_SNIPPET)
         else:
             print_fn(_OLLAMA_INSTALL_INSTRUCTIONS)
+    else:
+        _configure_provider(ec_home, home, chosen, dry_run=dry_run,
+                            print_fn=print_fn, environ=environ,
+                            runner=runner, ollama_path=ollama_path)
+        _verify_provider(ec_home, dry_run=dry_run, no_verify=no_verify,
+                         verify_fn=verify_fn, print_fn=print_fn)
 
     if dry_run:
         print_fn("\nDry run complete — no files were written.")
@@ -967,6 +1105,11 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--only", default=None, metavar="AGENT[,AGENT...]",
                        help="configure only these agents by key "
                             f"({', '.join(sorted(_AGENTS_BY_KEY))})")
+    parser.add_argument("--provider", default=None, metavar="PROVIDER",
+                        help="LLM provider to configure without prompting "
+                             f"({', '.join(providers.provider_names())})")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="skip the live ping after provider setup")
     parser.add_argument("--dry-run", action="store_true",
                         help="show exactly what would be written; write nothing")
     args = parser.parse_args(argv)
@@ -977,6 +1120,8 @@ def main(argv: list[str] | None = None) -> int:
             only=[k.strip() for k in args.only.split(",") if k.strip()]
             if args.only else None,
             dry_run=args.dry_run,
+            provider=args.provider,
+            no_verify=args.no_verify,
         )
     except InstallError as exc:
         print(str(exc), file=sys.stderr)

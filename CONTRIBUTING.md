@@ -24,7 +24,11 @@ ruff check ec tests bench conftest.py
 ```
 
 The test suite runs fully offline: LLM calls are mocked, and the five live
-tests plus the end-to-end test skip unless `OPENCODE_ZEN_API_KEY` is set.
+tests plus the end-to-end test skip unless the configured provider's key is
+set (`ec.llm.api_key` reads whichever `api_key_env` your `~/.ec/config.yaml`
+names — `OPENCODE_ZEN_API_KEY` for the default config, or
+`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`/`OPENROUTER_API_KEY`
+when you point the config at another registry provider).
 Use `EC_HOME` to redirect the brain directory to a temp path for isolation.
 
 ## Ground rules

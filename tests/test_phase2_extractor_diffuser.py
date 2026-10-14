@@ -32,7 +32,7 @@ from ec.extractor import (
     load_extractor_prompt,
     validate_ecu,
 )
-from ec.llm import LLMError
+from ec.llm import LLMError, api_key
 
 
 def make_ecu(cognition: str, **overrides) -> dict:
@@ -661,12 +661,12 @@ class TestLightweightDiffuser:
 
 
 # ---------------------------------------------------------------------------
-# live Zen API tests (skip without a key)
+# live provider tests (skip without a configured provider key)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.skipif(
-    not os.environ.get("OPENCODE_ZEN_API_KEY"),
-    reason="OPENCODE_ZEN_API_KEY not set — live Zen test skipped",
+    not api_key(),
+    reason="no provider key configured (see ec.llm.api_key) — live test skipped",
 )
 class TestLive:
     def test_extractor_live(self):

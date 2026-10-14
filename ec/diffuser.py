@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from . import confidence as conf
 from .brain import _now_iso
 from .config import RETRIEVABLE_STATUSES, get_config
-from .llm import LLMError, call_llm, extract_json
+from .llm import LLMError, call_llm, extract_json, model_for
 
 log = logging.getLogger("ec.diffuser")
 
@@ -263,12 +263,13 @@ def _classify_pairs(
             f"({MAX_CLASSIFY_BATCH}); reduce top_k"
         )
     user = CLASSIFICATION_USER_TEMPLATE.format(pairs=_format_pairs(pairs))
+    cfg = config or get_config()
     try:
         # Classification is a deterministic task: temperature 0.0, so the
         # same pairs always yield the same relationships (both the 5-way and
         # the lightweight 3-way prompts come through here).
         response = call_llm(user, system=system, temperature=0.0,
-                            config=config or get_config())
+                            model=model_for(cfg, "classification"), config=cfg)
     except LLMError as exc:
         raise DiffuserError(f"relationship classification failed: {exc}") from exc
 
@@ -371,8 +372,10 @@ def _adjudicate_contradiction(new_ecu: dict, existing_ecu: dict, config=None) ->
         confidence_b=existing_ecu["confidence"],
     )
     try:
+        cfg = config or get_config()
         response = call_llm(user, system=_CONTRADICTION_SYSTEM,
-                            temperature=0.0, config=config or get_config())
+                            temperature=0.0,
+                            model=model_for(cfg, "classification"), config=cfg)
         payload = json.loads(extract_json(response))
         verdict = str(payload.get("verdict", "")).strip().lower()
     except (LLMError, json.JSONDecodeError) as exc:

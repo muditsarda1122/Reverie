@@ -43,8 +43,13 @@ def ec_home(home):
     return home / ".ec"
 
 
-def run_install(home, ec_home, *, input_fn=None, environ=None, **kwargs):
-    """run() fully sandboxed: no real PATH binaries, no real env keys."""
+def run_install(home, ec_home, *, input_fn=None, environ=None, provider=None,
+                no_verify=True, verify_fn=None, **kwargs):
+    """run() fully sandboxed: no real PATH binaries, no real env keys.
+
+    The live ping is disabled by default (no_verify) so tests never touch
+    the network; ``verify_fn`` replaces it when a test wants the report path.
+    """
     out = []
     install.run(
         home=home,
@@ -53,6 +58,9 @@ def run_install(home, ec_home, *, input_fn=None, environ=None, **kwargs):
         input_fn=input_fn or (lambda _prompt="": ""),
         print_fn=out.append,
         environ=environ if environ is not None else {},
+        provider=provider,
+        no_verify=no_verify,
+        verify_fn=verify_fn,
         **kwargs,
     )
     return "\n".join(out)
@@ -360,7 +368,7 @@ def test_interactive_all_and_subset(home, ec_home):
         p = home / marker
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-    out = run_install(home, ec_home, input_fn=scripted(["y"]))
+    out = run_install(home, ec_home, input_fn=scripted(["y", "7"]))
     assert "Configuring Claude Code..." in out
     assert "Configuring Codex..." in out
 
@@ -372,7 +380,7 @@ def test_interactive_all_and_subset(home, ec_home):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
     out = run_install(home2, home2 / ".ec",
-                      input_fn=scripted(["n", "1,3"]))
+                      input_fn=scripted(["n", "1,3", "7"]))   # 7 = skip provider
     assert "Select agents to configure:" in out
     assert "Configuring Claude Code..." in out
     assert "Configuring Cursor..." not in out
@@ -403,12 +411,86 @@ def test_only_configures_undetected_agent(home, ec_home):
     assert (home / ".cursor" / "mcp.json").exists()
 
 
-def test_zen_key_check(home, ec_home):
-    out = run_install(home, ec_home, all_agents=True,
-                      environ={install.ZEN_KEY_ENV: "sk-test"})
-    assert f"OpenCode Zen API key found ({install.ZEN_KEY_ENV} env var)" in out
-    out = run_install(home, ec_home, all_agents=True, environ={})
-    assert install.ZEN_GUIDANCE in out                         # §28.8 verbatim
+def test_provider_key_detected_autoconfigures(home, ec_home):
+    """feat/providers: a single detected key is offered and (default yes)
+    configures the provider, then the live ping reports success."""
+    out = run_install(
+        home, ec_home, all_agents=True,
+        environ={"ANTHROPIC_API_KEY": "sk-test"},
+        no_verify=False,
+        verify_fn=lambda cfg: (True, "OK"))
+    assert "ANTHROPIC_API_KEY detected (Anthropic)" in out
+    assert "Configured ~/.ec/config.yaml for Anthropic (anthropic)" in out
+    assert "✓ 'OK' — EC's LLM features are live" in out
+    assert "✓ ANTHROPIC_API_KEY is set" in out
+
+
+def test_multiple_keys_detected_menu(home, ec_home):
+    """Several detected keys: both are reported, the menu marks them, and the
+    user picks one."""
+    out = run_install(
+        home, ec_home, all_agents=True,
+        environ={"ANTHROPIC_API_KEY": "a", "OPENAI_API_KEY": "b"},
+        input_fn=scripted(["1"]))          # [1] Anthropic
+    assert "ANTHROPIC_API_KEY detected (Anthropic)" in out
+    assert "OPENAI_API_KEY detected (OpenAI)" in out
+    assert "Select the LLM provider EC should use" in out
+    assert "[1] Anthropic  ✓ key set" in out
+    assert "[2] OpenAI  ✓ key set" in out
+    assert "Configured ~/.ec/config.yaml for Anthropic (anthropic)" in out
+    import yaml
+    data = yaml.safe_load((ec_home / "config.yaml").read_text())
+    assert data["llm"]["provider"] == "anthropic"
+
+
+def test_no_key_prints_provider_guidance(home, ec_home):
+    """No key + non-tty answer: provider menu, skip, guidance listing every
+    registry provider — nothing Zen-only."""
+    out = run_install(home, ec_home, all_agents=True)
+    assert "Select the LLM provider EC should use" in out
+    assert "Skip for now" in out
+    assert "No provider configured" in out
+    for env_var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
+                    "OPENROUTER_API_KEY", "OPENCODE_ZEN_API_KEY"):
+        assert env_var in out
+    assert "opencode.ai/auth" in out            # zen listed alongside others
+
+
+def test_provider_flag_non_interactive(home, ec_home):
+    """--provider anthropic: no prompts, block merged, export line printed."""
+    out = run_install(home, ec_home, all_agents=True, provider="anthropic")
+    assert "Configuring" not in out             # agent selection skipped via --all
+    assert "Configured ~/.ec/config.yaml for Anthropic (anthropic)" in out
+    assert "export ANTHROPIC_API_KEY='your-key'" in out
+    assert "live verification skipped" in out   # default no_verify in helper
+    import yaml
+    data = yaml.safe_load((ec_home / "config.yaml").read_text())
+    assert data["llm"]["provider"] == "anthropic"
+    assert data["llm"]["model"] == "claude-haiku-5-5"
+    assert data["llm"]["base_url"] == "https://api.anthropic.com/v1"
+    assert data["llm"]["wire_format"] == "anthropic"
+
+
+def test_provider_flag_unknown_key_errors(home, ec_home):
+    with pytest.raises(install.InstallError, match="unknown provider"):
+        run_install(home, ec_home, all_agents=True, provider="vllm")
+
+
+def test_provider_dry_run_writes_nothing(home, ec_home):
+    out = run_install(home, ec_home, all_agents=True, provider="anthropic",
+                      dry_run=True)
+    assert "[dry-run] create: ~/.ec/config.yaml" in out
+    assert "would verify the provider" in out
+    assert not (ec_home / "config.yaml").exists()
+
+
+def test_ping_failure_reported_not_fatal(home, ec_home):
+    out = run_install(
+        home, ec_home, all_agents=True, provider="anthropic", no_verify=False,
+        verify_fn=lambda cfg: (False, "LLMError: HTTP 401"))
+    assert "✗ Ping failed" in out
+    assert "HTTP 401" in out
+    assert (ec_home / "config.yaml").exists()   # config still written
 
 
 def test_agents_ref_absolute_when_ec_home_not_default(home, tmp_path):

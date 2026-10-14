@@ -387,8 +387,12 @@ def scripted(answers):
 
 def run_install(home, ec_home, *, input_answers=(), environ=None,
                 which_fn=None, runner=None, dry_run=False, all_agents=False,
-                input_fn=None):
-    """install.run() fully sandboxed; returns the printed transcript."""
+                input_fn=None, provider=None, no_verify=True, verify_fn=None):
+    """install.run() fully sandboxed; returns the printed transcript.
+
+    The live ping is disabled by default (no_verify); ``verify_fn`` replaces
+    it when a test exercises the report path.
+    """
     out = []
 
     def _which(binary):
@@ -411,22 +415,23 @@ def run_install(home, ec_home, *, input_answers=(), environ=None,
         environ=environ if environ is not None else {},
         runner=runner or _default_runner,
         dry_run=dry_run,
+        provider=provider,
+        no_verify=no_verify,
+        verify_fn=verify_fn,
     )
     return "\n".join(out)
 
 
 class TestOllamaAutoSetup:
     def test_ollama_detected_offered(self, tmp_path):
-        """#9: Ollama on PATH + no Zen key -> offer accepted pulls the model
-        and writes the Ollama LLM block into ~/.ec/config.yaml."""
+        """#9 (menu form): choosing 'Local via Ollama' pulls the model and
+        writes the Ollama LLM block into ~/.ec/config.yaml."""
         home = tmp_path / "h1"
         home.mkdir()
         ec_home = home / ".ec"
         out = run_install(home, ec_home, all_agents=True,
-                          input_answers=["y"])
+                          input_answers=["6"])
         assert "Ollama detected" in out
-        # the offer prompt itself goes to input(); its acceptance is proven
-        # by the pull + the written config below
         assert f"Pulling {install.OLLAMA_MODEL}" in out
         cfg = ec_home / "config.yaml"
         assert cfg.exists()
@@ -447,7 +452,7 @@ class TestOllamaAutoSetup:
             return subprocess.CompletedProcess(cmd, 0)
 
         run_install(home, home / ".ec", all_agents=True,
-                    input_answers=["y"], runner=runner)
+                    input_answers=["6"], runner=runner)
         assert calls == [["/usr/local/bin/ollama", "pull",
                           install.OLLAMA_MODEL]]
 
@@ -456,8 +461,8 @@ class TestOllamaAutoSetup:
         home.mkdir()
         ec_home = home / ".ec"
         out = run_install(home, ec_home, all_agents=True,
-                          input_answers=["n"])
-        assert "left unconfigured" in out
+                          input_answers=["7"])
+        assert "No provider configured" in out
         assert 'provider: "ollama"' in out          # manual keys shown
         import yaml
         data = yaml.safe_load((ec_home / "config.yaml").read_text())
@@ -468,24 +473,20 @@ class TestOllamaAutoSetup:
         home = tmp_path / "h4"
         home.mkdir()
         out = run_install(home, home / ".ec", all_agents=True,
-                          which_fn=lambda _b: None)
+                          which_fn=lambda _b: None, input_answers=["7"])
         assert "curl -fsSL https://ollama.com/install.sh | sh" in out
         assert "provider: \"ollama\"" in out
 
     def test_zen_key_with_ollama_notes_fallback(self, tmp_path):
         home = tmp_path / "h5"
         home.mkdir()
-
-        def no_prompt(_p=""):
-            raise AssertionError("no offer may be made when a Zen key is set")
-
         out = run_install(
             home, home / ".ec", all_agents=True,
             environ={install.ZEN_KEY_ENV: "sk-test"},
-            input_fn=no_prompt)
-        assert "OpenCode Zen API key found" in out
+            input_answers=[""])
+        assert "detected (OpenCode Zen)" in out
         assert "offline fallback" in out
-        assert "Configure EC for offline use" not in out   # no offer
+        assert "Select the LLM provider" not in out   # no menu for a single key
 
     def test_existing_config_yaml_merged(self, tmp_path):
         home = tmp_path / "h6"
@@ -493,7 +494,7 @@ class TestOllamaAutoSetup:
         ec_home = home / ".ec"
         ec_home.mkdir()
         (ec_home / "config.yaml").write_text("ranking:\n  w_relevance: 0.99\n")
-        run_install(home, ec_home, all_agents=True, input_answers=["y"])
+        run_install(home, ec_home, all_agents=True, input_answers=["6"])
         import yaml
         data = yaml.safe_load((ec_home / "config.yaml").read_text())
         assert data["ranking"]["w_relevance"] == 0.99      # user keys preserved
@@ -508,7 +509,7 @@ class TestOllamaAutoSetup:
             calls.append(cmd)
 
         out = run_install(home, home / ".ec", all_agents=True,
-                          input_answers=["y"], runner=runner, dry_run=True)
+                          input_answers=["6"], runner=runner, dry_run=True)
         assert calls == []
         assert "[dry-run] would pull" in out
         assert not (home / ".ec" / "config.yaml").exists()
@@ -545,7 +546,8 @@ class TestConsoleScriptDetection:
             p.write_text(content)
         monkeypatch.setattr(install, "_is_pip_installed", lambda: True)
         out = run_install(home, home / ".ec", all_agents=True,
-                          environ={install.ZEN_KEY_ENV: "sk-test"})
+                          environ={install.ZEN_KEY_ENV: "sk-test"},
+                          input_answers=[""])
         claude = json.loads((home / ".claude.json").read_text())
         assert claude["mcpServers"]["ec"] == {
             "type": "stdio", "command": "ec-mcp"}

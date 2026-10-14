@@ -64,7 +64,7 @@ import logging
 import subprocess
 import sys
 
-from . import __version__, diffuser, extractor, maintainer, reconsolidation, retrieval
+from . import __version__, diffuser, extractor, maintainer, pending, reconsolidation, retrieval
 from .brain import Brain, BrainError, _now_iso
 from .confidence import FROZEN_STATUSES, reinforce_stored_confidence
 from .config import MODES, SCOPE_LEVELS, get_config
@@ -557,15 +557,28 @@ class ECServer:
             interaction["output"] = output
 
         brain = self._ensure_brain()
+        commit_hash = _current_commit_hash(row["repo_path"])  # D49
         try:
             result, ids = extractor.extract_and_store_session(
                 brain, row["id"], interaction,
                 embedding_model=self.embedding_model, config=self.config,
-                commit_hash=_current_commit_hash(row["repo_path"]),  # D49
+                commit_hash=commit_hash,
             )
         except ExtractorError as exc:
+            # feat/providers: the interaction is persisted so the failure
+            # costs nothing — it is retried at the next successful
+            # ec_observe (or via `ec-retry`).
+            pending_id = pending.save_pending_extraction(
+                brain, row, interaction, str(exc),
+                commit_hash=commit_hash,
+            )
+            error = EXTRACTION_FAILED.format(reason=exc) + (
+                f" The interaction was saved locally (pending id "
+                f"{pending_id[:8]}) and will be retried automatically at "
+                "the next successful ec_observe, or via `ec-retry`."
+            )
             return {"status": "error", "session_active": True,
-                    "error": EXTRACTION_FAILED.format(reason=exc)}
+                    "error": error, "pending_extraction_id": pending_id}
 
         diffusion_failures = 0
         for ecu_id in ids:
@@ -581,6 +594,13 @@ class ECServer:
                             ecu_id, exc)
                 diffusion_failures += 1
 
+        # feat/providers: this observe succeeded — opportunistically retry
+        # any pending extractions for this (repo, branch). Best-effort.
+        retry_summary = pending.retry_pending(
+            brain, repo_path=row["repo_path"], branch=row["branch"],
+            embedding_model=self.embedding_model, config=self.config,
+        )
+
         count = brain.count_session_ecus(row["id"])
         if ids:
             message = (
@@ -593,6 +613,17 @@ class ECServer:
                 "No engineering conclusions found in this response. This is "
                 "not an error — not every response produces ECUs."
             )
+        if retry_summary["recovered"]:
+            message += (
+                f" {retry_summary['recovered']} previously failed "
+                "extraction(s) were also recovered into this session."
+            )
+        elif retry_summary["failed"] or retry_summary["skipped"]:
+            message += (
+                f" {retry_summary['failed'] + retry_summary['skipped']} "
+                "pending extraction(s) could not be recovered yet "
+                "(retry at the next observe, or via `ec-retry`)."
+            )
         return {
             "status": "ok",
             "session_active": True,
@@ -603,6 +634,8 @@ class ECServer:
             "message": message,
             "skipped_invalid": result.skipped_invalid,
             "diffusion_failures": diffusion_failures,
+            "pending_recovered": retry_summary["recovered"],
+            "pending_failed": retry_summary["failed"] + retry_summary["skipped"],
         }
 
     def _tool_query(self, args: dict) -> dict:

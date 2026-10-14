@@ -1057,6 +1057,120 @@ class Brain:
         )
         self._conn.commit()
 
+    # ------------------------------------------------------------------
+    # Pending extractions (feat/providers): interactions whose extraction
+    # LLM call failed after retries. Storage only — retry policy lives in
+    # ec/pending.py; the MCP server persists and auto-retries.
+    # ------------------------------------------------------------------
+
+    def add_pending_extraction(
+        self,
+        repo_path: str,
+        branch: str,
+        interaction: dict,
+        session_id: str | None = None,
+        origin_agent: str | None = None,
+        commit_hash: str | None = None,
+        error: str | None = None,
+    ) -> str:
+        """Persist a failed extraction's input for a later retry."""
+        item_id = str(uuid.uuid4())
+        self._conn.execute(
+            """
+            INSERT INTO pending_extractions (
+                id, session_id, repo_path, branch, interaction_json,
+                origin_agent, commit_hash, error, retry_count,
+                created_at, last_attempt_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            """,
+            (
+                item_id, session_id, repo_path, branch,
+                json.dumps(interaction), origin_agent, commit_hash, error,
+                _now_iso(), _now_iso(),
+            ),
+        )
+        self._conn.commit()
+        return item_id
+
+    def list_pending_extractions(
+        self, repo_path: str | None = None, branch: str | None = None
+    ) -> list[dict]:
+        """Pending extraction rows (oldest first), optionally repo/branch-scoped."""
+        query = "SELECT * FROM pending_extractions"
+        clauses, params = [], []
+        if repo_path is not None:
+            clauses.append("repo_path = ?")
+            params.append(repo_path)
+        if branch is not None:
+            clauses.append("branch = ?")
+            params.append(branch)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at"
+        rows = self._conn.execute(query, params).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["interaction"] = json.loads(d.pop("interaction_json"))
+            out.append(d)
+        return out
+
+    def count_pending_extractions(
+        self, repo_path: str | None = None, branch: str | None = None
+    ) -> int:
+        query = "SELECT COUNT(*) FROM pending_extractions"
+        clauses, params = [], []
+        if repo_path is not None:
+            clauses.append("repo_path = ?")
+            params.append(repo_path)
+        if branch is not None:
+            clauses.append("branch = ?")
+            params.append(branch)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        return int(self._conn.execute(query, params).fetchone()[0])
+
+    def delete_pending_extraction(self, item_id: str) -> None:
+        """Remove a pending extraction (its retry succeeded or it was dropped)."""
+        self._conn.execute(
+            "DELETE FROM pending_extractions WHERE id = ?", (item_id,)
+        )
+        self._conn.commit()
+
+    def mark_pending_extraction_attempt(
+        self, item_id: str, error: str | None
+    ) -> None:
+        """Record a failed retry: bump retry_count, refresh error + timestamp."""
+        cur = self._conn.execute(
+            """
+            UPDATE pending_extractions
+            SET retry_count = retry_count + 1, error = ?, last_attempt_at = ?
+            WHERE id = ?
+            """,
+            (error, _now_iso(), item_id),
+        )
+        if cur.rowcount == 0:
+            raise BrainError(f"no pending extraction with id {item_id}")
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Undiffused ECUs (feat/providers): promoted-but-undiffused canonical
+    # ECUs are marked in metadata by the review gate; `ec-retry --rediffuse`
+    # clears the flag after a successful diffusion.
+    # ------------------------------------------------------------------
+
+    def list_undiffused_ecus(self) -> list[dict]:
+        """Canonical ECUs whose review-time diffusion failed (flag in metadata)."""
+        rows = self._conn.execute(
+            "SELECT id, metadata_json FROM ecus"
+        ).fetchall()
+        out = []
+        for r in rows:
+            metadata = json.loads(r["metadata_json"])
+            if metadata.get("diffusion_failed"):
+                out.append(r["id"])
+        return out
+
     def reassign_session_rows(
         self, from_session_ids: list[str], to_session_id: str
     ) -> list[str]:

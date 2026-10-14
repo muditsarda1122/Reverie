@@ -900,12 +900,16 @@ def apply_review_decisions(
                 except DiffuserError as exc:
                     # Promotion stands (the human decided); diffusion is
                     # enrichment and can fail offline — recorded, not fatal.
+                    # The metadata flag makes the ECU findable by
+                    # `ec-retry --rediffuse` (feat/providers).
                     log.warning("diffusion failed for %s: %s", canonical_id, exc)
+                    brain.update_ecu_metadata(canonical_id, diffusion_failed=True)
                     result.errors.append(
                         f"diffusion failed for {canonical_id}: {exc}"
                     )
                     result.undiffused.append(canonical_id)
                     continue
+                brain.update_ecu_metadata(canonical_id, diffusion_failed=False)
                 result.diffusions.append(dres)
                 result.flags.extend(dres.flags)
                 for f in dres.flags:

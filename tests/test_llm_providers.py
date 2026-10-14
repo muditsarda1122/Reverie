@@ -31,6 +31,13 @@ from ec.llm import LLMError, _api_format, api_key, call_llm
 KEY_ENV = "EC_TEST_LLM_KEY"
 
 
+@pytest.fixture(autouse=True)
+def _fast_retries(monkeypatch):
+    """No real sleeping in retry tests: attempts are counted via the mock."""
+    monkeypatch.setattr("ec.llm._sleep", lambda _s: None)
+    monkeypatch.setattr("ec.llm._jitter", lambda delay: delay)
+
+
 def make_config(model="claude-haiku-4-5", base_url="https://zen.example/v1"):
     cfg = copy.deepcopy(DEFAULT_CONFIG)
     cfg["llm"].update({
@@ -45,10 +52,11 @@ def make_config(model="claude-haiku-4-5", base_url="https://zen.example/v1"):
 class FakeResponse:
     """Minimal stand-in for requests.Response."""
 
-    def __init__(self, status_code=200, payload=None):
+    def __init__(self, status_code=200, payload=None, headers=None):
         self.status_code = status_code
         self._payload = payload if payload is not None else {}
         self.text = json.dumps(self._payload)
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -245,6 +253,7 @@ class TestOllamaNoApiKey:
         request still issued in OpenAI Chat format against /v1."""
         cfg = make_config(model="qwen2.5-coder:14b",
                           base_url="http://localhost:11434/v1")
+        cfg.llm.provider = "ollama"
         monkeypatch.delenv(KEY_ENV, raising=False)
         assert api_key(cfg) is None
         with patch("ec.llm.requests.post",
@@ -255,6 +264,19 @@ class TestOllamaNoApiKey:
         req = m.call_args
         assert req.args[0] == "http://localhost:11434/v1/chat/completions"
         assert "Authorization" not in req.kwargs["headers"]
+
+    def test_local_base_url_needs_no_key_even_when_provider_says_so(
+            self, monkeypatch):
+        """A hand-edited local config (provider unchanged, base_url loopback)
+        must not be blocked by the registry's key_required rule."""
+        cfg = make_config(model="qwen2.5-coder:14b",
+                          base_url="http://127.0.0.1:11434/v1")
+        monkeypatch.delenv(KEY_ENV, raising=False)
+        assert api_key(cfg) is None
+        assert cfg.llm.provider == "opencode_zen"    # untouched, still keyless
+        with patch("ec.llm.requests.post",
+                   return_value=FakeResponse(payload=OPENAI_PAYLOAD)):
+            assert call_llm("x", config=cfg) == "hi there"
 
     def test_installer_writes_v1_base_url(self):
         """Phase 13 fix: the D42 Ollama block points at the OpenAI-compatible

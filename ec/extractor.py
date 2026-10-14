@@ -30,7 +30,7 @@ from pathlib import Path
 
 from . import confidence as conf
 from .config import CONCLUSION_TYPES, SCOPE_LEVELS, get_base_prior, get_config
-from .llm import LLMError, call_llm, extract_json
+from .llm import LLMError, call_llm, extract_json, model_for
 
 log = logging.getLogger("ec.extractor")
 
@@ -231,7 +231,8 @@ def extract_ecus(
     system = load_extractor_prompt()
 
     try:
-        response = call_llm(user_message, system=system, config=cfg)
+        response = call_llm(user_message, system=system,
+                            model=model_for(cfg, "extraction"), config=cfg)
     except LLMError as exc:
         raise ExtractorError(f"extraction LLM call failed: {exc}") from exc
 
