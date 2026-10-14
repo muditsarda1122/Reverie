@@ -3100,10 +3100,15 @@ form plus a short-lived `review_token` (TTL 1 h, server-held).
 `ec_review_decide(review_token, decisions)` applies decisions only to
 ids returned under that token, refuses a bulk accept-all (all ids of a
 multi-candidate token accepted in one call), and records the channel as
-`agent`. The agent instructions (`~/.ec/AGENTS.md`) require: show every
-candidate's full text before asking; relay only stated decisions; never
-decide on the user's behalf; never bulk-accept unless the user
-explicitly asked for that group.
+`agent`. Tokens are single-use: a successful decide call consumes the
+token, so accepting part of a listing and then the rest in a second call
+with the same token is refused — the next batch requires a fresh
+`ec_review_list`. This adds friction; it is not a security boundary
+(§29.4's honesty note stands: the channel is the record). The agent
+instructions (`~/.ec/AGENTS.md`) require: show every candidate's full
+text before asking; relay only stated decisions; never decide on the
+user's behalf; never bulk-accept unless the user explicitly asked for
+that group.
 
 ### 29.6 The nudge (D57)
 

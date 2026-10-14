@@ -1138,7 +1138,10 @@ class ECServer:
             "instructions": (
                 "Show every candidate's full conclusion text, then relay "
                 "only the decisions the user states via ec_review_decide. "
-                "Never decide on the user's behalf. Reverie cannot verify "
+                "Never decide on the user's behalf. One listing feeds one "
+                "decide call — after it succeeds, call ec_review_list again "
+                "for the next batch (single-use tokens; this adds friction, "
+                "it is not a security boundary). Reverie cannot verify "
                 "who made a decision; the channel is recorded as 'agent'."
             ),
         }
@@ -1217,6 +1220,12 @@ class ECServer:
             self._ensure_brain(), decisions,
             channel="agent", config=self.config,
         )
+        # Single-use tokens (feat/flow review fix): the token is consumed
+        # once a decide call succeeds, so each listing feeds exactly one
+        # decision call — the next batch needs a fresh ec_review_list. This
+        # adds friction, it is not a security boundary: Reverie cannot
+        # verify who is on the other end of the channel.
+        del self._review_tokens[token]
         return {
             "status": "ok",
             "decided": out["decided"],

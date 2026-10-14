@@ -249,6 +249,76 @@ def test_review_decide_token_not_reusable_after_expiry(server, brain):
     assert payload["status"] == "error"
 
 
+def test_review_decide_token_is_single_use(server, brain):
+    """Fix 4: a token cannot decide the same listing twice — the second
+    decide call with a consumed token is refused, so each batch needs a
+    fresh ec_review_list (friction, not a security boundary)."""
+    s = make_session(brain)
+    c1 = make_candidate(brain, s, "first", confidence=0.9)
+    c2 = make_candidate(brain, s, "second", confidence=0.4)
+    listing, _ = call_tool(server, "ec_review_list")
+    token = listing["review_token"]
+    with patch("ec.diffuser.diffuse_ecu"):
+        payload, _ = call_tool(server, "ec_review_decide", {
+            "review_token": token,
+            "decisions": [{"id": c1, "action": "accept"}]})
+    assert payload["status"] == "ok"
+    payload, result = call_tool(server, "ec_review_decide", {
+        "review_token": token,
+        "decisions": [{"id": c2, "action": "reject"}]})
+    assert payload["status"] == "error"
+    assert result["isError"] is True
+    assert "ec_review_list" in payload["error"]
+    assert brain.get_session_ecu(c2)["review_status"] == "pending"
+
+
+def test_review_decide_no_two_call_bulk_accept_bypass(server, brain):
+    """Fix 4: accepting 9 of 10 candidates in one call and the 10th in a
+    second call with the same token is refused — the "no bulk accept-all"
+    guard cannot be split across calls."""
+    s = make_session(brain)
+    ids = [make_candidate(brain, s, f"c{i}", confidence=0.5)
+           for i in range(10)]
+    listing, _ = call_tool(server, "ec_review_list")
+    token = listing["review_token"]
+    first_nine = ids[:9]
+    with patch("ec.diffuser.diffuse_ecu"):
+        payload, _ = call_tool(server, "ec_review_decide", {
+            "review_token": token,
+            "decisions": [{"id": cid, "action": "accept"}
+                          for cid in first_nine]})
+    assert payload["status"] == "ok"
+    assert sorted(payload["decided"]) == sorted(first_nine)
+    # the bypass attempt: same token, the last candidate
+    payload, result = call_tool(server, "ec_review_decide", {
+        "review_token": token,
+        "decisions": [{"id": ids[9], "action": "accept"}]})
+    assert payload["status"] == "error"
+    assert result["isError"] is True
+    assert brain.get_session_ecu(ids[9])["review_status"] == "pending"
+
+
+def test_review_decide_token_survives_refusals(server, brain):
+    """The token is consumed only by SUCCESS: refusals (bulk accept-all)
+    leave it valid so the user can retry per candidate from the listing."""
+    s = make_session(brain)
+    c1 = make_candidate(brain, s, "a", confidence=0.9)
+    c2 = make_candidate(brain, s, "b", confidence=0.8)
+    listing, _ = call_tool(server, "ec_review_list")
+    token = listing["review_token"]
+    payload, _ = call_tool(server, "ec_review_decide", {
+        "review_token": token,
+        "decisions": [{"id": c1, "action": "accept"},
+                      {"id": c2, "action": "accept"}]})
+    assert payload["status"] == "error"          # bulk accept-all refused
+    assert token in server._review_tokens
+    with patch("ec.diffuser.diffuse_ecu"):
+        payload, _ = call_tool(server, "ec_review_decide", {
+            "review_token": token,
+            "decisions": [{"id": c1, "action": "accept"}]})
+    assert payload["status"] == "ok"             # retry per candidate works
+
+
 def test_review_decide_cross_session_batch(server, brain):
     s1 = make_session(brain)
     s2 = make_session(brain, branch="feat/x")
