@@ -328,23 +328,21 @@ def test_command_templates(home, ec_home):
     run_install(home, ec_home, all_agents=True)
     expected = {
         "ec-start.md": ("**`~/.ec/commands/ec-start.md`:**",
-                        "python -m ec.session start"),
+                        "Sessions are automatic per branch"),
         "ec-stop.md": ("**`~/.ec/commands/ec-stop.md`:**",
-                       "python -m ec.session stop"),
+                       "ec_review_decide"),
         "ec-status.md": ("**`~/.ec/commands/ec-status.md`:**",
-                         "python -m ec.session status"),
+                         "ec_get_summary"),
     }
-    for name, (header, invocation) in expected.items():
+    for name, (header, marker) in expected.items():
         text = (ec_home / "commands" / name).read_text()
         assert spec_block(header) in text                       # §28.10 verbatim
-        assert f"`{invocation}`" in text                        # D15/D24 wiring
-    # MCP tools referenced exactly as §28.9 names them
-    assert "ec_observe" in (ec_home / "commands" / "ec-start.md").read_text()
-    stop = (ec_home / "commands" / "ec-stop.md").read_text()
-    assert "ec_observe" in stop and "--all-accept" in stop \
-        and "--all-skip" in stop
-    assert "ec_get_summary" in \
-        (ec_home / "commands" / "ec-status.md").read_text()
+        assert marker in text
+    # feat/flow: the lifecycle templates no longer advertise /ec-start
+    start = (ec_home / "commands" / "ec-start.md").read_text()
+    assert "ec_set_repo_state" in start
+    assert "--all-accept" not in (ec_home / "commands" / "ec-stop.md").read_text()
+    assert "ec_review_decide" in (ec_home / "commands" / "ec-stop.md").read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -550,3 +548,42 @@ def test_cli_subprocess(tmp_path):
         assert (ec_dir / "commands" / name).exists()
     # every written file is inside the fake home — nothing escaped
     assert proc.stdout.count("✓") >= 4
+
+
+# ---------------------------------------------------------------------------
+# stale `ec` console-script binding detection (feat/flow review fix 9)
+# ---------------------------------------------------------------------------
+
+def _fake_entry_points(monkeypatch, entries):
+    import importlib.metadata as md
+    monkeypatch.setattr(md, "entry_points", lambda group=None: entries)
+
+
+def test_stale_entry_point_note_fires(monkeypatch):
+    from types import SimpleNamespace
+    _fake_entry_points(monkeypatch, [
+        SimpleNamespace(name="ec-mcp", value="ec.mcp_server:main"),
+        SimpleNamespace(name="ec", value="ec.install:main"),   # pre-flow
+    ])
+    note = install.stale_entry_point_note()
+    assert note is not None
+    assert "ec.install:main" in note
+    assert "pip install -e ." in note
+
+
+def test_stale_entry_point_note_quiet_when_current(monkeypatch):
+    from types import SimpleNamespace
+    _fake_entry_points(monkeypatch, [
+        SimpleNamespace(name="ec", value="ec.cli:main"),
+    ])
+    assert install.stale_entry_point_note() is None
+
+
+def test_stale_entry_point_note_quiet_without_metadata(monkeypatch):
+    import importlib.metadata as md
+
+    def boom(group=None):
+        raise RuntimeError("no metadata here")
+
+    monkeypatch.setattr(md, "entry_points", boom)
+    assert install.stale_entry_point_note() is None

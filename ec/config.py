@@ -33,6 +33,12 @@ def ec_home() -> Path:
     return Path(os.environ.get("EC_HOME", "~/.ec")).expanduser()
 
 
+#: This Reverie version's schema level (feat/flow). Stored in the database as
+#: ``PRAGMA user_version`` (raised, never lowered, on open). Exports record
+#: it; imports refuse files written by a NEWER schema.
+SCHEMA_VERSION = 1
+
+
 def default_db_path() -> Path:
     return ec_home() / "ec.db"
 
@@ -259,6 +265,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "grouping_strategy": "scope",
     },
 
+    # -- Review queue (feat/flow, D57): cross-session review -----------------
+    "review": {
+        # Candidates unreviewed this many days become review_status='expired'
+        # (kept, never deleted; still usable in session memory; revived only
+        # via `ec review --expired`). 0 disables expiry.
+        "expire_after_days": 21,
+        # ec_get_summary nudge: one counts-only line when the unreviewed
+        # backlog exceeds this many candidates...
+        "nudge_threshold": 10,
+        # ...or the oldest unreviewed candidate is older than this many days.
+        "nudge_age_days": 5,
+        # Page size for `ec review` and ec_review_list (never a filter —
+        # "more" is always available).
+        "page_size": 10,
+    },
+
     # -- Contradiction handling (§12) ----------------------------------------
     "contradiction": {
         # Redundant with confidence.theta_contradiction_flag — that is what
@@ -327,6 +349,13 @@ RETRIEVABLE_STATUSES = ("active", "challenged", "open_question")
 EDGE_TYPES = ("supports", "contradicts", "depends_on", "supersedes")
 
 MODES = ("debugging", "architecture", "implementation", "investigation", "planning")
+
+# feat/flow (D55): repo enablement states (repos.state) + the first-time
+# question surface. "not_now" is recorded as asked_at on an undecided repo.
+REPO_STATES = ("undecided", "enabled", "disabled")
+
+# feat/flow (D57): channels that can apply a review decision (audit trail).
+REVIEW_CHANNELS = ("tui", "agent", "cli")
 
 
 # ---------------------------------------------------------------------------

@@ -196,7 +196,7 @@ def test_end_to_end_stub_agent(spec, repo, tmp_path, stub_agent):
     assert stats["canonical_ecus"] == 0            # review=skip promotes nothing
     assert [s["status"] for s in stats["sessions"]] == ["closed", "closed"]
     for s in ec_manifest["sessions"]:
-        assert "Started EC session" in Path(s["start"]["log"]).read_text()
+        assert "Bench session" in Path(s["start"]["log"]).read_text()
         assert "Review complete." in Path(s["stop"]["log"]).read_text()
         assert s["stop"]["diffusion_warning"] is False
     # baseline: no brain, no EC_HOME in the agent env

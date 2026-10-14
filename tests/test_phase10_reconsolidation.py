@@ -272,7 +272,7 @@ class TestReconsolidateRelatedAndValidation:
                       "client") > 0.6
 
         with patch("ec.diffuser.call_llm",
-                   return_value=classifications_response("supports")) as m:
+                   return_value=classifications_response("supports")):
             result = reconsolidate(brain, target, evidence,
                                    relationship="supports",
                                    embedding_model=model)
@@ -435,8 +435,13 @@ class TestLabileTracking:
 
 
 def _server_for(brain, manager):
+    from ec import repos
     from ec.mcp_server import ECServer
-    return ECServer(brain=brain, manager=manager)
+    server = ECServer(brain=brain, manager=manager)
+    # feat/flow: these tests exercise the labile/reconsolidation mechanics,
+    # so the env-detected repo starts enabled (auto-session flow).
+    repos.set_repo_state(brain, repos.resolve_repo(), "enabled")
+    return server
 
 
 # ---------------------------------------------------------------------------
@@ -510,13 +515,15 @@ class TestMcpReconsolidateTool:
         # nothing changed
         assert brain.get_ecu(orphan)["confidence"] == pytest.approx(0.5)
 
-    def test_no_session_errors_with_guidance(self, brain, manager, server):
-        """#12 No active session → error with /ec-start guidance."""
+    def test_unretrieved_ecu_refused_with_query_guidance(self, brain, manager,
+                                                         server):
+        """#12 (feat/flow D56: sessions are automatic) — reconsolidating an
+        ECU that was never retrieved is refused with ec_query guidance."""
         payload, _ = call_tool(server, "ec_reconsolidate", {
             "ecu_id": "whatever", "evidence": "finding"})
         assert payload["status"] == "error"
-        assert payload["session_active"] is False
-        assert "/ec-start" in payload["error"]
+        assert payload["session_active"] is True
+        assert "ec_query" in payload["error"]
 
     def test_full_flow_query_then_reconsolidate(self, brain, model, manager,
                                                 server):

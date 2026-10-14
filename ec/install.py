@@ -53,22 +53,48 @@ EC is an MCP server providing engineering memory for your codebase.
 It stores Engineering Cognition Units (ECUs) — conclusions, not facts —
 and retrieves them when you need them.
 
-EC provides four MCP tools:
+EC provides seven MCP tools:
 - ec_observe: Extract engineering conclusions from your reasoning
 - ec_query: Retrieve relevant engineering cognition
 - ec_get_summary: Get brain statistics at session start
 - ec_reconsolidate: Update a retrieved ECU with new evidence
+- ec_set_repo_state: Record the user's enablement answer for a repo
+- ec_review_list: Show the user's pending review candidates
+- ec_review_decide: Apply review decisions the user stated
 
-## Session Lifecycle
+## Repo Path — Pass It on Every Call
 
-EC requires an active session. The USER controls session lifecycle:
-- `/ec-start` — start or resume a session on the current branch
-- `/ec-stop` — end session and trigger review gate
-- `/ec-status` — show session and brain status
+Global MCP servers may be started in the home folder, where the repo
+cannot be detected. Pass the workspace path as the `repo_path` argument
+on every tool call.
 
-You do NOT control session lifecycle. Never suggest /ec-start or /ec-stop
-unless the user asks. If ec_observe or ec_query returns "no active session",
-tell the user to run /ec-start.
+## Enablement — The First-Time Question
+
+Reverie is enabled per repo, and the answer is remembered. The first time
+a tool call reports that a repo is undecided, ask the user exactly:
+
+Reverie isn't on for this repo. Turn it on? (yes / not now / never)
+
+Ask this question AT MOST ONCE per conversation. Record the answer with
+ec_set_repo_state:
+- "yes" -> state="enabled"
+- "not now" -> state="not_now" (stays off for now; do not ask again in
+  this conversation)
+- "never" -> state="disabled" (fully off for this repo: nothing is
+  captured, retrieved, or injected; existing memory is kept)
+
+If a tool response reports the repo is disabled, do nothing with EC in
+that repo and do not ask again.
+
+## Sessions Are Automatic
+
+In an enabled repo, every branch has a session that is created
+automatically on the first tool call and never needs closing. Switching
+branches mid-conversation switches session memory; long-term memory
+stays shared across branches. Never suggest starting or stopping a
+session. (For compatibility, `ec-start` enables the repo and shows
+status, and `ec-stop` is an alias for `ec review` — do not suggest
+either unless the user asks.)
 
 ## When to Call ec_observe
 
@@ -116,12 +142,12 @@ the agent used injected cognition heavily but produced worse work (quality dropp
 -0.589, groundedness dropped -0.480). The best results came when the agent
 established repository understanding FIRST, then consulted cognition.
 
-Pass a natural language query describing what you want to know. Be specific. 
-"How does the dependency injection container resolve circular imports?" is better 
-than "dependency injection." The query is embedded and compared semantically — 
+Pass a natural language query describing what you want to know. Be specific.
+"How does the dependency injection container resolve circular imports?" is better
+than "dependency injection." The query is embedded and compared semantically —
 precise engineering questions retrieve better than single keywords.
 
-If ec_query returns no results, proceed normally — this means EC has no relevant 
+If ec_query returns no results, proceed normally — this means EC has no relevant
 cognition yet. EC starts empty and builds up over sessions.
 
 ## When to Call ec_reconsolidate
@@ -152,6 +178,27 @@ the new finding — the Diffuser will handle the relationship at review time.
 Call ec_get_summary ONCE at session start to see what EC already knows.
 This helps you decide whether to ec_query for specific context before
 starting work. Returns brain statistics, not individual ECUs.
+
+If the response contains a pending-review backlog line (counts only),
+mention it to the user AT MOST ONCE per conversation and offer two ways
+to review: run `ec review` in a terminal, or say "show my Reverie
+candidates" here. Counts only — never candidate contents.
+
+## Review — The Human Decides
+
+Observations are stored as review candidates, never promoted
+automatically. The user reviews them:
+- in a terminal with `ec review`, or
+- through you: when the user asks to see their Reverie candidates, call
+  ec_review_list and show EVERY candidate's full conclusion text before
+  asking what they want to do.
+
+Rules for review through you:
+- Relay ONLY the decisions the user actually states, via ec_review_decide.
+- NEVER decide on the user's behalf.
+- NEVER bulk-accept unless the user explicitly asked for that group.
+- Be honest about the limits: Reverie cannot verify who made a decision;
+  every decision is recorded with its channel (tui, agent, or cli).
 
 ## Reading EC Output
 
@@ -207,35 +254,31 @@ as authoritative context. Always verify ECUs against the live codebase.
 Do not anchor on past beliefs if the current code contradicts them.
 If you notice a contradiction, call ec_observe to record the new finding.
 
-Observations are stored in the Session Brain, not the Canonical Brain. The 
-user reviews them at /ec-stop and accepts or rejects each one. Only accepted 
-observations are promoted to the Canonical Brain for future sessions. Don't 
-hesitate to observe something uncertain — the review gate filters it.
+Observations are stored in the Session Brain, not the Canonical Brain. The
+user reviews the candidates — via `ec review` in a terminal, or through you
+(see "Review — The Human Decides"). Only accepted observations are promoted
+to the Canonical Brain for future use. Don't hesitate to observe something
+uncertain — the review gate filters it.
 """
 
-_EC_START_STEPS = """Start or resume an EC session on the current git branch.
+
+_EC_START_STEPS = """(Compat) Enable EC for this repo and show status.
 
 Steps:
 1. Detect the current repository path and git branch.
-2. Check for an active EC session matching this (repo, branch).
-3. If found: resume it — load session ECUs and edges into the Session Brain.
-4. If not found: create a new session.
-5. Call ec_get_summary to get a brain overview.
-6. Report: session ID, branch, repo, session brain ECU count.
+2. Record the repo as enabled (ec_set_repo_state with state="enabled").
+3. Report: repo, branch, brain statistics (ec_get_summary).
+4. Sessions are automatic per branch — nothing needs starting.
 """
 
-_EC_STOP_STEPS = """End the EC session and trigger the Review Gate.
+_EC_STOP_STEPS = """(Compat) Review — an alias for `ec review`.
 
 Steps:
-1. Run a final extraction pass on any unobserved reasoning since the last ec_observe call.
-2. Present all Session Brain ECUs for human review, grouped by topic.
-3. For each group: offer accept-all, reject-all, or review-individually.
-4. Accepted ECUs: send through the Full Diffuser into the Canonical Brain.
-5. Rejected ECUs: remove from session_ecus.
-6. Skipped ECUs: remain in session_ecus with review_status = skipped.
-7. Clean up: remove session_edges for accepted/rejected ECUs. Apply or discard pending_updates.
-8. Mark session as closed in sessions table.
-9. Report: accepted count, rejected count, skipped count, Canonical Brain total.
+1. Call ec_review_list to get the pending candidates.
+2. Show every candidate's full conclusion text to the user.
+3. Relay only the decisions the user states, via ec_review_decide.
+4. Never decide on the user's behalf; never bulk-accept unless the user
+   explicitly asked for that group.
 """
 
 _EC_STATUS_STEPS = """Show current EC status.
@@ -253,27 +296,21 @@ COMMAND_TEMPLATES: dict[str, str] = {
     "ec-start.md": _EC_START_STEPS + """
 ---
 
-Run: `python -m ec.session start`
-
-The command performs steps 1–6 and prints the report (including the
-ec_get_summary brain overview). Once the session is active, use the
-ec_observe and ec_query MCP tools exactly as documented in ~/.ec/AGENTS.md.
+Run: `ec-start` (compat shim) — or just code; in an enabled repo the
+session for the current branch resolves automatically on the first
+ec_observe / ec_query call.
 """,
     "ec-stop.md": _EC_STOP_STEPS + """
 ---
 
-Run: `python -m ec.session stop`
-
-Before stopping, call ec_observe with any reasoning since the last
-ec_observe call (step 1's final extraction pass). The command performs
-steps 2–9, presenting the interactive Review Gate in the terminal. If the
-user asks for a non-interactive stop, use `python -m ec.session stop
---all-accept` or `python -m ec.session stop --all-skip`.
+Run: `ec-stop` (compat shim, deprecated) or `ec review` in a terminal. In
+the agent, call ec_review_list and relay the user's decisions with
+ec_review_decide.
 """,
     "ec-status.md": _EC_STATUS_STEPS + """
 ---
 
-Run: `python -m ec.session status`
+Run: `ec-status`.
 
 The command prints the session and brain report. The ec_get_summary MCP
 tool returns the same brain statistics and works without an active session.
@@ -489,6 +526,10 @@ def _provider_menu(input_fn, print_fn, environ) -> str | None:
 DIST_NAME = "engineering-cognition"
 #: Console script launching the MCP server (pyproject [project.scripts]).
 MCP_CONSOLE_SCRIPT = "ec-mcp"
+#: The `ec` console script binding this build expects (pyproject.toml).
+#: feat/flow moved `ec` from the installer to the multi-command CLI
+#: (ec.cli:main); an older install still binds `ec = ec.install:main`.
+EC_CONSOLE_SCRIPT_ENTRY = "ec.cli:main"
 
 
 def _is_pip_installed() -> bool:
@@ -501,6 +542,30 @@ def _is_pip_installed() -> bool:
         return True
     except Exception:            # not installed / metadata unreadable
         return False
+
+
+def stale_entry_point_note() -> str | None:
+    """Detect a stale `ec` console-script binding (feat/flow review fix 9).
+
+    Console scripts only update on reinstall: an install made before the
+    multi-command CLI keeps ``ec = ec.install:main``, so subcommands like
+    `ec status` fall through to the installer. Returns the note to print,
+    or None when the binding is current (or metadata is unreadable)."""
+    try:
+        from importlib import metadata
+        for ep in metadata.entry_points(group="console_scripts"):
+            if ep.name == "ec" and ep.value != EC_CONSOLE_SCRIPT_ENTRY:
+                return (
+                    "Note: your `ec` command is bound to the OLD entry "
+                    f"point ({ep.value}) — the new subcommands (enable, "
+                    "disable, repos, review, status, export, import, "
+                    "reset, uninstall) do not exist for it yet. Fix: "
+                    "re-run `pip install -e .` (or `pip install -U "
+                    "reverie`) — console scripts only update on reinstall."
+                )
+    except Exception:            # metadata unreadable — say nothing
+        return None
+    return None
 
 
 def server_command() -> tuple[str, list[str], dict[str, str]]:
@@ -596,7 +661,7 @@ def _line_once(path: Path, home: Path, line: str, detail: str) -> PlannedWrite:
     disp = _display(path, home)
     if path.exists():
         text = path.read_text(encoding="utf-8")
-        if line in (l.strip() for l in text.splitlines()):
+        if line in (existing.strip() for existing in text.splitlines()):
             return PlannedWrite(path, "unchanged", None,
                                 f"{disp} already references {line} — unchanged")
         new = text if text.endswith("\n") else text + "\n"
@@ -667,7 +732,8 @@ def _codex_toml(path: Path, home: Path, detail: str) -> PlannedWrite:
         ) from exc
     lines = text.splitlines()
     start = next(
-        (i for i, l in enumerate(lines) if l.strip() == "[mcp_servers.ec]"),
+        (i for i, table_line in enumerate(lines)
+         if table_line.strip() == "[mcp_servers.ec]"),
         None,
     )
     if start is None:
@@ -705,9 +771,12 @@ def _reference_block(agents_ref: str) -> str:
         f"## Engineering Cognition (EC)\n\n"
         f"Follow the EC agent instructions at {agents_ref}. EC is an MCP "
         f"server (`ec`) providing engineering memory via ec_observe, "
-        f"ec_query, ec_get_summary, and ec_reconsolidate. The user controls "
-        f"the session lifecycle (/ec-start, /ec-stop, /ec-status) — never "
-        f"suggest starting or stopping a session unless the user asks.\n"
+        f"ec_query, ec_get_summary, ec_reconsolidate, ec_set_repo_state, "
+        f"ec_review_list, and ec_review_decide. Sessions are automatic per "
+        f"branch — never suggest starting or stopping a session. Pass the "
+        f"workspace path as repo_path on every call. The user reviews "
+        f"candidates via `ec review` or by asking the agent to show them; "
+        f"the agent only relays decisions the user states.\n"
     )
 
 
@@ -832,7 +901,6 @@ _AGENTS_BY_KEY = {a.key: a for a in AGENTS}
 # ---------------------------------------------------------------------------
 
 def _ec_home_plans(home: Path, ec_home: Path) -> list[PlannedWrite]:
-    disp = _display(ec_home, home)
     db = ec_home / "ec.db"
     plans = [
         PlannedWrite(
@@ -930,7 +998,7 @@ def _select_interactive(detected: list[AgentSpec], input_fn, print_fn
 def run(*, home: Path | None = None, ec_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
         dry_run: bool = False, provider: str | None = None,
-        no_verify: bool = False, verify_fn=None,
+        no_verify: bool = False, verify_fn=None, import_file: str | None = None,
         input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
         runner=subprocess.run) -> int:
@@ -940,7 +1008,11 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
     (registry key; ``ollama`` runs the D42 local setup). ``no_verify``
     skips the live ping; ``verify_fn`` (returning ``(ok, detail)``) replaces
     the ping in tests. ``runner`` executes the Ollama model pull (injectable;
-    failures are reported, never fatal).
+    failures are reported, never fatal). ``import_file`` (``--import``)
+    restores a brain export during setup on a new machine (feat/flow D58):
+    allowed into the fresh (empty) brain this installer just bootstrapped;
+    when the local brain already holds data the import refuses with
+    guidance to run `ec import --replace` manually.
     """
     home = Path(home) if home else Path.home()
     ec_home = Path(ec_home) if ec_home else _default_ec_home()
@@ -1000,6 +1072,10 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
     print_fn(f"\nCreating {_display(ec_home, home)}/ directory...")
     for write in _ec_home_plans(home, ec_home):
         _emit(write, home, dry_run, print_fn)
+
+    # -- brain import (feat/flow --import, D58) -----------------------------
+    if import_file is not None and not dry_run:
+        _import_during_install(ec_home, import_file, print_fn)
 
     # -- LLM provider (§28.8 + feat/providers) -----------------------------
     print_fn("\nChecking LLM provider...")
@@ -1061,17 +1137,39 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
 
     print_fn("\nEC is ready!\n")
     print_fn("Commands:")
-    print_fn("  /ec-start   Start or resume an EC session on the current branch")
-    print_fn("  /ec-stop    End session and review extracted cognition")
-    print_fn("  /ec-status   Show session and brain status")
+    print_fn("  ec review   Review pending candidates (terminal UI)")
+    print_fn("  ec enable / ec disable / ec repos")
+    print_fn("  ec export / ec import / ec reset")
     print_fn("\nHow to use:")
     print_fn("  1. Open your coding agent (Claude Code, Cursor, or Codex)")
-    print_fn("  2. Run /ec-start to begin a session")
-    print_fn("  3. Work normally — the agent will automatically call "
-             "ec_observe and ec_query")
-    print_fn("  4. Run /ec-stop when done to review and save engineering "
-             "cognition")
+    print_fn("  2. Work normally — in an enabled repo, sessions are "
+             "automatic per branch and never need closing")
+    print_fn("  3. The agent asks once whether to turn EC on for a new "
+             "repo (your answer is remembered)")
+    print_fn("  4. Review candidates with `ec review`, or say \"show my "
+             "Reverie candidates\" in the agent")
+    print_fn("  (deprecated: ec-start enables a repo and shows status; "
+             "ec-stop is an alias for ec review; ec-status unchanged)")
     return 0
+
+
+def _import_during_install(ec_home: Path, import_file: str, print_fn) -> None:
+    """feat/flow (D58): `ec install --import <file>` — restore a brain
+    export during setup on a new machine. Only an empty brain (the fresh
+    bootstrap) accepts it; anything else refuses with guidance."""
+    from . import transport
+    brain = Brain(ec_home / "ec.db")
+    try:
+        if not transport._brain_is_empty(brain):
+            raise InstallError(
+                "The local brain already holds data, so `--import` would "
+                "replace it. Run `ec import <file> --replace` explicitly "
+                "(it takes an automatic backup first).")
+        transport.import_brain(brain, import_file, print_fn=print_fn)
+    except transport.TransportError as exc:
+        raise InstallError(str(exc)) from exc
+    finally:
+        brain.close()
 
 
 def _emit(write: PlannedWrite, home: Path, dry_run: bool, print_fn) -> None:
@@ -1110,22 +1208,32 @@ def main(argv: list[str] | None = None) -> int:
                              f"({', '.join(providers.provider_names())})")
     parser.add_argument("--no-verify", action="store_true",
                         help="skip the live ping after provider setup")
+    parser.add_argument("--import", dest="import_file", metavar="FILE",
+                        default=None,
+                        help="import a brain export during setup (new "
+                             "machine migration; merging is not supported)")
     parser.add_argument("--dry-run", action="store_true",
                         help="show exactly what would be written; write nothing")
     args = parser.parse_args(argv)
 
     try:
-        return run(
+        code = run(
             all_agents=args.all,
             only=[k.strip() for k in args.only.split(",") if k.strip()]
             if args.only else None,
             dry_run=args.dry_run,
             provider=args.provider,
             no_verify=args.no_verify,
+            import_file=args.import_file,
         )
     except InstallError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    if code == 0:
+        note = stale_entry_point_note()
+        if note:
+            print(note)
+    return code
 
 
 if __name__ == "__main__":

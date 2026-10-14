@@ -266,6 +266,9 @@ def test_brain_summary_with_session(brain, manager):
 # ---------------------------------------------------------------------------
 
 def test_cli_start_status_subprocess(tmp_path):
+    """feat/flow compat: `start` enables the repo and reports (nothing to
+    start); `status` reports; `stop` aliases `ec review` (sessions are
+    never closed — with no candidates it simply says so)."""
     env = dict(os.environ)
     env["EC_HOME"] = str(tmp_path / "ec_home")
     env["EC_REPO_PATH"] = "/repos/cli-repo"
@@ -276,27 +279,29 @@ def test_cli_start_status_subprocess(tmp_path):
     start = subprocess.run(base + ["start"], env=env, cwd=ROOT,
                            capture_output=True, text=True, timeout=60)
     assert start.returncode == 0, start.stderr
-    assert "Started EC session on branch main in cli-repo." in start.stdout
+    assert "Reverie is on for /repos/cli-repo" in start.stdout
+    assert "sessions are automatic" in start.stdout
 
     again = subprocess.run(base + ["start"], env=env, cwd=ROOT,
                            capture_output=True, text=True, timeout=60)
-    assert "Resuming EC session on branch main" in again.stdout
+    assert "Reverie is on for /repos/cli-repo" in again.stdout   # idempotent
 
     status = subprocess.run(base + ["status"], env=env, cwd=ROOT,
                             capture_output=True, text=True, timeout=60)
     assert status.returncode == 0
-    assert "Active session on branch 'main'" in status.stdout
+    assert "The EC brain has 0 ECUs" in status.stdout
 
     stop = subprocess.run(base + ["stop", "--all-skip"], env=env, cwd=ROOT,
                           capture_output=True, text=True, timeout=60)
     assert stop.returncode == 0, stop.stderr
-    assert "Review complete." in stop.stdout
+    assert "No pending candidates" in stop.stdout
+    assert "deprecated: --all-skip" in stop.stderr
 
 
-def test_cli_stop_all_accept_surfaces_diffusion_failure(tmp_path):
-    """The non-interactive /ec-stop path prints the prominent warning when
-    promotion succeeded but the full diffuser could not run (here: no API
-    key in the environment, so the classification call fails)."""
+def test_cli_review_decide_surfaces_diffusion_failure(tmp_path):
+    """feat/flow: the non-interactive review path (`--decide`) prints the
+    prominent warning when promotion succeeded but the full diffuser could
+    not run (here: no API key, so the classification call fails)."""
     env = dict(os.environ)
     env["EC_HOME"] = str(tmp_path / "ec_home")
     env["EC_REPO_PATH"] = "/repos/cli-repo"
@@ -305,9 +310,6 @@ def test_cli_stop_all_accept_surfaces_diffusion_failure(tmp_path):
     env["HF_HUB_OFFLINE"] = "1"
     env.pop("OPENCODE_ZEN_API_KEY", None)  # the diffuser's LLM call will fail
     base = [sys.executable, "-m", "ec.session"]
-    start = subprocess.run(base + ["start"], env=env, cwd=ROOT,
-                           capture_output=True, text=True, timeout=60)
-    assert start.returncode == 0, start.stderr
 
     # seed the shared DB (WAL: the CLI subprocess sees these rows): one
     # canonical ECU + one similar session ECU (verified sim >= 0.6 forces
@@ -315,20 +317,20 @@ def test_cli_stop_all_accept_surfaces_diffusion_failure(tmp_path):
     from ec.embeddings import get_embedding_model
     model = get_embedding_model()
     brain = Brain(tmp_path / "ec_home" / "ec.db")
-    row = brain.get_active_session("/repos/cli-repo", "main")
-    assert row is not None
+    sid = brain.create_session("/repos/cli-repo", "main")
     canonical = "Token refresh must precede cache clear in the auth flow"
     session = "The auth bug was stale tokens from un-ordered refresh/clear"
     brain.insert_ecu(make_ecu(canonical),
                      embedding=model.encode_one(canonical))
-    s = brain.insert_session_ecu(row["id"], make_ecu(session),
+    s = brain.insert_session_ecu(sid, make_ecu(session),
                                  embedding=model.encode_one(session))
     brain.close()
 
-    stop = subprocess.run(base + ["stop", "--all-accept"], env=env, cwd=ROOT,
-                          capture_output=True, text=True, timeout=120)
+    stop = subprocess.run(
+        base + ["stop", "--decide", f"{s}=accept"], env=env, cwd=ROOT,
+        capture_output=True, text=True, timeout=120)
     assert stop.returncode == 0, stop.stderr
-    assert "Review complete. 1 accepted" in stop.stdout
+    assert "Applied 1 decision(s)." in stop.stdout
     assert "⚠️ WARNING: 1 ECU(s) promoted without diffusion due to API " \
            "errors" in stop.stdout
     assert s in stop.stdout

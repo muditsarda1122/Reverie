@@ -237,6 +237,38 @@ class SessionManager:
         """The session's labile set (a copy — callers must not mutate)."""
         return set(self._labile.get(session_id, set()))
 
+    # -- automatic sessions (feat/flow, D56) --------------------------------
+
+    def ensure_session(
+        self,
+        repo_path: str | None = None,
+        branch: str | None = None,
+        now: datetime | None = None,
+    ) -> dict:
+        """Resolve or create the session for (repo, branch) — D56.
+
+        Replaces the D15 rule inside the MCP tools: in an enabled repo any
+        Reverie tool call lands in its session without the user ever
+        running /ec-start. Carry-over of unreviewed candidates is exactly
+        session creation's (§28.5 step 5: pending/skipped rows of closed
+        sessions of the same (repo, branch) move over). Archived sessions
+        (branch deleted) do NOT carry over — their candidates stay in the
+        cross-session review queue (ec/review_queue.py).
+
+        The database stays the source of truth (D15): the MCP server can
+        call this on every tool call — an existing session is a single
+        indexed lookup.
+        """
+        if repo_path is None or branch is None:
+            repo_path, branch = detect_repo_branch()
+        existing = self.brain.get_active_session(repo_path, branch)
+        if existing is not None:
+            return existing
+        self.start_session(repo_path, branch, now=now)
+        row = self.brain.get_active_session(repo_path, branch)
+        assert row is not None
+        return row
+
     # -- /ec-start (§28.5) -------------------------------------------------
 
     def start_session(
@@ -376,6 +408,16 @@ def _print_report(report: dict, print_fn=print) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "stop":
+        # feat/flow: `stop` is an alias for `ec review` (nothing is closed).
+        return main_stop(argv[1:])
+    if argv and argv[0] == "bench-close":
+        # bench/E2E-only hook — closes the session (never user-facing).
+        return _bench_close(argv[1:])
+    if argv and argv[0] == "bench-start":
+        # bench/E2E-only hook — enable + resolve-or-create the session.
+        return _bench_start(argv[1:])
     parser = argparse.ArgumentParser(
         prog="python -m ec.session",
         description="EC session lifecycle (§28.5/§28.6): start | stop | status",
@@ -385,21 +427,6 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--repo", default=None, help="repo path (default: git detect)")
         p.add_argument("--branch", default=None, help="branch (default: git detect)")
-    sub.choices["stop"].add_argument(
-        "--all-accept", action="store_true", help="accept every candidate ECU"
-    )
-    sub.choices["stop"].add_argument(
-        "--all-skip", action="store_true",
-        help="skip every candidate ECU (close without reviewing)",
-    )
-    sub.choices["stop"].add_argument(
-        "--resolve-open-questions", default="auto",
-        choices=("auto", "skip", "archive"),
-        help="open-question resolution policy (§17.5 a-d, D41): auto = "
-             "prompt interactively on an interactive stop, skip otherwise; "
-             "skip = never touch open questions; archive = archive all "
-             "without prompting",
-    )
     args = parser.parse_args(argv)
 
     try:
@@ -410,7 +437,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manager = SessionManager(brain)
         if args.command == "start":
-            _print_report(manager.start_session(args.repo, args.branch))
+            # feat/flow: `start` is the same compat shim as ec-start —
+            # enable the repo and report; sessions are automatic.
+            _enable_and_status([])
             return 0
         if args.command == "status":
             row = manager.current_session(args.repo, args.branch)
@@ -465,13 +494,151 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def main_start(argv: list[str] | None = None) -> int:
-    """Console-script entry point for ``ec-start`` (pyproject.toml)."""
-    return main(["start"] + list(argv or []))
+    """``ec-start`` (compat, feat/flow): enable this repo and show status.
+
+    Sessions no longer need starting (D56 — they resolve automatically per
+    branch); this thin shim turns the repo on and reports, so old muscle
+    memory and old docs still work."""
+    return _enable_and_status(list(argv or []))
+
+
+_STOP_COMPAT_FLAGS = ("--all-accept", "--all-skip")
+
+
+def _bench_start(argv: list[str] | None = None) -> int:
+    """Bench/E2E-only lifecycle hook (NOT user-facing): enable the repo and
+    resolve-or-create its session (D56) — the harness equivalent of what a
+    user gets automatically in an enabled repo. Hidden from help."""
+    parser = argparse.ArgumentParser(prog="ec.session bench-start")
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--branch", required=True)
+    args = parser.parse_args(argv or [])
+    try:
+        brain = Brain()
+    except BrainError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        from . import repos
+        info = repos.RepoInfo(repo_path=args.repo, branch=args.branch,
+                              repo_key=args.repo, url=None, via_git=False)
+        repos.set_repo_state(brain, info, "enabled")
+        row = SessionManager(brain).ensure_session(args.repo, args.branch)
+        print(f"Bench session {row['id']} on {args.branch} in {args.repo}")
+        return 0
+    except (SessionError, BrainError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        brain.close()
+
+
+def _bench_close(argv: list[str] | None = None) -> int:
+    """Bench/E2E-only lifecycle hook (NOT user-facing): apply review
+    decisions to the current session's candidates and CLOSE the session —
+    the §28.6 stop semantics the EC-Bench harness needs for per-spec-session
+    isolation. The user-facing flow never closes sessions (D56); this
+    subcommand exists so the benchmark keeps measuring what it always
+    measured. Hidden from help on purpose."""
+    parser = argparse.ArgumentParser(prog="ec.session bench-close")
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--branch", required=True)
+    parser.add_argument("--review", default="accept",
+                        choices=("accept", "skip"))
+    args = parser.parse_args(argv or [])
+    try:
+        brain = Brain()
+    except BrainError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        manager = SessionManager(brain)
+        row = manager.current_session(args.repo, args.branch)
+        if row is None:
+            return 0
+        decisions = {
+            ecu["id"]: args.review
+            for ecu in brain.list_session_ecus(row["id"])
+            if ecu["review_status"] in ("pending", "skipped")
+        }
+        result = review_gate.apply_review_decisions(brain, row["id"],
+                                                    decisions)
+        print(result.message)
+        warning = review_gate.diffusion_failure_warning(result)
+        if warning:
+            print(warning)
+        manager._activations.pop(row["id"], None)
+        return 0
+    except (SessionError, review_gate.ReviewGateError, BrainError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        brain.close()
 
 
 def main_stop(argv: list[str] | None = None) -> int:
-    """Console-script entry point for ``ec-stop`` (pyproject.toml)."""
-    return main(["stop"] + list(argv or []))
+    """``ec-stop`` (compat, feat/flow): an alias for ``ec review``.
+
+    Old stop flags are accepted and refused politely — sessions are not
+    closed any more, so there is nothing to stop. The open-question
+    policy flag keeps working (it is a review concern)."""
+    from . import review_cli
+    argv = list(argv or [])
+    kept = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            kept.append(arg)
+            continue
+        if arg in _STOP_COMPAT_FLAGS:
+            print(f"(deprecated: {arg} — sessions are never closed now; "
+                  "review is per-candidate via `ec review`)", file=sys.stderr)
+            continue
+        if arg.startswith("--resolve-open-questions"):
+            print("(moved: --resolve-open-questions now belongs to "
+                  "`ec review`)", file=sys.stderr)
+            kept.append(arg)                 # the flag keeps working
+            if arg == "--resolve-open-questions":
+                skip_next = True
+            continue
+        kept.append(arg)
+    return review_cli.main(kept)
+
+
+def _enable_and_status(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="ec-start",
+        description="(compat) enable Reverie for this repo and show status. "
+                    "Sessions are automatic per branch — nothing to start.",
+    )
+    parser.add_argument("--repo", default=None, help="repo path (default: "
+                        "git detect)")
+    parser.add_argument("--branch", default=None,
+                        help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    try:
+        brain = Brain()
+    except BrainError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        from . import repos
+        try:
+            info = repos.resolve_repo(cwd=args.repo)
+        except SessionError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        row = repos.set_repo_state(brain, info, "enabled")
+        print(f"Reverie is on for {info.repo_path} "
+              f"(branch {info.branch}) — sessions are automatic; nothing "
+              "to start.")
+        if row["state"] != "enabled":
+            print("  (state was left unchanged)")
+        print(brain_summary(brain, None)["message"])
+        return 0
+    finally:
+        brain.close()
 
 
 def main_status(argv: list[str] | None = None) -> int:

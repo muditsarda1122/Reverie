@@ -2645,22 +2645,48 @@ EC is an MCP server providing engineering memory for your codebase.
 It stores Engineering Cognition Units (ECUs) — conclusions, not facts —
 and retrieves them when you need them.
 
-EC provides four MCP tools:
+EC provides seven MCP tools:
 - ec_observe: Extract engineering conclusions from your reasoning
 - ec_query: Retrieve relevant engineering cognition
 - ec_get_summary: Get brain statistics at session start
 - ec_reconsolidate: Update a retrieved ECU with new evidence
+- ec_set_repo_state: Record the user's enablement answer for a repo
+- ec_review_list: Show the user's pending review candidates
+- ec_review_decide: Apply review decisions the user stated
 
-## Session Lifecycle
+## Repo Path — Pass It on Every Call
 
-EC requires an active session. The USER controls session lifecycle:
-- `/ec-start` — start or resume a session on the current branch
-- `/ec-stop` — end session and trigger review gate
-- `/ec-status` — show session and brain status
+Global MCP servers may be started in the home folder, where the repo
+cannot be detected. Pass the workspace path as the `repo_path` argument
+on every tool call.
 
-You do NOT control session lifecycle. Never suggest /ec-start or /ec-stop
-unless the user asks. If ec_observe or ec_query returns "no active session",
-tell the user to run /ec-start.
+## Enablement — The First-Time Question
+
+Reverie is enabled per repo, and the answer is remembered. The first time
+a tool call reports that a repo is undecided, ask the user exactly:
+
+Reverie isn't on for this repo. Turn it on? (yes / not now / never)
+
+Ask this question AT MOST ONCE per conversation. Record the answer with
+ec_set_repo_state:
+- "yes" -> state="enabled"
+- "not now" -> state="not_now" (stays off for now; do not ask again in
+  this conversation)
+- "never" -> state="disabled" (fully off for this repo: nothing is
+  captured, retrieved, or injected; existing memory is kept)
+
+If a tool response reports the repo is disabled, do nothing with EC in
+that repo and do not ask again.
+
+## Sessions Are Automatic
+
+In an enabled repo, every branch has a session that is created
+automatically on the first tool call and never needs closing. Switching
+branches mid-conversation switches session memory; long-term memory
+stays shared across branches. Never suggest starting or stopping a
+session. (For compatibility, `ec-start` enables the repo and shows
+status, and `ec-stop` is an alias for `ec review` — do not suggest
+either unless the user asks.)
 
 ## When to Call ec_observe
 
@@ -2708,12 +2734,12 @@ the agent used injected cognition heavily but produced worse work (quality dropp
 -0.589, groundedness dropped -0.480). The best results came when the agent
 established repository understanding FIRST, then consulted cognition.
 
-Pass a natural language query describing what you want to know. Be specific. 
-"How does the dependency injection container resolve circular imports?" is better 
-than "dependency injection." The query is embedded and compared semantically — 
+Pass a natural language query describing what you want to know. Be specific.
+"How does the dependency injection container resolve circular imports?" is better
+than "dependency injection." The query is embedded and compared semantically —
 precise engineering questions retrieve better than single keywords.
 
-If ec_query returns no results, proceed normally — this means EC has no relevant 
+If ec_query returns no results, proceed normally — this means EC has no relevant
 cognition yet. EC starts empty and builds up over sessions.
 
 ## When to Call ec_reconsolidate
@@ -2744,6 +2770,27 @@ the new finding — the Diffuser will handle the relationship at review time.
 Call ec_get_summary ONCE at session start to see what EC already knows.
 This helps you decide whether to ec_query for specific context before
 starting work. Returns brain statistics, not individual ECUs.
+
+If the response contains a pending-review backlog line (counts only),
+mention it to the user AT MOST ONCE per conversation and offer two ways
+to review: run `ec review` in a terminal, or say "show my Reverie
+candidates" here. Counts only — never candidate contents.
+
+## Review — The Human Decides
+
+Observations are stored as review candidates, never promoted
+automatically. The user reviews them:
+- in a terminal with `ec review`, or
+- through you: when the user asks to see their Reverie candidates, call
+  ec_review_list and show EVERY candidate's full conclusion text before
+  asking what they want to do.
+
+Rules for review through you:
+- Relay ONLY the decisions the user actually states, via ec_review_decide.
+- NEVER decide on the user's behalf.
+- NEVER bulk-accept unless the user explicitly asked for that group.
+- Be honest about the limits: Reverie cannot verify who made a decision;
+  every decision is recorded with its channel (tui, agent, or cli).
 
 ## Reading EC Output
 
@@ -2799,10 +2846,11 @@ as authoritative context. Always verify ECUs against the live codebase.
 Do not anchor on past beliefs if the current code contradicts them.
 If you notice a contradiction, call ec_observe to record the new finding.
 
-Observations are stored in the Session Brain, not the Canonical Brain. The 
-user reviews them at /ec-stop and accepts or rejects each one. Only accepted 
-observations are promoted to the Canonical Brain for future sessions. Don't 
-hesitate to observe something uncertain — the review gate filters it.
+Observations are stored in the Session Brain, not the Canonical Brain. The
+user reviews the candidates — via `ec review` in a terminal, or through you
+(see "Review — The Human Decides"). Only accepted observations are promoted
+to the Canonical Brain for future use. Don't hesitate to observe something
+uncertain — the review gate filters it.
 ```
 
 ### 28.10 Command Templates (Copy-Paste Ready for Development)
@@ -2811,31 +2859,25 @@ The install script creates three markdown files in `~/.ec/commands/`. These are 
 
 **`~/.ec/commands/ec-start.md`:**
 ```markdown
-Start or resume an EC session on the current git branch.
+(Compat) Enable EC for this repo and show status.
 
 Steps:
 1. Detect the current repository path and git branch.
-2. Check for an active EC session matching this (repo, branch).
-3. If found: resume it — load session ECUs and edges into the Session Brain.
-4. If not found: create a new session.
-5. Call ec_get_summary to get a brain overview.
-6. Report: session ID, branch, repo, session brain ECU count.
+2. Record the repo as enabled (ec_set_repo_state with state="enabled").
+3. Report: repo, branch, brain statistics (ec_get_summary).
+4. Sessions are automatic per branch — nothing needs starting.
 ```
 
 **`~/.ec/commands/ec-stop.md`:**
 ```markdown
-End the EC session and trigger the Review Gate.
+(Compat) Review — an alias for `ec review`.
 
 Steps:
-1. Run a final extraction pass on any unobserved reasoning since the last ec_observe call.
-2. Present all Session Brain ECUs for human review, grouped by topic.
-3. For each group: offer accept-all, reject-all, or review-individually.
-4. Accepted ECUs: send through the Full Diffuser into the Canonical Brain.
-5. Rejected ECUs: remove from session_ecus.
-6. Skipped ECUs: remain in session_ecus with review_status = skipped.
-7. Clean up: remove session_edges for accepted/rejected ECUs. Apply or discard pending_updates.
-8. Mark session as closed in sessions table.
-9. Report: accepted count, rejected count, skipped count, Canonical Brain total.
+1. Call ec_review_list to get the pending candidates.
+2. Show every candidate's full conclusion text to the user.
+3. Relay only the decisions the user states, via ec_review_decide.
+4. Never decide on the user's behalf; never bulk-accept unless the user
+   explicitly asked for that group.
 ```
 
 **`~/.ec/commands/ec-status.md`:**
@@ -2959,3 +3001,164 @@ One Python process. One SQLite file. All projects.
 
 ---
 
+## Section 29 — The Product Flow (feat/flow, 2026-10-14)
+
+No more `ec-start` / `ec-stop`. The user installs once, then just codes.
+This section supersedes the §28.6 lifecycle story for the user-facing
+product; §28.5's (repo, branch) session keying and the review gate itself
+(§5/§7/§28.6/§28.7) are unchanged mechanics.
+
+### 29.1 Repo enablement (D55)
+
+Three states per repo — `undecided` (default) | `enabled` | `disabled` —
+stored in the global brain's `repos` table, never inside the repo.
+`~/.ec`-local, keyed by the repo's identity (D58). Plus a recorded
+`asked_at` stamp ("asked once, still undecided").
+
+- Every Reverie tool call first resolves the repo: the tool's optional
+  `repo_path` argument (the agent's workspace path — global MCP servers
+  may be started in the home folder) wins; fallback is the server's
+  working directory (and the `EC_REPO_PATH`/`EC_BRANCH` overrides).
+- `undecided` → every tool returns a short, structured ask-the-user
+  response instead of acting: "Reverie isn't on for this repo. Turn it
+  on? (yes / not now / never)". The agent asks once per conversation and
+  records the answer with `ec_set_repo_state`: `yes` → `enabled`,
+  `not now` → `not_now` (asked, stays off), `never` → `disabled`.
+- `disabled` → fully off for that repo: no capture, no retrieval,
+  nothing injected. Existing data is kept; re-enabling resumes with
+  everything intact (`ec disable` says so in its output).
+- Commands: `ec enable`, `ec disable` (inside a repo, any time), `ec
+  repos` (every known repo with state + counts), MCP tool
+  `ec_set_repo_state(state)`.
+
+### 29.2 Repo identity, worktrees, moves (D58)
+
+- **Identity** = the resolved absolute git common directory
+  (`git rev-parse --path-format=absolute --git-common-dir`). A worktree
+  shares its common directory with the main checkout → same repo for
+  enablement.
+- **Sessions stay keyed to the worktree toplevel + branch** (§28.5):
+  grounding verification and commit provenance must run against the
+  actual working tree. Two worktrees therefore get separate sessions
+  even with the same branch checked out.
+- **Move / re-clone on the same machine** = a new identity. On first use
+  Reverie re-matches by the recorded origin remote URL: exactly one
+  match adopts the old state and re-keys onto the new path; ambiguous
+  (several known repos share the URL) or URL-less remotes start fresh
+  as `undecided` (a plain `ec enable` resolves it).
+- **Branch switches** are resolved on every tool call. A session whose
+  branch no longer exists locally is marked `archived` at lookup
+  (best-effort; never on git failure); its unreviewed candidates stay
+  in the review queue (D56).
+
+### 29.3 Automatic sessions (D56 — replaces D15 for the MCP surface)
+
+In an enabled repo, any Reverie tool call resolves or creates the
+session for (repo, branch). Carry-over of unreviewed candidates is
+exactly session creation's §28.5 step 5 (from *closed* sessions of the
+same context; archived sessions' candidates stay in the queue instead).
+Sessions are never closed by the user: activation decays on its own on
+load (§6.6), labile-ECU tracking is keyed per session so it stays
+correct across branch switches, and nothing in the review flow depends
+on a close. The D15 rule (the server never creates sessions) survives
+only for the bench harness's hidden hooks (`ec.session bench-start` /
+`bench-close`), which exist so EC-Bench keeps measuring isolated
+sessions.
+
+### 29.4 Review independent of sessions (D57)
+
+One queue across all sessions and repos: every `session_ecus` row with
+`review_status` pending|skipped, joined with its session for
+repo/branch. Filters `--repo`, `--branch`, `--all` (default: the
+current repo, everything outside a repo). Ordering: strongest first by
+confidence; the §7.4 topic grouping stays an option (`--by-topic`).
+Pages of `review.page_size` (10) with "more" available — never a
+filter. Decisions go through `review_gate.apply_review_decisions`
+(`close=False`, `undecided="leave"`, `channel=…`) — the exact gate
+behaviour (contradictions, pending updates, diffusion, open-question
+sweep, audit), nothing duplicated. Bulk accept applies to one topic
+group at a time; never a global accept-all. Undo reverses the last
+decision of the run while it is still reversible — an accept has
+already been promoted and diffused, so undoing one says so plainly;
+rejects/skips reverse from a snapshot.
+
+- **Expiry:** candidates unreviewed for `review.expire_after_days`
+  (default 21; 0 disables) become `expired` — kept, never deleted,
+  still usable in session memory, never promoted until the user
+  revives them with `ec review --expired` (revive stamps a fresh
+  lease).
+- **Audit trail:** every decision records candidate id, decision,
+  edited text, timestamp, and channel (`tui` | `agent` | `cli`) in
+  `review_decisions`. Nothing consumes it yet; it exists so decisions
+  are attributable later. Honesty: Reverie cannot verify who made a
+  decision through the agent; the channel is the record.
+
+### 29.5 Review through the agent (D57)
+
+`ec_review_list` returns the same ordered page as the TUI in a compact
+form plus a short-lived `review_token` (TTL 1 h, server-held).
+`ec_review_decide(review_token, decisions)` applies decisions only to
+ids returned under that token, refuses a bulk accept-all (all ids of a
+multi-candidate token accepted in one call), and records the channel as
+`agent`. Tokens are single-use: a successful decide call consumes the
+token, so accepting part of a listing and then the rest in a second call
+with the same token is refused — the next batch requires a fresh
+`ec_review_list`. This adds friction; it is not a security boundary
+(§29.4's honesty note stands: the channel is the record). The agent
+instructions (`~/.ec/AGENTS.md`) require: show every candidate's full
+text before asking; relay only stated decisions; never decide on the
+user's behalf; never bulk-accept unless the user explicitly asked for
+that group.
+
+### 29.6 The nudge (D57)
+
+`ec_get_summary` adds one counts-only line when the unreviewed backlog
+exceeds `review.nudge_threshold` (10) or the oldest unreviewed candidate
+is older than `review.nudge_age_days` (5). When a repo resolves, the line
+splits the count to match what `ec_review_list` will show for that repo
+— e.g. "14 conclusions waiting for review (3 in this repo, oldest 6
+days)"; outside a repo it stays global-only ("14 conclusions waiting for
+review (oldest 6 days)"). The agent mentions it at most once per
+conversation and offers both review paths (terminal `ec review`, or
+"show my Reverie candidates" here). Counts only, never contents (§11.3).
+
+### 29.7 Export, import, reset (D58)
+
+- `ec export [file]` — one ZIP: a consistent `VACUUM INTO` snapshot of
+  the whole brain plus `manifest.json` (Reverie version, schema
+  version = `PRAGMA user_version`, embedding model + dimensions, row
+  counts, date).
+- `ec import <file>` — allowed directly when the local brain is empty;
+  otherwise requires `--replace`, which takes an automatic backup
+  export first and prints its path. **Merging two brains is out of
+  scope** (stated in the help text). Refused with a clear message when
+  the embedding model or dimensions mismatch, or when the export's
+  schema is newer than this Reverie.
+- `ec install --import <file>` — the new-machine migration path; only
+  an empty (freshly bootstrapped) brain accepts it.
+- `ec reset` — requires typing `reset`; `--yes` skips the prompt but
+  still takes the automatic backup first and prints its path.
+  `--repo <path>` resets only that repo's sessions + candidates
+  (long-term memory and the enablement row are kept).
+- Machine-specific data: repo states re-match by remote URL on first
+  use (29.2); sessions tied to paths that don't exist on the new
+  machine stay inert.
+
+### 29.8 Compatibility shims (deprecated)
+
+`ec-start` enables the repo and shows status (nothing needs starting);
+`ec-stop` aliases `ec review` (old `--all-accept`/`--all-skip` flags are
+refused with a deprecation note; `--resolve-open-questions` still works
+and moved to `ec review`); `ec-status` unchanged (also available as
+`ec status`). Bare `ec` prints the multi-command help; a mistyped first
+word is an error with a "did you mean" hint; only invocations whose
+first argument starts with `-` fall through to the installer. Docs no
+longer present `ec-start`/`ec-stop` as the normal flow.
+
+### 29.9 New dependency policy
+
+The terminal review UI adds **zero** dependencies: rendering is plain
+text, single-keypress input uses stdlib `termios`/`tty` on POSIX with a
+line-based fallback elsewhere and for non-TTY stdin. `rich` /
+`prompt_toolkit` / Textual were considered and rejected — the screen is
+one candidate, a few muted metadata lines and one key-hint line.

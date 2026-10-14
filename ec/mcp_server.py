@@ -9,24 +9,38 @@ pinned venv): ``initialize``, ``notifications/initialized`` (ignored), ``ping``,
 ``tools/list``, ``tools/call``. Tool results carry the §16.3/§28.11 structured
 payload as JSON text; ``isError`` mirrors the payload's ``status == "error"``.
 
-Tools (exactly the §28.3 surface plus D37's ec_reconsolidate, descriptions
-verbatim per §28.12/design doc §5.2):
+Tools (feat/flow surface — the §28.3 four plus review/enablement, D55-D57):
   - ``ec_observe``       — extract + lightweight-diffuse reasoning into the
                            Session Brain (§28.13)
   - ``ec_query``         — demand-driven retrieval over both brains (§11.3)
   - ``ec_get_summary``   — brain statistics at session start (§11.3 awareness
-                           without anchoring); works without a session
+                           without anchoring)
   - ``ec_reconsolidate`` — re-evaluate a retrieved ECU with new evidence
                            (design doc §5.2/D37; writes to the Canonical
-                           Brain immediately — the ECU was reviewed when it
-                           entered). Only ECUs retrieved in this session are
-                           labile (D39): the server marks surfaced canonical
-                           ids during ec_query and refuses others.
+                            Brain immediately — the ECU was reviewed when it
+                            entered). Only ECUs retrieved in this session are
+                            labile (D39): the server marks surfaced canonical
+                            ids during ec_query and refuses others.
+  - ``ec_set_repo_state``— record the user's answer to the first-time
+                           enablement question (or turn Reverie off/on here)
+  - ``ec_review_list``   — the review queue page, for the agent to relay
+  - ``ec_review_decide`` — apply decisions the USER stated, through the
+                           review gate (channel "agent", D57)
 
-The server NEVER creates sessions (the user controls lifecycle, §28.9): it
-resolves the current session from the database per call via (repo, branch)
-detection — WAL makes this safe across the CLI/MCP processes (D15). Sessions
-are started by ``python -m ec.session start`` (invoked by /ec-start).
+Repo enablement (feat/flow, D55): every tool call first resolves the repo
+(the tool's optional ``repo_path`` argument — the agent's workspace path —
+falls back to the server's working directory; some harnesses start global
+MCP servers in the home folder). An ``undecided`` repo gets a short,
+structured ask-the-user response instead of action; a ``disabled`` repo
+gets a structured "off" response and NOTHING happens (no capture, no
+retrieval); an ``enabled`` repo proceeds.
+
+Automatic sessions (feat/flow, D56 — replaces D15 for the MCP surface):
+in an enabled repo every tool call resolves or creates the session for
+(repo, branch). The database stays the source of truth (WAL keeps the
+CLI/MCP processes consistent); sessions are never closed by the user —
+review is independent of sessions (``ec_review_list``/``ec_review_decide``
+and the ``ec review`` TUI work across every session, branch and repo).
 
 After each successful ec_query the server writes retrieval metadata
 (``last_retrieved`` / ``retrieval_count``, canonical ECUs only — D17) and
@@ -64,7 +78,17 @@ import logging
 import subprocess
 import sys
 
-from . import __version__, diffuser, extractor, maintainer, pending, reconsolidation, retrieval
+from . import (
+    __version__,
+    diffuser,
+    extractor,
+    maintainer,
+    pending,
+    reconsolidation,
+    repos,
+    retrieval,
+    review_queue,
+)
 from .brain import Brain, BrainError, _now_iso
 from .confidence import FROZEN_STATUSES, reinforce_stored_confidence
 from .config import MODES, SCOPE_LEVELS, get_config
@@ -78,9 +102,11 @@ log = logging.getLogger("ec.mcp_server")
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "ec"
 
-# §28.4 error messages — verbatim, actionable.
-NO_SESSION_ERROR = (
-    "No active EC session. Suggest the user run /ec-start to begin a session."
+# §28.4-style messages — verbatim, actionable (feat/flow).
+NO_REPO_ERROR = (
+    "Reverie could not locate a git repository for this call. Pass the "
+    "workspace path as the tool's 'repo_path' argument (the directory you "
+    "are working in) and try again."
 )
 EXTRACTION_FAILED = (
     "Extraction failed: {reason}. The reasoning trace may be too short or "
@@ -91,6 +117,9 @@ NO_ECUS_FOUND = (
     "No ECUs found for query '{query}'. Try broadening the scope or "
     "rephrasing. The brain may not have relevant cognition for this topic yet."
 )
+
+#: How long a review_token stays valid for ec_review_decide (feat/flow).
+REVIEW_TOKEN_TTL_SECONDS = 3600
 
 #: D49 (design doc §4): how long to wait for ``git rev-parse HEAD`` when
 #: stamping grounding provenance at observe time.
@@ -148,9 +177,14 @@ Do NOT call ec_observe for:
 
 ec_observe runs the Extractor on your reasoning, produces candidate ECUs,
 and stores them in the Session Brain. They are immediately available for
-retrieval via ec_query. The user reviews these ECUs at session close (/ec-stop).
+retrieval via ec_query. The USER reviews these candidates (via `ec review`
+or by asking you to show them) — never promote or judge them yourself.
 
-If no session is active, returns an error — tell the user to run /ec-start."""
+Sessions are automatic: in an enabled repo the session for the current
+branch resolves or is created by this call. If the response asks you to
+turn Reverie on for this repo, ask the user the question it contains
+exactly once per conversation, and record their answer with
+ec_set_repo_state. Pass the workspace path as 'repo_path' on every call."""
 
 _QUERY_DESCRIPTION = """\
 Retrieve engineering conclusions relevant to your current task. Call this
@@ -160,7 +194,7 @@ cognition might fill:
 - When debugging and the cause isn't obvious from the code alone
 - Before an architectural change (query for existing architectural decisions)
 
-Returns ECUs from both the Session Brain (current session's working memory)
+Returns ECUs from both the Session Brain (current branch's working memory)
 and the Canonical Brain (accumulated understanding from past sessions).
 Each ECU includes confidence, scope, grounding references, and status.
 
@@ -168,14 +202,46 @@ Memory is framed as "past beliefs to verify against current code," not
 authoritative context. Always verify grounding references against the
 live codebase before acting on an ECU.
 
-If no session is active, returns an error — tell the user to run /ec-start."""
+Sessions are automatic: in an enabled repo the session for the current
+branch resolves or is created by this call. Pass the workspace path as
+'repo_path' on every call."""
 
 _SUMMARY_DESCRIPTION = """\
 Get a summary of what the EC brain knows. Call this ONCE at session start
 to understand what engineering cognition is already stored before you begin
 work. Returns brain statistics and scope distribution — not individual ECUs.
 
-Works without an active session (reads Canonical Brain only)."""
+If the response contains a pending-review nudge, mention it to the user at
+most once per conversation (counts only, never contents)."""
+
+_REPO_STATE_DESCRIPTION = """\
+Record the user's answer about enabling Reverie for the current repo, or
+turn Reverie on/off for it. Call this with:
+- state="enabled"   — the user said yes (or wants it on)
+- state="not_now"   — the user said "not now": stays off for now; do not
+                      ask again in this conversation
+- state="disabled"  — the user said never (or wants it off): fully off for
+                      this repo, existing memory is kept
+- state="undecided" — reset to the not-configured state
+Pass the workspace path as 'repo_path'. The answer is remembered globally —
+never stored inside the repo."""
+
+_REVIEW_LIST_DESCRIPTION = """\
+List the user's pending Reverie review candidates (one queue across every
+branch and repo, strongest first). Use this when the user asks to see
+their Reverie candidates or wants to review memory. Show EVERY candidate's
+full conclusion text to the user before asking for their decisions, relay
+only the decisions the user actually states, and never decide on their
+behalf. Returns a short-lived review_token — pass it to ec_review_decide.
+Pass the workspace path as 'repo_path' to scope to the current repo."""
+
+_REVIEW_DECIDE_DESCRIPTION = """\
+Apply review decisions the USER stated in the chat (accept | reject | skip,
+optionally with edited_cognition they dictated). Requires the review_token
+from ec_review_decide's sibling ec_review_list; only candidates that were
+in that listing can be decided. Bulk-accepting every candidate is refused
+— reverie review must stay per-candidate or per-group, on the user's
+explicit instruction. Pass the workspace path as 'repo_path'."""
 
 _RECONSOLIDATE_DESCRIPTION = """\
 Re-evaluate a previously retrieved ECU in light of new evidence you discovered
@@ -203,122 +269,222 @@ Do NOT call ec_reconsolidate for:
   retrieval — you can't reconsolidate something you haven't looked at)
 - Simple code changes with no impact on engineering conclusions"""
 
+def _schema(properties: dict, required: list[str]) -> dict:
+    return {"type": "object", "properties": properties,
+            "required": required, "additionalProperties": False}
+
+
+_REPO_PATH_PROP = {
+    "type": "string",
+    "description": (
+        "The workspace path you are working in (the repo directory). Pass "
+        "it explicitly — global MCP servers may be started in the home "
+        "folder, where the repo cannot be detected."
+    ),
+}
+
+
+def _observe_schema() -> dict:
+    return _schema({
+        "user_prompt": {
+            "type": "string",
+            "description": (
+                "The user's prompt that triggered this response. The "
+                "Extractor processes the full interaction — prompt, "
+                "reasoning, and output — not just the reasoning alone."
+            ),
+        },
+        "reasoning_trace": {
+            "type": "string",
+            "description": (
+                "Your reasoning trace since the last ec_observe call. "
+                "Include your thinking, decisions, and rationale — not "
+                "just the final code output."
+            ),
+        },
+        "final_output": {
+            "type": "string",
+            "description": (
+                "Your final output (code, explanation, plan, etc.). If "
+                "the output is just a code diff with no explanation, "
+                "this may be omitted."
+            ),
+        },
+        "repo_path": dict(_REPO_PATH_PROP),
+    }, ["user_prompt", "reasoning_trace"])
+
+
+def _query_schema() -> dict:
+    return _schema({
+        "query": {
+            "type": "string",
+            "description": (
+                "What you want to know. Natural language. Example: "
+                "'How does the authentication token refresh work?'"
+            ),
+        },
+        "scope": {
+            "type": "string",
+            "enum": [
+                "engineering", "domain", "project",
+                "repo", "module", "subsystem",
+            ],
+            "description": (
+                "Restrict search scope. If omitted, searches all "
+                "scopes (with scope proximity weighting)."
+            ),
+        },
+        "mode": {
+            "type": "string",
+            "enum": list(MODES),
+            "description": (
+                "Retrieval mode. If omitted, uses default mode "
+                "(broad retrieval)."
+            ),
+        },
+        "repo_path": dict(_REPO_PATH_PROP),
+    }, ["query"])
+
+
+def _summary_schema() -> dict:
+    return _schema({"repo_path": dict(_REPO_PATH_PROP)}, [])
+
+
+def _reconsolidate_schema() -> dict:
+    return _schema({
+        "ecu_id": {
+            "type": "string",
+            "description": (
+                "The ID of the ECU to reconsolidate. Must be a "
+                "canonical ECU that was retrieved in this session."
+            ),
+        },
+        "evidence": {
+            "type": "string",
+            "description": (
+                "The new evidence you discovered. This should be "
+                "your reasoning trace explaining what you found and "
+                "why it affects the ECU. The Diffuser will use this "
+                "to re-evaluate the ECU's confidence and edges."
+            ),
+        },
+        "relationship": {
+            "type": "string",
+            "enum": list(reconsolidation.VALID_RELATIONSHIPS),
+            "description": (
+                "How does the new evidence relate to the ECU? If "
+                "omitted, the Diffuser will classify the relationship."
+            ),
+        },
+        "repo_path": dict(_REPO_PATH_PROP),
+    }, ["ecu_id", "evidence"])
+
+
+def _set_repo_state_schema() -> dict:
+    return _schema({
+        "state": {
+            "type": "string",
+            "enum": ["enabled", "disabled", "not_now", "undecided"],
+            "description": (
+                "The user's answer: yes -> enabled; not now -> not_now; "
+                "never -> disabled."
+            ),
+        },
+        "repo_path": dict(_REPO_PATH_PROP),
+    }, ["state"])
+
+
+def _review_list_schema() -> dict:
+    return _schema({
+        "repo_path": dict(_REPO_PATH_PROP),
+        "all": {
+            "type": "boolean",
+            "description": (
+                "List candidates from every repo instead of just the "
+                "current one."
+            ),
+        },
+        "by_topic": {
+            "type": "boolean",
+            "description": (
+                "Group by topic instead of strongest-first ordering."
+            ),
+        },
+        "page": {
+            "type": "integer",
+            "description": "1-based page number (default 1).",
+        },
+    }, [])
+
+
+def _review_decide_schema() -> dict:
+    return _schema({
+        "review_token": {
+            "type": "string",
+            "description": "The token from ec_review_list.",
+        },
+        "decisions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string",
+                           "description": "Candidate id from the listing."},
+                    "action": {
+                        "type": "string",
+                        "enum": ["accept", "reject", "skip"],
+                    },
+                    "edited_cognition": {
+                        "type": "string",
+                        "description": (
+                            "Only when the user dictated a rewording."
+                        ),
+                    },
+                },
+                "required": ["id", "action"],
+                "additionalProperties": False,
+            },
+            "description": "The decisions the USER stated.",
+        },
+        "repo_path": dict(_REPO_PATH_PROP),
+    }, ["review_token", "decisions"])
+
+
 TOOLS = [
     {
         "name": "ec_observe",
         "description": _OBSERVE_DESCRIPTION,
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "user_prompt": {
-                    "type": "string",
-                    "description": (
-                        "The user's prompt that triggered this response. The "
-                        "Extractor processes the full interaction — prompt, "
-                        "reasoning, and output — not just the reasoning alone."
-                    ),
-                },
-                "reasoning_trace": {
-                    "type": "string",
-                    "description": (
-                        "Your reasoning trace since the last ec_observe call. "
-                        "Include your thinking, decisions, and rationale — not "
-                        "just the final code output."
-                    ),
-                },
-                "final_output": {
-                    "type": "string",
-                    "description": (
-                        "Your final output (code, explanation, plan, etc.). If "
-                        "the output is just a code diff with no explanation, "
-                        "this may be omitted."
-                    ),
-                },
-            },
-            "required": ["user_prompt", "reasoning_trace"],
-            "additionalProperties": False,
-        },
+        "inputSchema": _observe_schema(),
     },
     {
         "name": "ec_query",
         "description": _QUERY_DESCRIPTION,
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": (
-                        "What you want to know. Natural language. Example: "
-                        "'How does the authentication token refresh work?'"
-                    ),
-                },
-                "scope": {
-                    "type": "string",
-                    "enum": [
-                        "engineering", "domain", "project",
-                        "repo", "module", "subsystem",
-                    ],
-                    "description": (
-                        "Restrict search scope. If omitted, searches all "
-                        "scopes (with scope proximity weighting)."
-                    ),
-                },
-                "mode": {
-                    "type": "string",
-                    "enum": list(MODES),
-                    "description": (
-                        "Retrieval mode. If omitted, uses default mode "
-                        "(broad retrieval)."
-                    ),
-                },
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
+        "inputSchema": _query_schema(),
     },
     {
         "name": "ec_get_summary",
         "description": _SUMMARY_DESCRIPTION,
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False,
-        },
+        "inputSchema": _summary_schema(),
     },
     {
         "name": "ec_reconsolidate",
         "description": _RECONSOLIDATE_DESCRIPTION,
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "ecu_id": {
-                    "type": "string",
-                    "description": (
-                        "The ID of the ECU to reconsolidate. Must be a "
-                        "canonical ECU that was retrieved in this session."
-                    ),
-                },
-                "evidence": {
-                    "type": "string",
-                    "description": (
-                        "The new evidence you discovered. This should be "
-                        "your reasoning trace explaining what you found and "
-                        "why it affects the ECU. The Diffuser will use this "
-                        "to re-evaluate the ECU's confidence and edges."
-                    ),
-                },
-                "relationship": {
-                    "type": "string",
-                    "enum": list(reconsolidation.VALID_RELATIONSHIPS),
-                    "description": (
-                        "How does the new evidence relate to the ECU? If "
-                        "omitted, the Diffuser will classify the relationship."
-                    ),
-                },
-            },
-            "required": ["ecu_id", "evidence"],
-            "additionalProperties": False,
-        },
+        "inputSchema": _reconsolidate_schema(),
+    },
+    {
+        "name": "ec_set_repo_state",
+        "description": _REPO_STATE_DESCRIPTION,
+        "inputSchema": _set_repo_state_schema(),
+    },
+    {
+        "name": "ec_review_list",
+        "description": _REVIEW_LIST_DESCRIPTION,
+        "inputSchema": _review_list_schema(),
+    },
+    {
+        "name": "ec_review_decide",
+        "description": _REVIEW_DECIDE_DESCRIPTION,
+        "inputSchema": _review_decide_schema(),
     },
 ]
 
@@ -339,6 +505,9 @@ class ECServer:
         self._manager = manager
         self._embedding_model = embedding_model
         self._maintainer_thread: maintainer.MaintainerThread | None = None
+        # feat/flow: short-lived review tokens for the agent review channel
+        # (D57): token -> {"ids": [...], "created_at": iso}
+        self._review_tokens: dict[str, dict] = {}
 
     # -- lazy resources ----------------------------------------------------
 
@@ -446,6 +615,9 @@ class ECServer:
             "ec_query": self._tool_query,
             "ec_get_summary": self._tool_summary,
             "ec_reconsolidate": self._tool_reconsolidate,
+            "ec_set_repo_state": self._tool_set_repo_state,
+            "ec_review_list": self._tool_review_list,
+            "ec_review_decide": self._tool_review_decide,
         }.get(name)
         if handler is None:
             return self._error(
@@ -464,18 +636,98 @@ class ECServer:
                                f"Internal error running {name}: {exc}")
         return self._result(msg_id, {
             "content": [{"type": "text", "text": json.dumps(payload)}],
-            "isError": payload.get("status") == "error",
+            # feat/flow: gate responses (needs_consent / disabled) did not
+            # act — surface them as errors so the agent cannot miss them.
+            "isError": payload.get("status") in
+                       ("error", "needs_consent", "disabled"),
         })
 
     # -- shared helpers ------------------------------------------------------
 
-    def _current_session(self) -> dict | None:
-        return self._ensure_manager().current_session()
+    def _resolve_repo(self, args: dict):
+        """Locate the repo for this call (feat/flow, D55).
 
-    @staticmethod
-    def _no_session_payload() -> dict:
-        return {"status": "error", "session_active": False,
-                "error": NO_SESSION_ERROR}
+        The tool's optional ``repo_path`` argument (the agent's workspace
+        path) wins — some harnesses start global MCP servers in the home
+        folder, where cwd is useless. Falls back to the server's working
+        directory (and the EC_REPO_PATH/EC_BRANCH overrides inside
+        repos.resolve_repo). Returns ``(repos.RepoInfo, None)`` or
+        ``(None, error_payload)``."""
+        repo_arg = args.get("repo_path")
+        if repo_arg is not None and not isinstance(repo_arg, str):
+            return None, {"status": "error", "error_kind": "no_repo",
+                          "error": "repo_path must be a string path"}
+        try:
+            info = repos.resolve_repo(cwd=repo_arg if repo_arg else None)
+        except SessionError as exc:
+            return None, {
+                "status": "error", "error_kind": "no_repo",
+                "error": NO_REPO_ERROR,
+                "detail": str(exc),
+            }
+        return info, None
+
+    def _gate(self, args: dict, *, require_repo: bool = True):
+        """The enablement gate (D55) — runs before every tool acts.
+
+        Returns ``(gate_payload, context)``: exactly one is None.
+
+        - repo unresolvable and required → error payload (no context)
+        - ``undecided`` repo → short structured ask-the-user response; the
+          ask is recorded (``asked_at``) so the agent's once-per-
+          conversation rule has a timestamp to anchor on
+        - ``disabled`` repo → structured off-response; NOTHING happens
+        - ``enabled`` repo → context with the RepoInfo; missing-branch
+          sessions are archived here (D56) so the queue never shows
+          zombie branches as active
+        """
+        info, error = self._resolve_repo(args)
+        if error is not None:
+            if not require_repo:
+                return None, None          # e.g. summary works repo-less
+            return error, None
+        brain = self._ensure_brain()
+        state_row = repos.resolve_repo_state(brain, info)
+        state = state_row["state"] if state_row else "undecided"
+        if state == "undecided":
+            repos.mark_asked(brain, info)
+            return {
+                "status": "needs_consent",
+                "state": "undecided",
+                "repo": info.repo_path,
+                "question": repos.FIRST_TIME_QUESTION,
+                "error": repos.FIRST_TIME_QUESTION,
+                "instructions": (
+                    "Ask the user this exact question once per conversation. "
+                    "Record their answer with ec_set_repo_state: 'yes' -> "
+                    "enabled, 'not now' -> not_now, 'never' -> disabled. If "
+                    "they say 'not now', do not ask again in this "
+                    "conversation and continue without Reverie."
+                ),
+            }, None
+        if state == "disabled":
+            return {
+                "status": "disabled",
+                "state": "disabled",
+                "repo": info.repo_path,
+                "error": "Reverie is disabled for this repo. Nothing was "
+                         "captured or retrieved. The user can re-enable it "
+                         "any time with `ec enable` (existing memory is "
+                         "kept).",
+            }, None
+        # enabled: archive sessions whose branch vanished (D56, best-effort)
+        if info.via_git:
+            try:
+                repos.archive_missing_branch_sessions(
+                    brain, info.repo_path, skip_branch=info.branch)
+            except Exception:
+                log.exception("archive-on-lookup failed; continuing")
+        return None, {"info": info}
+
+    def _enabled_session(self, info: repos.RepoInfo) -> dict:
+        """D56: the session for (repo, branch), resolved or created."""
+        return self._ensure_manager().ensure_session(info.repo_path,
+                                                     info.branch)
 
     def _record_retrieval_metadata(self, result: dict,
                                    session_id: str | None = None) -> int:
@@ -528,9 +780,11 @@ class ECServer:
 
     def _tool_observe(self, args: dict) -> dict:
         """§28.13 flow: extract → store in Session Brain → lightweight diffuse."""
-        row = self._current_session()
-        if row is None:
-            return self._no_session_payload()
+        gate, ctx = self._gate(args)
+        if gate is not None:
+            return gate
+        info = ctx["info"]
+        row = self._enabled_session(info)
         user_prompt = args.get("user_prompt")
         trace = args.get("reasoning_trace")
         if not isinstance(user_prompt, str) or not user_prompt.strip() \
@@ -640,9 +894,11 @@ class ECServer:
 
     def _tool_query(self, args: dict) -> dict:
         """The §11.3 demand-driven retrieval path (ec_query)."""
-        row = self._current_session()
-        if row is None:
-            return self._no_session_payload()
+        gate, ctx = self._gate(args)
+        if gate is not None:
+            return gate
+        info = ctx["info"]
+        row = self._enabled_session(info)
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
             return {
@@ -677,21 +933,37 @@ class ECServer:
             payload["message"] = NO_ECUS_FOUND.format(query=query)
         return payload
 
-    def _tool_summary(self, _args: dict) -> dict:
-        """§16.3 ec_get_summary — works without an active session."""
-        try:
-            row = self._current_session()
-        except SessionError:
-            row = None  # summary works session-less (and repo-less)
-        return {"status": "ok", **brain_summary(self._ensure_brain(), row)}
+    def _tool_summary(self, args: dict) -> dict:
+        """§16.3 ec_get_summary — the nudge line included (feat/flow §4).
+
+        Gated on enablement when a repo resolves; works repo-less (a
+        global server in the home folder still reports brain stats)."""
+        gate, ctx = self._gate(args, require_repo=False)
+        if gate is not None:
+            return gate
+        row = None
+        if ctx is not None:
+            info = ctx["info"]
+            row = self._enabled_session(info)
+        brain = self._ensure_brain()
+        payload = {"status": "ok", **brain_summary(brain, row)}
+        nudge = review_queue.nudge_line(
+            brain, config=self.config,
+            repo_path=info.repo_path if ctx is not None else None)
+        if nudge:
+            payload["review_nudge"] = nudge
+            payload["message"] = payload["message"] + " " + nudge
+        return payload
 
     def _tool_reconsolidate(self, args: dict) -> dict:
         """D37 — ec_reconsolidate (design doc §5.2): re-evaluate a labile
         canonical ECU with new evidence. Writes to the Canonical Brain
         immediately; the §5.2 payload is returned verbatim."""
-        row = self._current_session()
-        if row is None:
-            return self._no_session_payload()
+        gate, ctx = self._gate(args)
+        if gate is not None:
+            return gate
+        info = ctx["info"]
+        row = self._enabled_session(info)
 
         ecu_id = args.get("ecu_id")
         evidence = args.get("evidence")
@@ -764,6 +1036,209 @@ class ECServer:
             "old_confidence": round(r.old_confidence, 4),
             "edges_created": r.edges_created,
             "message": r.message,
+        }
+
+    # -- enablement + agent review (feat/flow, D55/D57) ----------------------
+
+    def _tool_set_repo_state(self, args: dict) -> dict:
+        """Record the user's enablement answer (D55): enabled | disabled |
+        not_now (asked, stays off) | undecided (reset). Not gated — this is
+        the tool that RECORDS the gate answer."""
+        info, error = self._resolve_repo(args)
+        if error is not None:
+            return error
+        state = args.get("state")
+        if state not in ("enabled", "disabled", "not_now", "undecided"):
+            return {
+                "status": "error",
+                "error": "state must be one of enabled | disabled | "
+                         "not_now | undecided",
+            }
+        brain = self._ensure_brain()
+        if state == "not_now":
+            repos.mark_asked(brain, info)           # undecided-but-asked
+            row = brain.get_repo(info.repo_key)
+            effective = "undecided"
+            message = ("Recorded: not now. Reverie stays off for this repo; "
+                       "do not ask again in this conversation.")
+        else:
+            row = repos.set_repo_state(brain, info, state)
+            effective = state
+            message = {
+                "enabled": "Reverie is on for this repo. Sessions are "
+                           "automatic per branch; memory is shared across "
+                           "branches.",
+                "disabled": "Reverie is off for this repo. Nothing will be "
+                            "captured or retrieved; existing memory is kept.",
+                "undecided": "Reset: Reverie will ask about this repo again "
+                             "on its next use.",
+            }[state]
+        return {"status": "ok", "repo": info.repo_path,
+                "repo_key": info.repo_key, "state": effective,
+                "asked_at": row["asked_at"], "message": message}
+
+    def _tool_review_list(self, args: dict) -> dict:
+        """The review queue page for the agent channel (D57): same ordered
+        candidates as `ec review`, a compact verbatim block, and a
+        short-lived review_token for ec_review_decide."""
+        gate, ctx = self._gate(args)
+        if gate is not None:
+            return gate
+        info = ctx["info"]
+        scope_all = bool(args.get("all"))
+        queue = review_queue.candidates(
+            self._ensure_brain(),
+            repo=None if scope_all else info.repo_path,
+        )
+        if args.get("by_topic"):
+            ordered: list[dict] = []
+            for _label, members in review_queue.topic_groups(queue):
+                ordered.extend(members)
+            queue = ordered
+        total = len(queue)
+        page_no = int(args.get("page") or 1)
+        rows, total_pages = review_queue.page(queue, page_no,
+                                              config=self.config)
+        import uuid as _uuid
+        token = str(_uuid.uuid4())
+        self._prune_review_tokens()
+        self._review_tokens[token] = {
+            "ids": [r["id"] for r in rows], "created_at": _now_iso(),
+        }
+        lines = [
+            f"Reverie review — {total} candidate(s) "
+            f"(page {page_no}/{total_pages})",
+        ]
+        for i, row in enumerate(rows, start=1):
+            lines.append(
+                f"{i}. [{row['confidence']:.2f}] {row['cognition']}"
+            )
+            lines.append(
+                f"   id: {row['id']} | type: {row['conclusion_type']} | "
+                f"scope: {row['scope_path']} | repo: {row['repo_path']} | "
+                f"branch: {row['branch']}"
+            )
+        if total_pages > page_no:
+            lines.append(f"(more available — page {page_no + 1} of "
+                         f"{total_pages})")
+        message = "\n".join(lines)
+        return {
+            "status": "ok",
+            "review_token": token,
+            "total": total,
+            "page": page_no,
+            "total_pages": total_pages,
+            "candidates": [
+                {"id": r["id"], "cognition": r["cognition"],
+                 "confidence": r["confidence"],
+                 "conclusion_type": r["conclusion_type"],
+                 "scope": r["scope_path"], "repo": r["repo_path"],
+                 "branch": r["branch"], "review_status": r["review_status"]}
+                for r in rows
+            ],
+            "message": message,
+            "instructions": (
+                "Show every candidate's full conclusion text, then relay "
+                "only the decisions the user states via ec_review_decide. "
+                "Never decide on the user's behalf. One listing feeds one "
+                "decide call — after it succeeds, call ec_review_list again "
+                "for the next batch (single-use tokens; this adds friction, "
+                "it is not a security boundary). Reverie cannot verify "
+                "who made a decision; the channel is recorded as 'agent'."
+            ),
+        }
+
+    def _prune_review_tokens(self) -> None:
+        """Drop expired tokens (TTL, D57)."""
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc)
+        stale = [
+            token for token, entry in self._review_tokens.items()
+            if (now - _dt.datetime.fromisoformat(entry["created_at"]))
+            .total_seconds() > REVIEW_TOKEN_TTL_SECONDS
+        ]
+        for token in stale:
+            del self._review_tokens[token]
+
+    def _tool_review_decide(self, args: dict) -> dict:
+        """Apply the USER's stated decisions (D57): token-scoped, never a
+        global accept-all, channel recorded as 'agent'."""
+        gate, ctx = self._gate(args)
+        if gate is not None:
+            return gate
+        self._prune_review_tokens()
+        token = args.get("review_token")
+        entry = self._review_tokens.get(token) if isinstance(token, str) \
+            else None
+        if entry is None:
+            return {
+                "status": "error",
+                "error": "Unknown or expired review_token. Call "
+                         "ec_review_list again to get a fresh listing, "
+                         "then decide from those ids.",
+            }
+        raw = args.get("decisions")
+        decisions: dict[str, dict] = {}
+        if isinstance(raw, dict):
+            raw = [{"id": k, "action": v} for k, v in raw.items()]
+        if not isinstance(raw, list) or not raw:
+            return {
+                "status": "error",
+                "error": "decisions must be a non-empty array of "
+                         "{id, action[, edited_cognition]}.",
+            }
+        for item in raw:
+            if not isinstance(item, dict) or "id" not in item \
+                    or "action" not in item:
+                return {
+                    "status": "error",
+                    "error": "each decision needs 'id' and 'action' "
+                             "(accept | reject | skip).",
+                }
+            decision = {"action": item["action"]}
+            if item.get("edited_cognition") is not None:
+                decision["edited_cognition"] = item["edited_cognition"]
+            decisions[str(item["id"])] = decision
+        token_ids = set(entry["ids"])
+        unknown = [cid for cid in decisions if cid not in token_ids]
+        if unknown:
+            return {
+                "status": "error",
+                "error": f"Decision ids not in this listing: {unknown}. "
+                         "Only candidates returned under this review_token "
+                         "can be decided — call ec_review_list again.",
+            }
+        accepts = {cid for cid, d in decisions.items()
+                   if d["action"] == "accept"}
+        if len(token_ids) > 1 and accepts == token_ids:
+            return {
+                "status": "error",
+                "error": "Refusing a bulk accept-all through the agent. "
+                         "Review per candidate, or skip at least one and "
+                         "re-list; the user can also run `ec review` in a "
+                         "terminal.",
+            }
+        out = review_queue.apply_decisions(
+            self._ensure_brain(), decisions,
+            channel="agent", config=self.config,
+        )
+        # Single-use tokens (feat/flow review fix): the token is consumed
+        # once a decide call succeeds, so each listing feeds exactly one
+        # decision call — the next batch needs a fresh ec_review_list. This
+        # adds friction, it is not a security boundary: Reverie cannot
+        # verify who is on the other end of the channel.
+        del self._review_tokens[token]
+        return {
+            "status": "ok",
+            "decided": out["decided"],
+            "unknown": out["unknown"],
+            "results": [
+                {"accepted": len(r.accepted), "rejected": len(r.rejected),
+                 "skipped": len(r.skipped), "errors": r.errors}
+                for r in out["results"]
+            ],
+            "message": "Decisions applied through the review gate "
+                       "(channel: agent).",
         }
 
 

@@ -750,7 +750,7 @@ def grounding_deprecation_notifications(brain: Brain,
 def _resolve_pending_updates(brain: Brain, session_id: str,
                              accepted: list[str], rejected: list[str],
                              handled_pairs: set, result: ReviewResult, cfg,
-                             embedding_model, now: datetime) -> None:
+                             embedding_model_or_fn, now: datetime) -> None:
     """Apply/discard the session's pending updates.
 
     Accepted source + the full diffuser already created an edge to the target
@@ -771,7 +771,10 @@ def _resolve_pending_updates(brain: Brain, session_id: str,
             if target is not None and pair not in handled_pairs:
                 new_ecu = brain.get_ecu(source_id)  # promoted by now
                 if new_ecu is not None:
-                    sim = _cosine(brain, new_ecu, target, embedding_model)
+                    model = (embedding_model_or_fn() if
+                             callable(embedding_model_or_fn)
+                             else embedding_model_or_fn)
+                    sim = _cosine(brain, new_ecu, target, model)
                     if pu["relationship_type"] == "supports":
                         new_c, delta = conf.support_update(
                             target["confidence"], new_ecu["confidence"], sim, cfg)
@@ -848,31 +851,62 @@ def apply_review_decisions(
     session_id: str,
     decisions: dict | None,
     *,
+    close: bool = True,
+    undecided: str = "skip",
+    channel: str = "cli",
     config=None,
     embedding_model=None,
     now: datetime | None = None,
 ) -> ReviewResult:
-    """Apply the human's review decisions and close the session (§28.6).
+    """Apply the human's review decisions (§28.6), optionally closing the
+    session.
 
     ``decisions`` maps ecu_id -> "accept" | "reject" | "skip", or a dict
     ``{"action": "accept", "edited_cognition": "…"}`` for §7.3 edits.
-    Candidates without a decision are skipped (the §28.7 'done' path).
     Invalid actions are recorded in ``result.errors`` and treated as skip —
     one bad decision must not lose the batch.
+
+    feat/flow (D57) keyword-only additions — defaults keep today's exact
+    behaviour:
+
+    - ``close`` (default True) marks the session closed and drops its
+      activation rows (§28.6 stop). The cross-session review queue passes
+      ``close=False`` — review is independent of sessions; the session
+      keeps living.
+    - ``undecided``: ``"skip"`` (default — the §28.7 'done' path: every
+      candidate without a decision is skipped) or ``"leave"`` (queue mode:
+      candidates without a decision are untouched).
+    - ``channel``: which surface decided (``"cli"`` | ``"tui"`` |
+      ``"agent"``) — recorded to the review_decisions audit trail (D57).
+      With ``close=True`` the session must be active; with ``close=False``
+      archived sessions' candidates are also reviewable (their branch is
+      gone, the queue is not).
     """
     cfg = config or get_config()
     now = now or _utcnow()
     session = brain.get_session(session_id)
     if session is None:
         raise ReviewGateError(f"no session with id {session_id}")
-    if session["status"] != "active":
+    if close:
+        if session["status"] != "active":
+            raise ReviewGateError(
+                f"session {session_id} is {session['status']}; only active "
+                "sessions can go through the review gate"
+            )
+    elif session["status"] not in ("active", "archived", "closed"):
         raise ReviewGateError(
-            f"session {session_id} is {session['status']}; only active "
-            "sessions can go through the review gate"
+            f"session {session_id} has unknown status {session['status']!r}"
         )
-    if embedding_model is None:
-        from .embeddings import get_embedding_model
-        embedding_model = get_embedding_model()
+    # feat/flow: the embedding model loads LAZILY — a reject/skip/undo run
+    # never pays the model load (an accept or a pending-update application
+    # triggers it once).
+    model_box = [embedding_model]
+
+    def _model():
+        if model_box[0] is None:
+            from .embeddings import get_embedding_model
+            model_box[0] = get_embedding_model()
+        return model_box[0]
 
     result = ReviewResult(session_id=session_id)
     parsed = _parse_decisions(decisions)
@@ -883,19 +917,27 @@ def apply_review_decisions(
     # -- steps 2-4: accept / reject / skip --------------------------------
     for group in plan.groups:
         for ecu in group.ecus:
-            action, edited = parsed.get(ecu["id"], ("skip", None))
+            if ecu["id"] in parsed:
+                action, edited = parsed[ecu["id"]]
+            elif undecided == "leave":
+                continue
+            else:
+                action, edited = ("skip", None)
             if action not in _ACTIONS:
                 result.errors.append(
                     f"invalid review action {action!r} for {ecu['id']}; skipped"
                 )
                 action = "skip"
             if action == "accept":
-                canonical_id = _promote(brain, ecu, edited, embedding_model)
+                canonical_id = _promote(brain, ecu, edited, _model())
                 result.accepted.append(canonical_id)
+                brain.add_review_decision(
+                    ecu["id"], "accept", channel, session_id=session_id,
+                    edited_cognition=edited, decided_at=now.isoformat())
                 try:
                     dres = diffuser.diffuse_ecu(
                         brain, canonical_id,
-                        embedding_model=embedding_model, config=cfg,
+                        embedding_model=_model(), config=cfg,
                     )
                 except DiffuserError as exc:
                     # Promotion stands (the human decided); diffusion is
@@ -929,20 +971,26 @@ def apply_review_decisions(
                 )
             elif action == "reject":
                 result.rejected.append(ecu["id"])
+                brain.add_review_decision(
+                    ecu["id"], "reject", channel, session_id=session_id,
+                    decided_at=now.isoformat())
             else:
                 brain.update_session_ecu_review_status(ecu["id"], "skipped")
                 result.skipped.append(ecu["id"])
+                brain.add_review_decision(
+                    ecu["id"], "skip", channel, session_id=session_id,
+                    decided_at=now.isoformat())
 
     # -- step 5: pending updates -------------------------------------------
     _resolve_pending_updates(
         brain, session_id, result.accepted, result.rejected,
-        handled_pairs, result, cfg, embedding_model, now,
+        handled_pairs, result, cfg, _model, now,
     )
 
     # -- §14.3: opposing-edge pairs (decomposition signals) -----------------
     _opposing_edge_notifications(brain, result)
 
-    # -- step 8: cleanup + close -------------------------------------------
+    # -- step 8: cleanup (+ close, unless review is session-independent) ---
     brain.delete_session_edges_for(result.accepted + result.rejected)
     for ecu_id in result.accepted + result.rejected:
         brain.delete_session_ecu(ecu_id)
@@ -953,8 +1001,9 @@ def apply_review_decisions(
     # -- §3.6: grounding deprecations accumulated since the last gate ------
     result.notifications.extend(grounding_deprecation_notifications(brain))
 
-    brain.close_session(session_id, ended_at=now.isoformat())
-    brain.delete_session_activation(session_id)  # fresh slate next time (§12.2)
+    if close:
+        brain.close_session(session_id, ended_at=now.isoformat())
+        brain.delete_session_activation(session_id)  # fresh slate (§12.2)
 
     result.canonical_total = brain.count_ecus()
     brain.log_maintenance("review_gate", json.dumps({
@@ -1095,7 +1144,7 @@ def interactive_review(
 
     result = apply_review_decisions(
         brain, session_id, decisions, config=config,
-        embedding_model=embedding_model, now=now,
+        embedding_model=embedding_model, now=now, channel="tui",
     )
     print_fn(f"\n{result.message}")
     warning = diffusion_failure_warning(result)
