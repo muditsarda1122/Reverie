@@ -16,7 +16,7 @@ import pytest
 from ec.brain import Brain, BrainError
 from ec.config import get_base_prior, load_config
 from ec.embeddings import from_blob, get_embedding_model, to_blob
-from ec.llm import extract_json
+from ec.llm import api_key, extract_json
 from ec.mode_detection import MODES, detect_mode, get_mode_params
 
 
@@ -355,8 +355,8 @@ class TestModeDetection:
             get_mode_params("daydreaming")
 
     @pytest.mark.skipif(
-        not os.environ.get("OPENCODE_ZEN_API_KEY"),
-        reason="OPENCODE_ZEN_API_KEY not set — live Zen test skipped",
+        not api_key(),
+        reason="no provider key configured (see ec.llm.api_key) — live test skipped",
     )
     def test_mode_detection_llm_live(self):
         mode = detect_mode("why does the server crash on startup under load")

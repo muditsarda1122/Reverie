@@ -71,9 +71,10 @@ def extract_json(text: str) -> str:
 
 
 def api_key(config=None) -> str | None:
-    """Return the configured API key, or None if the env var is unset."""
+    """Return the configured API key, or None (unset env var / keyless provider)."""
     cfg = config or get_config()
-    return os.environ.get(cfg.llm.api_key_env)
+    env = cfg.llm.api_key_env
+    return os.environ.get(env) if env else None
 
 
 def model_for(config, task: str | None = None) -> str:
