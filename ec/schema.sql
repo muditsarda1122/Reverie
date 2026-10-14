@@ -113,6 +113,29 @@ CREATE INDEX IF NOT EXISTS idx_session_edges_target  ON session_edges(target_id)
 CREATE INDEX IF NOT EXISTS idx_session_edges_type    ON session_edges(type);
 
 -- ---------------------------------------------------------------------------
+-- Pending extractions (feat/providers): interactions whose extraction LLM
+-- call failed after retries. The input is persisted so nothing is lost;
+-- items are retried automatically at the next successful ec_observe for the
+-- same (repo, branch), or manually via `ec-retry`.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS pending_extractions (
+    id               TEXT PRIMARY KEY,
+    session_id       TEXT,              -- provenance hint; no FK: the record
+                                        -- must survive session cleanup
+    repo_path        TEXT NOT NULL,
+    branch           TEXT NOT NULL,
+    interaction_json TEXT NOT NULL,     -- full interaction dict (§5.2)
+    origin_agent     TEXT,
+    commit_hash      TEXT,
+    error            TEXT,              -- last failure reason
+    retry_count      INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL,
+    last_attempt_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pending_extractions_repo
+    ON pending_extractions(repo_path, branch);
+
+-- ---------------------------------------------------------------------------
 -- Pending updates (§28.5): session evidence relating to canonical ECUs,
 -- held until the review gate (no Session->Canonical writes, §6.7).
 -- ---------------------------------------------------------------------------
