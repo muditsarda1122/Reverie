@@ -2,10 +2,10 @@
 
 Two layers live in this module:
 
-1. The original LIVE full-pipeline test (test_e2e_full_pipeline, Phase 3 era):
-   the whole EC pipeline against the live Zen API — EC-Bench v2 readiness
-   audit (this flow had never been tested end-to-end). Skips without
-   OPENCODE_ZEN_API_KEY.
+1. The LIVE full-pipeline test (test_e2e_full_pipeline), rewritten for the
+   feat/flow product flow (SPEC §29): repo enablement, automatic sessions,
+   the cross-session review queue, and sessions that are never closed.
+   Skips without a provider key.
 
 2. OFFLINE extended E2E tests (Phase 12 — design doc §11 "Integration"):
    the v2 components (Maintainer, grounding, reconsolidation, clustering,
@@ -13,28 +13,31 @@ Two layers live in this module:
    session + MCP server + brain + maintenance — with mocked/no LLM. These
    run everywhere; see TestE2EOffline below.
 
-The LIVE test's flow (steps a–n):
+The LIVE test's flow (steps a–g):
 
-  a. fresh brain (EC_HOME=/tmp/ec_e2e_test)
-  b. /ec-start via the real CLI subprocess (repo /tmp/fastapi, branch main)
+  a. fresh brain (EC_HOME=/tmp/ec_e2e_test); the repo is enabled via the
+     real `ec enable` CLI subprocess (repo /tmp/fastapi, branch main) —
+     NO session is created by enabling
+  b. the first ec_observe auto-creates the session (D56)
   c. a realistic 2-paragraph FastAPI routing investigation through ec_observe
      (extract -> store -> lightweight diffuse, all live LLM calls)
   d. ECUs extracted + stored in the session brain
   e. edges created (session edges / pending updates during observe — reported;
-     firm supports/depends_on assertion on CANONICAL edges after promotion)
-  f. ec_query "How does FastAPI routing work?"
-  g. retrieval groups contain the extracted ECUs
-  h. the relevance gate filters a deliberately irrelevant session ECU
-  i. activation scores normalized to [0, 1]
-  j. §11.8 formatted output structure (CONCLUSION/CONFIDENCE/SCOPE/TYPE/
-     SOURCE/GROUNDING + framing note)
-  k. /ec-stop --all-accept via the real CLI subprocess (review gate -> full
-     diffuser -> Canonical Brain)
-  l. /ec-start a new session on the same repo+branch
-  m. canonical ECUs retrievable in the new session
-  n. cross-session persistence (ids survive promotion + a fresh DB connection)
+      firm supports/depends_on assertion on CANONICAL edges after promotion)
+  f. ec_query "How does FastAPI routing work?" — groups contain the
+     extracted ECUs; the relevance gate filters a deliberately irrelevant
+     session ECU; activation normalized; §11.8 formatted structure
+  g. review through the review queue: ec_review_list → ec_review_decide,
+     decisions applied, the agent channel recorded, tokens single-use;
+     accepted ECUs promoted to the Canonical Brain (full diffuser)
+  h. retrieval in a LATER conversation on the same branch: the SAME session
+     is resumed (never closed) and the promoted canonical ECUs surface
+  i. a branch switch picks the OTHER branch's session while the main
+     session stays active and untouched
+  j. cross-session persistence (ids survive promotion + a fresh DB connection)
 
-The LIVE test requires OPENCODE_ZEN_API_KEY and skips without it.
+The LIVE test requires a provider key (OPENCODE_ZEN_API_KEY by default)
+and skips without one.
 Run live:   .venv/bin/python -m pytest tests/test_e2e_integration.py -v -s
 Run offline: .venv/bin/python -m pytest tests/test_e2e_integration.py -v -k offline
 """
@@ -170,6 +173,14 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _run_ec_cli(*args: str) -> subprocess.CompletedProcess:
+    """A real `ec <subcommand>` through the multi-command CLI."""
+    return subprocess.run(
+        [sys.executable, "-m", "ec.cli", *args],
+        capture_output=True, text=True, env=_cli_env(), cwd=ROOT, timeout=300,
+    )
+
+
 def _call_tool(server: ECServer, name: str, arguments: dict | None = None) -> dict:
     response = server.handle_message({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -194,7 +205,8 @@ def _group_ecu_ids(payload: dict) -> set[str]:
 
 @requires_live_api
 def test_e2e_full_pipeline(model, monkeypatch, capsys):
-    # (a) fresh brain at EC_HOME=/tmp/ec_e2e_test --------------------------
+    # (a) fresh brain at EC_HOME=/tmp/ec_e2e_test; enable the repo via the
+    # real `ec enable` CLI subprocess --------------------------------------
     shutil.rmtree(EC_HOME_DIR, ignore_errors=True)
     monkeypatch.setenv("EC_HOME", str(EC_HOME_DIR))
     monkeypatch.setenv("EC_REPO_PATH", REPO)
@@ -210,24 +222,28 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
     server = ECServer(brain=brain, manager=manager)
     print("\n[a] fresh brain at", EC_HOME_DIR, "| seed ECU:", seed_id)
 
-    # (b) /ec-start via the real CLI subprocess ------------------------------
-    proc = _run_cli("start")
+    proc = _run_ec_cli("enable")
     assert proc.returncode == 0, proc.stderr
-    assert "Started EC session" in proc.stdout
-    session_row = brain.get_active_session(RESOLVED_REPO, BRANCH)
-    assert session_row is not None
-    session_id = session_row["id"]
-    print("[b] session started via CLI:", session_id)
+    assert "Reverie is on for" in proc.stdout
+    assert "nothing to start" in proc.stdout
+    # Enabling no longer creates a session — sessions are automatic per
+    # branch and appear on the first tool call (D56).
+    assert brain.get_active_session(RESOLVED_REPO, BRANCH) is None
+    print("[a] repo enabled via `ec enable`; no session yet (automatic)")
 
-    # (c) ec_observe — extract -> store -> lightweight diffuse (live LLM) ---
+    # (b) the FIRST ec_observe auto-creates the session (D56) ----------------
     observe = _call_tool(server, "ec_observe", {
         "user_prompt": USER_PROMPT,
         "reasoning_trace": REASONING_TRACE,
         "final_output": FINAL_OUTPUT,
     })
     print("[c] ec_observe payload:", json.dumps(observe, indent=None))
+    session_row = brain.get_active_session(RESOLVED_REPO, BRANCH)
+    assert session_row is not None, "the first tool call must create the session"
+    session_id = session_row["id"]
+    print("[b] session auto-created by the first tool call:", session_id)
 
-    # (d) ECUs extracted and stored in the session brain ---------------------
+    # (c/d) ECUs extracted and stored in the session brain -------------------
     assert observe["status"] == "ok", observe
     assert observe["ecus_extracted"] >= 1, "no ECUs extracted from a rich trace"
     session_ecus = brain.list_session_ecus(session_id)
@@ -239,13 +255,13 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
               % (e["conclusion_type"], e["scope"]["level"], e["confidence"],
                  e["cognition"][:100]))
 
-    # (e) session-phase integration evidence (reported; firm check at (k)) ---
+    # (e) session-phase integration evidence (reported; firm check at (g)) ---
     session_edges = brain.list_session_edges(session_id)
     pending = brain.list_pending_updates(session_id=session_id)
     print("[e] session edges:", [(x["type"], x["target_type"]) for x in session_edges],
           "| pending updates:", [(p["relationship_type"]) for p in pending])
 
-    # deliberately irrelevant session ECU for the gate check (h)
+    # deliberately irrelevant session ECU for the gate check (f)
     offtopic_id = brain.insert_session_ecu(
         session_id, OFFTOPIC_ECU,
         embedding=model.encode_one(OFFTOPIC_ECU["cognition"]))
@@ -261,29 +277,29 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
     assert result["status"] == "ok", result
     assert result["groups_retrieved"] >= 1, "no groups retrieved for a relevant query"
 
-    # (g) retrieval groups contain extracted ECUs ----------------------------
+    # retrieval groups contain extracted ECUs ---------------------------------
     surfaced = _group_ecu_ids(result)
     assert extracted_ids & surfaced, (
         f"no extracted ECU in retrieval output; extracted={extracted_ids}, "
         f"surfaced={surfaced}")
-    print("[g] extracted ECUs surfaced:", extracted_ids & surfaced)
+    print("[f1] extracted ECUs surfaced:", extracted_ids & surfaced)
 
-    # (h) relevance gate filtered the irrelevant ECU --------------------------
+    # relevance gate filtered the irrelevant ECU ------------------------------
     assert result["filtered_out"] >= 1, "gate filtered nothing (expected the off-topic ECU)"
     assert offtopic_id not in surfaced, "irrelevant ECU leaked past the relevance gate"
     assert result["fallback"] is False
-    print("[h] gate filtered %d ECU(s); off-topic ECU excluded"
+    print("[f2] gate filtered %d ECU(s); off-topic ECU excluded"
           % result["filtered_out"])
 
-    # (i) activation scores normalized to [0, 1] ------------------------------
+    # activation scores normalized to [0, 1] ----------------------------------
     norm = manager.activation_for(session_id).normalized_scores()
     assert norm, "spreading activation produced no scores"
     assert all(0.0 <= s <= 1.0 for s in norm.values()), norm
     assert max(norm.values()) > 0.0
-    print("[i] normalized activation: %d entries, max %.3f, min %.3f"
+    print("[f3] normalized activation: %d entries, max %.3f, min %.3f"
           % (len(norm), max(norm.values()), min(norm.values())))
 
-    # (j) §11.8 formatted output structure -------------------------------------
+    # §11.8 formatted output structure ----------------------------------------
     formatted = result["formatted"]
     for marker in ("=== Engineering Cognition ===",
                    "=== End Engineering Cognition ===",
@@ -294,20 +310,56 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
     has_grounding = "GROUNDING:" in formatted or any(
         g["core_ecu"]["grounding"].get("files") for g in result["groups"])
     assert has_grounding, "no grounding surfaced in any retrieved group"
-    print("[j] §11.8 structure verified (CONCLUSION/CONFIDENCE/SCOPE/TYPE/"
+    print("[f4] §11.8 structure verified (CONCLUSION/CONFIDENCE/SCOPE/TYPE/"
           "SOURCE/GROUNDING + framing note)")
 
-    # (k) /ec-stop --all-accept via the real CLI subprocess --------------------
-    proc = _run_cli("stop", "--all-accept")
-    assert proc.returncode == 0, proc.stderr
-    print("[k] /ec-stop output:", proc.stdout.strip().splitlines()[0])
-    assert brain.get_active_session(RESOLVED_REPO, BRANCH) is None, "session not closed"
+    # (g) review through the review queue (agent channel, D57) ----------------
+    listing = _call_tool(server, "ec_review_list", {"all": True})
+    assert listing["status"] == "ok"
+    candidates = [c["id"] for c in listing["candidates"]]
+    assert set(candidates) == extracted_ids | {offtopic_id}
+    token = listing["review_token"]
+    last = candidates[-1]
+    decisions = [
+        {"id": cid, "action": "reject" if cid == offtopic_id else "accept"}
+        for cid in candidates if cid != last
+    ]
+    payload = _call_tool(server, "ec_review_decide", {
+        "review_token": token, "decisions": decisions})
+    assert payload["status"] == "ok", payload
+    # the bulk-accept guard cannot be split across calls: the token is
+    # single-use, so deciding the last one needs a FRESH listing
+    payload2 = _call_tool(server, "ec_review_decide", {
+        "review_token": token,
+        "decisions": [{"id": last, "action": "accept"}]})
+    assert payload2["status"] == "error"
+    listing2 = _call_tool(server, "ec_review_list", {"all": True})
+    payload3 = _call_tool(server, "ec_review_decide", {
+        "review_token": listing2["review_token"],
+        "decisions": [{"id": last, "action": "accept"}]})
+    assert payload3["status"] == "ok", payload3
+    print("[g] %d candidates decided through the review queue "
+          "(channel: agent; token single-use)" % len(candidates))
+
+    # decisions recorded in the audit trail with the agent channel ----------
+    audit = brain.list_review_decisions()
+    audited = {r["candidate_id"]: r for r in audit}
+    for cid in candidates:
+        assert cid in audited, f"no audit row for {cid}"
+        assert audited[cid]["channel"] == "agent"
     remaining = brain.list_session_ecus(session_id)
-    assert all(e["review_status"] not in ("pending", "skipped") for e in remaining)
-    promoted_ids = set(extracted_ids) | {offtopic_id}
+    assert all(e["review_status"] not in ("pending", "skipped")
+               for e in remaining)
+
+    # promotion to long-term memory: accepted extracted ECUs are canonical,
+    # the rejected off-topic ECU is not -------------------------------
     canonical = {e["id"] for e in brain.list_ecus()}
-    assert promoted_ids <= canonical, (
-        f"promoted ECUs missing from canonical brain: {promoted_ids - canonical}")
+    assert extracted_ids <= canonical, (
+        f"accepted ECUs missing from the canonical brain: "
+        f"{extracted_ids - canonical}")
+    assert offtopic_id not in canonical, "a rejected ECU must not be promoted"
+    promoted_ids = extracted_ids
+    print("[g2] promoted to the Canonical Brain:", promoted_ids)
 
     # firm edge assertion: the full diffuser ran at promotion ---------------
     edge_types = []
@@ -318,31 +370,39 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         f"no supports/depends_on edge created by the full diffuser; "
         f"edge types present: {sorted(set(edge_types))}")
 
-    # (l) new session on the same repo+branch ---------------------------------
-    proc = _run_cli("start")
-    assert proc.returncode == 0, proc.stderr
-    assert "Started EC session" in proc.stdout  # not "Resuming"
-    new_row = brain.get_active_session(RESOLVED_REPO, BRANCH)
-    assert new_row is not None and new_row["id"] != session_id
-    assert brain.count_session_ecus(new_row["id"]) == 0, (
-        "unexpected carry-over: all ECUs were accepted at the review gate")
-    print("[l] new session started:", new_row["id"], "(no carry-over)")
-
-    # (m) canonical ECUs retrievable from the new session ----------------------
+    # (h) retrieval in a LATER conversation on the same branch: the SAME
+    # session resumes — nothing is closed (D56) -------------------------------
     manager2 = SessionManager(brain)  # fresh activation state
     server2 = ECServer(brain=brain, manager=manager2)
     result2 = _call_tool(server2, "ec_query", {"query": QUERY})
     assert result2["status"] == "ok" and result2["groups_retrieved"] >= 1
+    row = brain.get_active_session(RESOLVED_REPO, BRANCH)
+    assert row is not None and row["id"] == session_id, (
+        "the later conversation must resume the SAME session — sessions "
+        "are never closed")
+    assert row["status"] == "active"
     canonical_cores = {
         g["core_ecu"]["id"] for g in result2["groups"]
         if g["core_ecu"]["brain"] == "canonical"
     }
     assert canonical_cores & promoted_ids, (
-        "promoted ECUs not retrievable in the new session")
-    print("[m] canonical ECUs surfaced in new session:",
-          canonical_cores & promoted_ids)
+        "promoted ECUs not retrievable in the later conversation")
+    print("[h] same session resumed (%s); canonical ECUs surfaced: %s"
+          % (row["id"], canonical_cores & promoted_ids))
 
-    # (n) cross-session persistence --------------------------------------------
+    # (i) a branch switch picks the OTHER branch's session ---------------------
+    monkeypatch.setenv("EC_BRANCH", "feature")
+    _call_tool(server2, "ec_query", {"query": QUERY})
+    feature_row = brain.get_active_session(RESOLVED_REPO, "feature")
+    assert feature_row is not None, "the branch switch must auto-create ITS session"
+    assert feature_row["id"] != session_id
+    assert brain.get_session(session_id)["status"] == "active", (
+        "switching branches must not close the main branch's session")
+    print("[i] branch switch: session %s now serves 'feature'; %s stayed "
+          "active" % (feature_row["id"], session_id))
+    monkeypatch.setenv("EC_BRANCH", BRANCH)
+
+    # (j) cross-session persistence --------------------------------------------
     brain2 = Brain(EC_HOME_DIR / "ec.db")  # a brand-new connection
     try:
         for ecu_id in promoted_ids:
@@ -353,10 +413,10 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         assert brain2.count_ecus() == len(promoted_ids) + 1  # + seed
     finally:
         brain2.close()
-    print("[n] %d promoted ECUs + seed persisted across sessions "
+    print("[j] %d promoted ECUs + seed persisted across sessions "
           "(verified via a fresh DB connection)" % len(promoted_ids))
 
-    print("\nE2E PIPELINE: all steps a–n passed")
+    print("\nE2E PIPELINE: all steps a–j passed")
     brain.close()
 
 
@@ -519,7 +579,7 @@ class TestE2EOffline:
         stale_id = seed_canonical(                      # repo scope: ANY gone
             brain, eco.model,
             "Token refresh happens in auth/token.py refresh()",
-            scope={"level": "repo", "path": f"repo:demo > module:auth"},
+            scope={"level": "repo", "path": "repo:demo > module:auth"},
             grounding=grounding(["auth/token.py"]))
         survivor_id = seed_canonical(                   # grounded, file exists
             brain, eco.model,
