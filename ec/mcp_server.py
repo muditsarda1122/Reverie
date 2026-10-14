@@ -947,7 +947,9 @@ class ECServer:
             row = self._enabled_session(info)
         brain = self._ensure_brain()
         payload = {"status": "ok", **brain_summary(brain, row)}
-        nudge = review_queue.nudge_line(brain, config=self.config)
+        nudge = review_queue.nudge_line(
+            brain, config=self.config,
+            repo_path=info.repo_path if ctx is not None else None)
         if nudge:
             payload["review_nudge"] = nudge
             payload["message"] = payload["message"] + " " + nudge

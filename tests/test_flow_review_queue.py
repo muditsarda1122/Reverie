@@ -325,3 +325,34 @@ def test_queue_stats(brain):
     make_candidate(brain, s, "b", created_at=T0)
     stats = queue_stats(brain, now=T0)
     assert stats == {"count": 2, "oldest_age_days": 2}
+
+
+# ---------------------------------------------------------------------------
+# nudge — repo split (feat/flow review fix 5)
+# ---------------------------------------------------------------------------
+
+def test_nudge_splits_count_when_repo_known(brain):
+    here = make_session(brain, repo="/repos/a")
+    there = make_session(brain, repo="/repos/b")
+    for i in range(11):                     # 11 global, 3 in /repos/a
+        make_candidate(brain, there if i < 8 else here, f"c{i}",
+                       created_at=T0)
+    make_candidate(brain, here, "old one",
+                   created_at=T0 - timedelta(days=6))
+    cfg = mk_cfg()
+    line = nudge_line(brain, config=cfg, now=T0, repo_path="/repos/a")
+    assert line == ("12 conclusions waiting for review "
+                    "(4 in this repo, oldest 6 days)")
+    # outside a repo: the global-only form
+    assert nudge_line(brain, config=cfg, now=T0) == \
+        "12 conclusions waiting for review (oldest 6 days)"
+
+
+def test_nudge_global_form_when_repo_has_no_candidates(brain):
+    make_session(brain, repo="/repos/a")
+    other = make_session(brain, repo="/repos/b")
+    for i in range(11):
+        make_candidate(brain, other, f"c{i}", created_at=T0)
+    cfg = mk_cfg()
+    line = nudge_line(brain, config=cfg, now=T0, repo_path="/repos/a")
+    assert line == "11 conclusions waiting for review (oldest 0 days)"

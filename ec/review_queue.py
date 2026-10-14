@@ -212,13 +212,15 @@ def revive(
 # nudge (feat/flow §4) — counts only, never contents
 # ---------------------------------------------------------------------------
 
-def queue_stats(brain: Brain, config=None,
-                now: datetime | None = None) -> dict:
+def queue_stats(brain: Brain, config=None, now: datetime | None = None,
+                repo_path: str | None = None) -> dict:
     """``{"count", "oldest_age_days"}`` over unreviewed candidates
-    (pending + skipped; expired ones are no longer waiting)."""
+    (pending + skipped; expired ones are no longer waiting), narrowed to
+    ``repo_path`` when given."""
     del config                           # config read happens in nudge_line
     now = now or _utcnow()
-    rows = brain.list_queue_candidates(statuses=("pending", "skipped"))
+    rows = brain.list_queue_candidates(repo_path=repo_path,
+                                       statuses=("pending", "skipped"))
     ages = [
         (now - _parse_iso(row["created_at"])).days
         for row in rows if row["created_at"]
@@ -227,18 +229,29 @@ def queue_stats(brain: Brain, config=None,
             "oldest_age_days": max(ages) if ages else 0}
 
 
-def nudge_line(brain: Brain, config=None, now: datetime | None = None) -> str | None:
+def nudge_line(brain: Brain, config=None, now: datetime | None = None,
+               repo_path: str | None = None) -> str | None:
     """The one-line ec_get_summary nudge, or None (nothing to say).
 
     Fires when the backlog exceeds ``review.nudge_threshold`` OR the oldest
     unreviewed candidate is older than ``review.nudge_age_days``. Counts
-    only — never candidate contents (§11.3)."""
+    only — never candidate contents (§11.3). With a known repo the line
+    splits the count (``ec_review_list`` defaults to the current repo, so
+    the numbers must match what the agent will list); outside a repo it
+    stays global-only."""
     cfg = config or get_config()
     stats = queue_stats(brain, config=cfg, now=now)
     if not stats["count"]:
         return None
-    if stats["count"] > int(cfg.review.nudge_threshold) \
-            or stats["oldest_age_days"] > int(cfg.review.nudge_age_days):
-        return (f"{stats['count']} conclusions waiting for review "
-                f"(oldest {stats['oldest_age_days']} days)")
-    return None
+    if stats["count"] <= int(cfg.review.nudge_threshold) \
+            and stats["oldest_age_days"] <= int(cfg.review.nudge_age_days):
+        return None
+    if repo_path:
+        repo_stats = queue_stats(brain, config=cfg, now=now,
+                                 repo_path=repo_path)
+        if repo_stats["count"]:
+            return (f"{stats['count']} conclusions waiting for review "
+                    f"({repo_stats['count']} in this repo, oldest "
+                    f"{repo_stats['oldest_age_days']} days)")
+    return (f"{stats['count']} conclusions waiting for review "
+            f"(oldest {stats['oldest_age_days']} days)")

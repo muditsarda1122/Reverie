@@ -357,8 +357,10 @@ def test_summary_nudge_line_when_backlog(server, brain):
                        created_at=T0 - timedelta(days=6))
     payload, result = call_tool(server, "ec_get_summary")
     assert payload["status"] == "ok"
-    assert "11 conclusions waiting for review (oldest 6 days)" \
-        in payload["review_nudge"]
+    # fix 5: the count is split to match what ec_review_list shows for
+    # this repo (all 11 candidates live in the session's repo here)
+    assert "11 conclusions waiting for review " \
+        "(11 in this repo, oldest 6 days)" in payload["review_nudge"]
     assert payload["review_nudge"] in payload["message"]
 
 

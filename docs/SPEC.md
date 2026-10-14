@@ -3113,12 +3113,14 @@ that group.
 ### 29.6 The nudge (D57)
 
 `ec_get_summary` adds one counts-only line when the unreviewed backlog
-exceeds `review.nudge_threshold` (10) or the oldest unreviewed
-candidate is older than `review.nudge_age_days` (5) — e.g. "14
-conclusions waiting for review (oldest 6 days)". The agent mentions it
-at most once per conversation and offers both review paths (terminal
-`ec review`, or "show my Reverie candidates" here). Counts only, never
-contents (§11.3).
+exceeds `review.nudge_threshold` (10) or the oldest unreviewed candidate
+is older than `review.nudge_age_days` (5). When a repo resolves, the line
+splits the count to match what `ec_review_list` will show for that repo
+— e.g. "14 conclusions waiting for review (3 in this repo, oldest 6
+days)"; outside a repo it stays global-only ("14 conclusions waiting for
+review (oldest 6 days)"). The agent mentions it at most once per
+conversation and offers both review paths (terminal `ec review`, or
+"show my Reverie candidates" here). Counts only, never contents (§11.3).
 
 ### 29.7 Export, import, reset (D58)
 
