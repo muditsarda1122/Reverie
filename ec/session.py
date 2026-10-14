@@ -408,6 +408,10 @@ def _print_report(report: dict, print_fn=print) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "stop":
+        # feat/flow: `stop` is an alias for `ec review` (nothing is closed).
+        return main_stop(argv[1:])
     parser = argparse.ArgumentParser(
         prog="python -m ec.session",
         description="EC session lifecycle (§28.5/§28.6): start | stop | status",
@@ -417,21 +421,6 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--repo", default=None, help="repo path (default: git detect)")
         p.add_argument("--branch", default=None, help="branch (default: git detect)")
-    sub.choices["stop"].add_argument(
-        "--all-accept", action="store_true", help="accept every candidate ECU"
-    )
-    sub.choices["stop"].add_argument(
-        "--all-skip", action="store_true",
-        help="skip every candidate ECU (close without reviewing)",
-    )
-    sub.choices["stop"].add_argument(
-        "--resolve-open-questions", default="auto",
-        choices=("auto", "skip", "archive"),
-        help="open-question resolution policy (§17.5 a-d, D41): auto = "
-             "prompt interactively on an interactive stop, skip otherwise; "
-             "skip = never touch open questions; archive = archive all "
-             "without prompting",
-    )
     args = parser.parse_args(argv)
 
     try:
@@ -442,7 +431,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manager = SessionManager(brain)
         if args.command == "start":
-            _print_report(manager.start_session(args.repo, args.branch))
+            # feat/flow: `start` is the same compat shim as ec-start —
+            # enable the repo and report; sessions are automatic.
+            _enable_and_status([])
             return 0
         if args.command == "status":
             row = manager.current_session(args.repo, args.branch)
@@ -497,13 +488,72 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def main_start(argv: list[str] | None = None) -> int:
-    """Console-script entry point for ``ec-start`` (pyproject.toml)."""
-    return main(["start"] + list(argv or []))
+    """``ec-start`` (compat, feat/flow): enable this repo and show status.
+
+    Sessions no longer need starting (D56 — they resolve automatically per
+    branch); this thin shim turns the repo on and reports, so old muscle
+    memory and old docs still work."""
+    return _enable_and_status(list(argv or []))
+
+
+_STOP_COMPAT_FLAGS = ("--all-accept", "--all-skip")
 
 
 def main_stop(argv: list[str] | None = None) -> int:
-    """Console-script entry point for ``ec-stop`` (pyproject.toml)."""
-    return main(["stop"] + list(argv or []))
+    """``ec-stop`` (compat, feat/flow): an alias for ``ec review``.
+
+    Old stop flags are accepted and refused politely — sessions are not
+    closed any more, so there is nothing to stop."""
+    from . import review_cli
+    argv = list(argv or [])
+    kept = []
+    for arg in argv:
+        if arg in _STOP_COMPAT_FLAGS:
+            print(f"(deprecated: {arg} — sessions are never closed now; "
+                  "review is per-candidate via `ec review`)", file=sys.stderr)
+            continue
+        if arg.startswith("--resolve-open-questions"):
+            print("(deprecated: --resolve-open-questions — open questions "
+                  "resolve through the review gate as before)", file=sys.stderr)
+            if "=" not in arg:
+                continue
+        kept.append(arg)
+    return review_cli.main(kept)
+
+
+def _enable_and_status(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="ec-start",
+        description="(compat) enable Reverie for this repo and show status. "
+                    "Sessions are automatic per branch — nothing to start.",
+    )
+    parser.add_argument("--repo", default=None, help="repo path (default: "
+                        "git detect)")
+    parser.add_argument("--branch", default=None,
+                        help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    try:
+        brain = Brain()
+    except BrainError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        from . import repos
+        try:
+            info = repos.resolve_repo(cwd=args.repo)
+        except SessionError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        row = repos.set_repo_state(brain, info, "enabled")
+        print(f"Reverie is on for {info.repo_path} "
+              f"(branch {info.branch}) — sessions are automatic; nothing "
+              "to start.")
+        if row["state"] != "enabled":
+            print("  (state was left unchanged)")
+        print(brain_summary(brain, None)["message"])
+        return 0
+    finally:
+        brain.close()
 
 
 def main_status(argv: list[str] | None = None) -> int:

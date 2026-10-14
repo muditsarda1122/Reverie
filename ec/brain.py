@@ -1429,6 +1429,14 @@ class Brain:
         d["document"] = None
         return d
 
+    def get_session_ecu_row(self, ecu_id: str) -> dict | None:
+        """Raw session_ecu row (all columns) — the reject snapshot for the
+        review TUI's undo (feat/flow, D57)."""
+        row = self._conn.execute(
+            "SELECT * FROM session_ecus WHERE id = ?", (ecu_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
     def restore_session_ecu(self, row: dict) -> None:
         """Re-insert a snapshotted session_ecu row (undo of a reject, D57).
 
