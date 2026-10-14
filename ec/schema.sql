@@ -8,6 +8,9 @@
 -- maintenance_log + maintenance_state tables exist (Phase 6); the
 -- clustering tables exist (Phase 9).
 -- review status lives on session_ecus.review_status (§28.5).
+-- feat/flow (product flow): repos (enablement states, keyed by git common
+-- directory) and review_decisions (audit trail of review-gate decisions)
+-- are additive; sessions.status gains a third value 'archived'.
 
 -- ---------------------------------------------------------------------------
 -- Canonical Brain: ECUs (Spec Section 1)
@@ -61,7 +64,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
     repo_path       TEXT NOT NULL,
     branch          TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'active',   -- active | closed
+    status          TEXT NOT NULL DEFAULT 'active',   -- active | closed | archived
     started_at      TEXT NOT NULL,
     ended_at        TEXT,
     ecu_count       INTEGER DEFAULT 0
@@ -216,3 +219,39 @@ CREATE TABLE IF NOT EXISTS cluster_memberships (
 );
 CREATE INDEX IF NOT EXISTS idx_cluster_memberships_cluster
     ON cluster_memberships(cluster_id);
+
+-- ---------------------------------------------------------------------------
+-- Repo enablement (feat/flow, D55): three states per repo — undecided
+-- (default) | enabled | disabled — stored in the global brain, never inside
+-- the repo. repo_key is the repo's identity: the resolved absolute path of
+-- its git common directory, so a worktree shares enablement with its main
+-- checkout. url (origin remote) powers move/re-clone rematching and
+-- export/import remapping (D58). asked_at records the moment the first-time
+-- "turn Reverie on?" question was surfaced ("not now" = undecided-but-asked).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repos (
+    repo_key    TEXT PRIMARY KEY,       -- resolved git common dir (abs path)
+    path        TEXT,                   -- display path (worktree toplevel)
+    url         TEXT,                   -- origin remote URL (rematching)
+    state       TEXT NOT NULL DEFAULT 'undecided',
+    asked_at    TEXT,                   -- last needs_consent surface time
+    updated_at  TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- Review decision audit trail (feat/flow, D57): every review-gate decision
+-- (accept | reject | skip | revive) with its channel (tui | agent | cli).
+-- Written by apply_review_decisions; nothing reads it yet — it exists so
+-- decisions are attributable later. Never deleted.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS review_decisions (
+    id                TEXT PRIMARY KEY,
+    candidate_id      TEXT NOT NULL,    -- session_ecus.id at decision time
+    session_id        TEXT,             -- owning session (provenance)
+    decision          TEXT NOT NULL,    -- accept | reject | skip | revive
+    edited_cognition  TEXT,             -- §7.3 edit, when present
+    channel           TEXT NOT NULL,    -- tui | agent | cli
+    decided_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_review_decisions_candidate
+    ON review_decisions(candidate_id);

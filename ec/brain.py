@@ -30,6 +30,8 @@ from .config import (
     ECU_STATUSES,
     EDGE_TYPES,
     RETRIEVABLE_STATUSES,
+    REPO_STATES,
+    REVIEW_CHANNELS,
     SCOPE_LEVELS,
     default_db_path,
 )
@@ -102,7 +104,22 @@ class Brain:
                 "ALTER TABLE maintenance_log "
                 "ADD COLUMN ecus_affected INTEGER DEFAULT 0"
             )
+        self._stamp_schema_version()
         self._conn.commit()
+
+    def _stamp_schema_version(self) -> None:
+        """Raise ``PRAGMA user_version`` to the current SCHEMA_VERSION —
+        never lower it (feat/flow): imports refuse databases whose
+        user_version is newer than this build's SCHEMA_VERSION, and a
+        downgraded counter would break that check."""
+        from .config import SCHEMA_VERSION
+        current = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        if current < SCHEMA_VERSION:
+            self._conn.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
+
+    @property
+    def schema_version(self) -> int:
+        return int(self._conn.execute("PRAGMA user_version").fetchone()[0])
 
     def table_names(self) -> list[str]:
         rows = self._conn.execute(
@@ -938,7 +955,7 @@ class Brain:
     # logic lives in ec/session.py and ec/review_gate.py (Phase 4).
     # ------------------------------------------------------------------
 
-    _REVIEW_STATUSES = ("pending", "accepted", "rejected", "skipped")
+    _REVIEW_STATUSES = ("pending", "accepted", "rejected", "skipped", "expired")
 
     def list_sessions(
         self,
@@ -1268,6 +1285,255 @@ class Brain:
         if limit is not None:
             query += f" LIMIT {int(limit)}"
         return [dict(r) for r in self._conn.execute(query)]
+
+    # ------------------------------------------------------------------
+    # Repo enablement (feat/flow, D55): three states per repo, keyed by
+    # git common directory. Storage only — identity/rematching policy
+    # lives in ec/repos.py.
+    # ------------------------------------------------------------------
+
+    def get_repo(self, repo_key: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM repos WHERE repo_key = ?", (repo_key,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_repo(
+        self,
+        repo_key: str,
+        *,
+        path: str | None = None,
+        url: str | None = None,
+        state: str | None = None,
+        asked_at: str | None = None,
+        rekey_from: str | None = None,
+    ) -> dict:
+        """Insert or update a repo row. ``rekey_from`` moves an existing
+        row (its state and history) onto ``repo_key`` — the move/re-clone
+        rematch (D58). Unknown states raise ValueError."""
+        if state is not None and state not in REPO_STATES:
+            raise ValueError(
+                f"invalid repo state {state!r}; expected one of {REPO_STATES}"
+            )
+        if rekey_from is not None and rekey_from != repo_key:
+            existing = self.get_repo(rekey_from)
+            if existing is not None:
+                self._conn.execute(
+                    "UPDATE repos SET repo_key = ?, path = ?, updated_at = ? "
+                    "WHERE repo_key = ?",
+                    (repo_key, path or existing["path"], _now_iso(),
+                     rekey_from),
+                )
+        row = self.get_repo(repo_key)
+        if row is None:
+            self._conn.execute(
+                "INSERT INTO repos (repo_key, path, url, state, asked_at, "
+                "updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (repo_key, path, url, state or "undecided", asked_at,
+                 _now_iso()),
+            )
+        else:
+            sets, params = [], []
+            for col, value in (("path", path), ("url", url),
+                               ("state", state), ("asked_at", asked_at)):
+                if value is not None:
+                    sets.append(f"{col} = ?")
+                    params.append(value)
+            if sets:
+                sets.append("updated_at = ?")
+                params.extend([_now_iso()])
+                params.append(repo_key)
+                self._conn.execute(
+                    f"UPDATE repos SET {', '.join(sets)} WHERE repo_key = ?",
+                    params,
+                )
+        self._conn.commit()
+        updated = self.get_repo(repo_key)
+        assert updated is not None
+        return updated
+
+    def delete_repo(self, repo_key: str) -> None:
+        self._conn.execute("DELETE FROM repos WHERE repo_key = ?", (repo_key,))
+        self._conn.commit()
+
+    def list_repos(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM repos ORDER BY COALESCE(path, repo_key)"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # -- review queue (feat/flow, D57): cross-session candidates ----------
+
+    _QUEUE_STATUSES = ("pending", "skipped", "expired")
+
+    def list_queue_candidates(
+        self,
+        repo_path: str | None = None,
+        branch: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[dict]:
+        """Candidates awaiting review across ALL sessions (feat/flow D57):
+        session_ecus with review_status in ``statuses`` (default
+        pending|skipped|expired), joined with their session's repo/branch.
+        Ordered by confidence descending (strongest first); callers may
+        regroup by topic. ``repo_path``/``branch`` narrow the queue."""
+        statuses = statuses or self._QUEUE_STATUSES
+        status_ph = ",".join("?" for _ in statuses)
+        query = (
+            "SELECT se.id, se.session_id, se.cognition, se.conclusion_type, "
+            "se.scope_level, se.scope_path, se.confidence, se.source_type, "
+            "se.origin_agent, se.created_at, se.embedding, se.document, "
+            "se.review_status, s.repo_path, s.branch, s.status AS session_status "
+            "FROM session_ecus se JOIN sessions s ON se.session_id = s.id "
+            f"WHERE se.review_status IN ({status_ph})"
+        )
+        params: list = [*statuses]
+        if repo_path is not None:
+            query += " AND s.repo_path = ?"
+            params.append(repo_path)
+        if branch is not None:
+            query += " AND s.branch = ?"
+            params.append(branch)
+        query += " ORDER BY se.confidence DESC, se.created_at"
+        rows = self._conn.execute(query, params).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            d.pop("document")                      # keep payloads lean
+            d["document"] = None
+            out.append(d)
+        return out
+
+    def get_queue_candidate(self, candidate_id: str) -> dict | None:
+        """One queue candidate with its session context, or None."""
+        row = self._conn.execute(
+            "SELECT se.id, se.session_id, se.cognition, se.conclusion_type, "
+            "se.scope_level, se.scope_path, se.confidence, se.source_type, "
+            "se.origin_agent, se.created_at, se.embedding, se.document, "
+            "se.review_status, s.repo_path, s.branch, s.status AS session_status "
+            "FROM session_ecus se JOIN sessions s ON se.session_id = s.id "
+            "WHERE se.id = ?",
+            (candidate_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d.pop("document")                      # keep payloads lean
+        d["document"] = None
+        return d
+
+    def restore_session_ecu(self, row: dict) -> None:
+        """Re-insert a snapshotted session_ecu row (undo of a reject, D57).
+
+        Restores the row verbatim — id, document, embedding, review_status —
+        and bumps the session's ecu_count to match insert_session_ecu."""
+        self._conn.execute(
+            """
+            INSERT INTO session_ecus (
+                id, session_id, cognition, conclusion_type, scope_level,
+                scope_path, confidence, source_type, origin_agent, created_at,
+                embedding, document, review_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["id"], row["session_id"], row["cognition"],
+                row["conclusion_type"], row["scope_level"], row["scope_path"],
+                row["confidence"], row["source_type"], row["origin_agent"],
+                row["created_at"], row["embedding"], row["document"],
+                row["review_status"],
+            ),
+        )
+        self._conn.execute(
+            "UPDATE sessions SET ecu_count = ecu_count + 1 WHERE id = ?",
+            (row["session_id"],),
+        )
+        self._conn.commit()
+
+    def add_review_decision(
+        self,
+        candidate_id: str,
+        decision: str,
+        channel: str,
+        session_id: str | None = None,
+        edited_cognition: str | None = None,
+        decided_at: str | None = None,
+    ) -> str:
+        """Append one review_decisions audit row (feat/flow, D57)."""
+        if channel not in REVIEW_CHANNELS:
+            raise ValueError(
+                f"invalid channel {channel!r}; expected one of {REVIEW_CHANNELS}"
+            )
+        row_id = str(uuid.uuid4())
+        self._conn.execute(
+            "INSERT INTO review_decisions (id, candidate_id, session_id, "
+            "decision, edited_cognition, channel, decided_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (row_id, candidate_id, session_id, decision, edited_cognition,
+             channel, decided_at or _now_iso()),
+        )
+        self._conn.commit()
+        return row_id
+
+    def list_review_decisions(self, limit: int | None = None) -> list[dict]:
+        """Audit trail rows, newest first (nothing reads this yet — D57)."""
+        query = (
+            "SELECT id, candidate_id, session_id, decision, edited_cognition, "
+            "channel, decided_at FROM review_decisions ORDER BY decided_at DESC"
+        )
+        if limit is not None:
+            query += f" LIMIT {int(limit)}"
+        return [dict(r) for r in self._conn.execute(query)]
+
+    def archive_session(self, session_id: str) -> bool:
+        """Mark a session archived (feat/flow: branch gone — D56). Only an
+        active session can be archived; returns True when it was."""
+        cur = self._conn.execute(
+            "UPDATE sessions SET status = 'archived' "
+            "WHERE id = ? AND status = 'active'",
+            (session_id,),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    # -- bulk data operations (feat/flow: export/import/reset, D58) ------
+
+    def clear_all_data(self) -> None:
+        """Delete every row from every table, keeping the schema (reset).
+        Foreign-key enforcement is suspended for the operation and verified
+        afterwards."""
+        self._conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            for table in self.table_names():
+                self._conn.execute(f"DELETE FROM {table}")
+            self._conn.commit()
+            violations = self._conn.execute(
+                "PRAGMA foreign_key_check").fetchall()
+            assert not violations, violations
+        finally:
+            self._conn.execute("PRAGMA foreign_keys=ON")
+
+    def copy_from_attached(self, alias: str) -> dict:
+        """Copy every table from an ATTACHed database into this one
+        (import --replace). Both schemas must already match; FK enforcement
+        is suspended for the operation and verified afterwards. Returns
+        per-table row counts."""
+        self._conn.execute("PRAGMA foreign_keys=OFF")
+        counts: dict[str, int] = {}
+        try:
+            for table in self.table_names():
+                self._conn.execute(
+                    f"INSERT INTO main.{table} SELECT * FROM {alias}.{table}"
+                )
+            self._conn.commit()
+            violations = self._conn.execute(
+                "PRAGMA foreign_key_check").fetchall()
+            assert not violations, violations
+        finally:
+            self._conn.execute("PRAGMA foreign_keys=ON")
+        for table in self.table_names():
+            counts[table] = self._conn.execute(
+                f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        return counts
 
     # -- maintenance_state (Phase 6): trigger-check bookkeeping -----------
 
