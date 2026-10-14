@@ -2,16 +2,23 @@
 
 One entry point, subcommands:
 
-    ec install          configure agents + ~/.ec (the default when no
-                        subcommand is given, so `ec --all` keeps working)
+    ec install          configure agents + ~/.ec
     ec enable           turn Reverie on for the current repo
     ec disable          turn Reverie off for the current repo (fully off:
                         no capture, no retrieval — data is kept)
     ec repos            list every known repo with its state and counts
     ec review           review pending candidates (terminal UI)
+    ec status           session + brain status (same report as ec-status)
     ec export           export the whole brain to a ZIP
     ec import           import a brain export (--replace for non-empty)
     ec reset            wipe the brain (or one repo), with auto-backup
+    ec uninstall        remove Reverie's harness entries (+ data with
+                        --delete-data)
+
+Bare ``ec`` prints this help; a mistyped first word is an error with a
+"did you mean" hint. Invocations whose first argument starts with ``-``
+(e.g. ``ec --all``, ``ec --only ...``) still go to the installer, for
+backwards compatibility.
 
 `ec-start` / `ec-stop` / `ec-status` remain as deprecated compatibility
 shims (ec/session.py): start = enable + status, stop = alias of
@@ -148,6 +155,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("repos", help="list known repos with states and counts")
     sub.add_parser("review", help="review pending candidates (terminal UI)")
 
+    p = sub.add_parser("status", help="session + brain status (like ec-status)")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: git detect)")
+    p.add_argument("--branch", default=None,
+                   help="branch (default: git detect)")
+
     p = sub.add_parser("export", help="export the brain to one ZIP file")
     p.add_argument("file", nargs="?",
                    help="output ZIP path (default: ./reverie-export-<date>.zip)")
@@ -179,20 +192,41 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Every first-class subcommand (order shown by `ec --help`).
+SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
+               "import", "reset", "install")
+
+
+def _unknown_command(word: str) -> int:
+    """A mistyped first word is an error with a 'did you mean' hint."""
+    import difflib
+    close = difflib.get_close_matches(word, SUBCOMMANDS, n=1)
+    hint = (f"Did you mean 'ec {close[0]}'?" if close
+            else "Run `ec --help` for the command list.")
+    print(f"Unknown command: {word!r}. {hint}", file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] in ("--help", "-h"):
+    if not argv or argv[0] in ("--help", "-h"):
         _build_parser().print_help()    # the multi-command help, not install's
         return 0
-    if not argv or argv[0] not in (
-            "enable", "disable", "repos", "review", "export", "import",
-            "reset", "install"):
-        argv = ["install", *argv]       # backwards compat: `ec --all`
-    args = _build_parser().parse_args(argv)
-
-    if args.command == "review":
+    if argv[0] not in SUBCOMMANDS:
+        if argv[0].startswith("-"):
+            # backwards compat: `ec --all`, `ec --only ...` → install
+            return _cmd_install(_build_parser().parse_args(
+                ["install", *argv]))
+        return _unknown_command(argv[0])
+    # review parses its own flags; the generic pass would reject them
+    if argv[0] == "review":
         from . import review_cli
         return review_cli.main(argv[1:])
+    if argv[0] == "status":
+        from . import session as session_mod
+        return session_mod.main(["status", *argv[1:]])
+    args = _build_parser().parse_args(argv)
+
     if args.command == "enable":
         return _cmd_enable(args)
     if args.command == "disable":

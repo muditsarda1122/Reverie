@@ -578,6 +578,57 @@ def test_cli_repos_empty(ec_home, capsys):
 
 
 # ---------------------------------------------------------------------------
+# the `ec` CLI dispatch (feat/flow review fix 6)
+# ---------------------------------------------------------------------------
+
+def test_cli_bare_ec_prints_multi_command_help(capsys):
+    assert cli.main([]) == 0
+    out = capsys.readouterr().out
+    for word in ("enable", "disable", "repos", "review", "export",
+                 "import", "reset", "install"):
+        assert word in out, word
+
+
+def test_cli_mistyped_subcommand_errors_with_hint(capsys):
+    assert cli.main(["reveiw"]) == 2
+    err = capsys.readouterr().err
+    assert "Unknown command: 'reveiw'" in err
+    assert "Did you mean 'ec review'?" in err
+
+
+def test_cli_mistyped_subcommand_without_hint(capsys):
+    assert cli.main(["frobnicate"]) == 2
+    err = capsys.readouterr().err
+    assert "Unknown command: 'frobnicate'" in err
+    assert "ec --help" in err
+
+
+def test_cli_dash_flags_still_go_to_install(monkeypatch, ec_home):
+    """Backwards compatibility: `ec --all`, `ec --only ...` reach the
+    installer (never an 'unknown command' error)."""
+    captured: dict = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("ec.install.run", fake_run)
+    assert cli.main(["--all"]) == 0
+    assert captured["all_agents"] is True
+    assert cli.main(["--only", "claude_code"]) == 0
+    assert captured["only"] == ["claude_code"]
+
+
+def test_cli_review_forwards_flags(ec_home, capsys, monkeypatch):
+    """`ec review --list` reaches the review CLI (the generic argparse
+    pass used to reject its flags before review_cli ever saw them)."""
+    monkeypatch.setenv("EC_REPO_PATH", "/repos/a")
+    monkeypatch.setenv("EC_BRANCH", "main")
+    assert cli.main(["review", "--list"]) == 0
+    assert "No candidates in this scope." in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
 # ec install --import
 # ---------------------------------------------------------------------------
 
