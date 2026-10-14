@@ -526,6 +526,10 @@ def _provider_menu(input_fn, print_fn, environ) -> str | None:
 DIST_NAME = "engineering-cognition"
 #: Console script launching the MCP server (pyproject [project.scripts]).
 MCP_CONSOLE_SCRIPT = "ec-mcp"
+#: The `ec` console script binding this build expects (pyproject.toml).
+#: feat/flow moved `ec` from the installer to the multi-command CLI
+#: (ec.cli:main); an older install still binds `ec = ec.install:main`.
+EC_CONSOLE_SCRIPT_ENTRY = "ec.cli:main"
 
 
 def _is_pip_installed() -> bool:
@@ -538,6 +542,30 @@ def _is_pip_installed() -> bool:
         return True
     except Exception:            # not installed / metadata unreadable
         return False
+
+
+def stale_entry_point_note() -> str | None:
+    """Detect a stale `ec` console-script binding (feat/flow review fix 9).
+
+    Console scripts only update on reinstall: an install made before the
+    multi-command CLI keeps ``ec = ec.install:main``, so subcommands like
+    `ec status` fall through to the installer. Returns the note to print,
+    or None when the binding is current (or metadata is unreadable)."""
+    try:
+        from importlib import metadata
+        for ep in metadata.entry_points(group="console_scripts"):
+            if ep.name == "ec" and ep.value != EC_CONSOLE_SCRIPT_ENTRY:
+                return (
+                    "Note: your `ec` command is bound to the OLD entry "
+                    f"point ({ep.value}) — the new subcommands (enable, "
+                    "disable, repos, review, status, export, import, "
+                    "reset, uninstall) do not exist for it yet. Fix: "
+                    "re-run `pip install -e .` (or `pip install -U "
+                    "reverie`) — console scripts only update on reinstall."
+                )
+    except Exception:            # metadata unreadable — say nothing
+        return None
+    return None
 
 
 def server_command() -> tuple[str, list[str], dict[str, str]]:
@@ -1189,7 +1217,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        return run(
+        code = run(
             all_agents=args.all,
             only=[k.strip() for k in args.only.split(",") if k.strip()]
             if args.only else None,
@@ -1201,6 +1229,11 @@ def main(argv: list[str] | None = None) -> int:
     except InstallError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    if code == 0:
+        note = stale_entry_point_note()
+        if note:
+            print(note)
+    return code
 
 
 if __name__ == "__main__":

@@ -548,3 +548,42 @@ def test_cli_subprocess(tmp_path):
         assert (ec_dir / "commands" / name).exists()
     # every written file is inside the fake home — nothing escaped
     assert proc.stdout.count("✓") >= 4
+
+
+# ---------------------------------------------------------------------------
+# stale `ec` console-script binding detection (feat/flow review fix 9)
+# ---------------------------------------------------------------------------
+
+def _fake_entry_points(monkeypatch, entries):
+    import importlib.metadata as md
+    monkeypatch.setattr(md, "entry_points", lambda group=None: entries)
+
+
+def test_stale_entry_point_note_fires(monkeypatch):
+    from types import SimpleNamespace
+    _fake_entry_points(monkeypatch, [
+        SimpleNamespace(name="ec-mcp", value="ec.mcp_server:main"),
+        SimpleNamespace(name="ec", value="ec.install:main"),   # pre-flow
+    ])
+    note = install.stale_entry_point_note()
+    assert note is not None
+    assert "ec.install:main" in note
+    assert "pip install -e ." in note
+
+
+def test_stale_entry_point_note_quiet_when_current(monkeypatch):
+    from types import SimpleNamespace
+    _fake_entry_points(monkeypatch, [
+        SimpleNamespace(name="ec", value="ec.cli:main"),
+    ])
+    assert install.stale_entry_point_note() is None
+
+
+def test_stale_entry_point_note_quiet_without_metadata(monkeypatch):
+    import importlib.metadata as md
+
+    def boom(group=None):
+        raise RuntimeError("no metadata here")
+
+    monkeypatch.setattr(md, "entry_points", boom)
+    assert install.stale_entry_point_note() is None

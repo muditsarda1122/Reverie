@@ -663,6 +663,17 @@ def test_cli_review_forwards_flags(ec_home, capsys, monkeypatch):
     assert "No candidates in this scope." in capsys.readouterr().out
 
 
+def test_cli_status_shares_logic_with_ec_status(ec_home, capsys,
+                                                monkeypatch):
+    """Fix 9: `ec status` exists and prints the ec-status report."""
+    monkeypatch.setenv("EC_REPO_PATH", "/repos/a")
+    monkeypatch.setenv("EC_BRANCH", "main")
+    assert cli.main(["status"]) == 0
+    assert "No active session" in capsys.readouterr().out
+    assert cli.main(["status", "--repo", "/repos/a", "--branch", "dev"]) == 0
+    assert "No active session" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # ec install --import
 # ---------------------------------------------------------------------------
