@@ -22,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from . import providers as _providers
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -172,11 +174,31 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
 
     # -- LLM (§15 llm block) -------------------------------------------------
+    # `provider` selects an entry from ec/providers.py; fields the user does
+    # not set explicitly are filled from that entry (custom/unknown = today's
+    # behaviour: every field is used as written below).
     "llm": {
         "provider": "opencode_zen",
         "model": "claude-haiku-4-5",
         "base_url": "https://opencode.ai/zen/v1",
         "api_key_env": "OPENCODE_ZEN_API_KEY",
+        # Overrides the model-name wire-format rule (D48) when set:
+        # "anthropic" | "openai". None = derive from the model name.
+        "wire_format": None,
+        # True/False force the reasoning-model request shape (no temperature,
+        # max_completion_tokens instead of max_tokens); None = auto-detect by
+        # a conservative model-name rule (ec.llm._is_openai_reasoning_model).
+        "openai_reasoning": None,
+        # Retry policy for transient failures (429 / 5xx / timeouts).
+        "retry_attempts": 3,            # total attempts (1 = no retry)
+        "retry_backoff": 0.5,           # seconds before first retry
+        "retry_backoff_cap": 8.0,       # ceiling on a single backoff (excl. jitter)
+        # Per-task model overrides; every None falls back to `model` above.
+        "models": {
+            "extraction": None,
+            "classification": None,
+            "mode_detection": None,
+        },
         "timeout": 60,                  # seconds per LLM call
         "temperature": 0.3,             # extraction / diffusion
         "temperature_mode_detection": 0.0,
@@ -339,16 +361,54 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+#: config ``llm`` key -> Provider attribute it is filled from.
+_PROVIDER_FILLED_KEYS = {
+    "base_url": "base_url",
+    "model": "default_model",
+    "api_key_env": "api_key_env",
+    "wire_format": "wire_format",
+}
+
+
+def _resolve_provider(merged: dict, user_cfg: dict) -> dict:
+    """Fill unset ``llm`` fields from the registry when the user names a provider.
+
+    ``user_cfg`` is the raw user mapping, so "explicitly set" means "the key
+    is present in the user's YAML" — anything the user wrote wins over the
+    registry. ``custom`` and unknown provider names change nothing (the
+    merged block is used as-is, i.e. today's behaviour).
+    """
+    user_llm = user_cfg.get("llm") if isinstance(user_cfg, dict) else None
+    if not isinstance(user_llm, dict):
+        return merged
+    entry = _providers.get(user_llm.get("provider"))
+    if entry is None or entry.key == "custom":
+        return merged
+    llm = merged.setdefault("llm", {})
+    for key, attr in _PROVIDER_FILLED_KEYS.items():
+        if key in user_llm:
+            continue
+        value = getattr(entry, attr)
+        if key == "wire_format":
+            if value is not None:      # None = keep model-name routing
+                llm[key] = value
+        else:
+            llm[key] = value           # may be None (e.g. Ollama's key env)
+    return merged
+
+
 def load_config(path: str | os.PathLike | None = None) -> AttrDict:
     """Load config: DEFAULT_CONFIG deep-merged with the YAML file if it exists."""
     cfg_path = Path(path) if path else default_config_path()
     merged = copy.deepcopy(DEFAULT_CONFIG)
+    user_cfg: dict = {}
     if cfg_path.exists():
         with open(cfg_path, "r", encoding="utf-8") as fh:
             user_cfg = yaml.safe_load(fh) or {}
         if not isinstance(user_cfg, dict):
             raise ValueError(f"config file {cfg_path} must contain a YAML mapping")
         merged = _deep_merge(merged, user_cfg)
+    merged = _resolve_provider(merged, user_cfg)
     return _to_attrdict(merged)
 
 

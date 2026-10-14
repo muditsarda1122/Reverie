@@ -11,6 +11,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 import pytest
 
 from ec import providers
+from ec.config import load_config
 from ec.providers import MENU_KEYS, REGISTRY, Provider, llm_block
 
 
@@ -109,3 +110,89 @@ class TestHelpers:
     def test_provider_names_includes_all(self):
         names = providers.provider_names()
         assert "custom" in names and "ollama" in names
+
+
+class TestConfigResolution:
+    """`provider` fills unset llm fields from the registry; explicit wins."""
+
+    def _load(self, tmp_path, user_yaml: str):
+        p = tmp_path / "config.yaml"
+        p.write_text(user_yaml)
+        return load_config(p)
+
+    def test_provider_only_fills_registry_fields(self, tmp_path):
+        cfg = self._load(tmp_path, "llm:\n  provider: anthropic\n")
+        assert cfg.llm.provider == "anthropic"
+        assert cfg.llm.base_url == "https://api.anthropic.com/v1"
+        assert cfg.llm.model == "claude-haiku-5-5"
+        assert cfg.llm.api_key_env == "ANTHROPIC_API_KEY"
+        assert cfg.llm.wire_format == "anthropic"
+
+    def test_explicit_fields_win(self, tmp_path):
+        cfg = self._load(
+            tmp_path,
+            "llm:\n  provider: anthropic\n  model: claude-3-5-haiku\n"
+            "  api_key_env: MY_ANTHROPIC_KEY\n")
+        assert cfg.llm.model == "claude-3-5-haiku"
+        assert cfg.llm.api_key_env == "MY_ANTHROPIC_KEY"
+        assert cfg.llm.base_url == "https://api.anthropic.com/v1"  # filled
+
+    def test_no_provider_key_uses_defaults(self, tmp_path):
+        cfg = self._load(tmp_path, "llm:\n  model: gpt-4o-mini\n")
+        assert cfg.llm.provider == "opencode_zen"       # default preserved
+        assert cfg.llm.base_url == "https://opencode.ai/zen/v1"
+        assert cfg.llm.api_key_env == "OPENCODE_ZEN_API_KEY"
+
+    def test_default_config_is_unchanged_without_user_file(self, tmp_path):
+        cfg = load_config(tmp_path / "missing.yaml")
+        assert cfg.llm.model == "claude-haiku-4-5"
+        assert cfg.llm.provider == "opencode_zen"
+        assert cfg.llm.wire_format is None
+
+    def test_custom_changes_nothing(self, tmp_path):
+        cfg = self._load(tmp_path, "llm:\n  provider: custom\n")
+        assert cfg.llm.provider == "custom"
+        # fields stay as written in the defaults (today's behaviour)
+        assert cfg.llm.model == "claude-haiku-4-5"
+        assert cfg.llm.base_url == "https://opencode.ai/zen/v1"
+
+    def test_unknown_provider_name_is_left_alone(self, tmp_path):
+        cfg = self._load(tmp_path, "llm:\n  provider: vllm\n")
+        assert cfg.llm.provider == "vllm"
+        assert cfg.llm.model == "claude-haiku-4-5"      # merged defaults
+
+    def test_ollama_provider_clears_key_env(self, tmp_path):
+        cfg = self._load(tmp_path, "llm:\n  provider: ollama\n")
+        assert cfg.llm.provider == "ollama"
+        assert cfg.llm.base_url == "http://localhost:11434/v1"
+        assert cfg.llm.model == "qwen2.5-coder:14b"
+        assert cfg.llm.api_key_env is None
+        assert cfg.llm.wire_format == "openai"
+
+    def test_ollama_key_env_set_explicitly_is_kept(self, tmp_path):
+        cfg = self._load(
+            tmp_path, 'llm:\n  provider: ollama\n  api_key_env: "OLLAMA_KEY"\n')
+        assert cfg.llm.api_key_env == "OLLAMA_KEY"
+
+    def test_zen_provider_only_matches_defaults(self, tmp_path):
+        cfg = self._load(tmp_path, "llm:\n  provider: opencode_zen\n")
+        assert cfg.llm.model == "claude-haiku-4-5"
+        assert cfg.llm.base_url == "https://opencode.ai/zen/v1"
+        assert cfg.llm.api_key_env == "OPENCODE_ZEN_API_KEY"
+        assert cfg.llm.wire_format is None              # multi-family: name rule
+
+    def test_other_sections_unaffected(self, tmp_path):
+        cfg = self._load(
+            tmp_path, "ranking:\n  w_relevance: 0.99\nllm:\n  provider: openai\n")
+        assert cfg.ranking.w_relevance == 0.99
+        assert cfg.llm.provider == "openai"
+
+    def test_new_llm_defaults_present(self, tmp_path):
+        cfg = load_config(tmp_path / "missing.yaml")
+        assert cfg.llm.retry_attempts == 3
+        assert cfg.llm.retry_backoff == 0.5
+        assert cfg.llm.retry_backoff_cap == 8.0
+        assert cfg.llm.openai_reasoning is None
+        assert cfg.llm.models.extraction is None
+        assert cfg.llm.models.classification is None
+        assert cfg.llm.models.mode_detection is None
