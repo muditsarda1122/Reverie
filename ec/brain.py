@@ -29,8 +29,8 @@ from .config import (
     CONCLUSION_TYPES,
     ECU_STATUSES,
     EDGE_TYPES,
-    RETRIEVABLE_STATUSES,
     REPO_STATES,
+    RETRIEVABLE_STATUSES,
     REVIEW_CHANNELS,
     SCOPE_LEVELS,
     default_db_path,
@@ -1021,16 +1021,23 @@ class Brain:
             ).fetchone()
         return row[0]
 
-    def update_session_ecu_review_status(self, ecu_id: str, status: str) -> None:
-        """§28.5 review_status: pending | accepted | rejected | skipped."""
+    def update_session_ecu_review_status(self, ecu_id: str, status: str,
+                                         created_at: str | None = None) -> None:
+        """§28.5 review_status: pending | accepted | rejected | skipped
+        (+ feat/flow: expired). ``created_at`` re-stamps the expiry clock —
+        used by review_queue.revive so a revived candidate gets a fresh
+        lease (the row's document keeps the original provenance)."""
         if status not in self._REVIEW_STATUSES:
             raise ValueError(
                 f"invalid review status {status!r}; "
                 f"expected one of {self._REVIEW_STATUSES}"
             )
         cur = self._conn.execute(
-            "UPDATE session_ecus SET review_status = ? WHERE id = ?",
-            (status, ecu_id),
+            "UPDATE session_ecus SET review_status = ?"
+            + (", created_at = ?" if created_at is not None else "")
+            + " WHERE id = ?",
+            (status, created_at, ecu_id) if created_at is not None
+            else (status, ecu_id),
         )
         if cur.rowcount == 0:
             raise BrainError(f"no session ECU with id {ecu_id}")
