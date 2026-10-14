@@ -181,6 +181,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ("--help", "-h"):
+        _build_parser().print_help()    # the multi-command help, not install's
+        return 0
     if not argv or argv[0] not in (
             "enable", "disable", "repos", "review", "export", "import",
             "reset", "install"):
