@@ -158,13 +158,6 @@ def missing_key_message(cfg) -> str:
 def key_missing(config=None) -> str | None:
     """The env var a required key would come from, or None when a call may proceed.
 
-    Rules: the Anthropic format always needs a key; the OpenAI format needs
-    one only when the configured provider's registry entry says so (Ollama
-    and ``custom`` work keyless). None means "fine to send".
-    """
-def key_missing(config=None) -> str | None:
-    """The env var a required key would come from, or None when a call may proceed.
-
     Rules: the Anthropic format always needs a key (its auth is the
     ``x-api-key`` header); the OpenAI format needs one only when the
     configured provider's registry entry says so (Ollama and ``custom``

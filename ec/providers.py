@@ -25,7 +25,7 @@ extractor's JSON; the choice and its source are recorded in each comment.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

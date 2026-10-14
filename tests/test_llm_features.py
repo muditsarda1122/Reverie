@@ -21,10 +21,10 @@ from ec.llm import (
     _api_format,
     _backoff_delay,
     _is_openai_reasoning_model,
+    call_llm,
     key_missing,
     missing_key_message,
     model_for,
-    call_llm,
 )
 
 KEY_ENV = "EC_TEST_LLM_KEY"

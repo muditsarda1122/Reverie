@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from ec import install, providers
+from ec import install
 from ec.brain import Brain
 from ec.config import DEFAULT_CONFIG, load_config
 from ec.install import AGENTS, InstallError

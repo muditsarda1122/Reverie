@@ -29,7 +29,6 @@ from .config import get_config
 from .diffuser import DiffuserError, diffuse_ecu
 from .extractor import ExtractorError, extract_and_store_session
 
-
 # ---------------------------------------------------------------------------
 # pending extractions
 # ---------------------------------------------------------------------------
