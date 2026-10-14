@@ -557,6 +557,17 @@ def _archive_stale(brain: Brain) -> None:
             pass
 
 
+def _resolve_open_questions(brain: Brain, policy: str) -> None:
+    """§17.5 open questions resolve BEFORE the review flow (D41)."""
+    from .review_gate import resolve_open_questions, resolve_open_questions_archive_all
+    interactive = sys.stdin.isatty() if hasattr(sys.stdin, "isatty") else False
+    if policy == "archive":
+        for record in resolve_open_questions_archive_all(brain):
+            print(f"  ✓ {record['message']}")
+    elif policy == "auto" and interactive:
+        resolve_open_questions(brain)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ec review",
@@ -581,6 +592,13 @@ def main(argv: list[str] | None = None) -> int:
                         nargs="+",
                         help="apply decisions non-interactively, e.g. "
                              "--decide <id>=accept <id2>=reject")
+    parser.add_argument("--resolve-open-questions", default="auto",
+                        choices=("auto", "skip", "archive"),
+                        help="§17.5/D41: auto = prompt when interactive, "
+                             "skip otherwise; skip = leave open questions "
+                             "parked; archive = archive all without "
+                             "prompting (they are review concerns, not "
+                             "session concerns)")
     args = parser.parse_args(argv)
 
     try:
@@ -590,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         _archive_stale(brain)
+        _resolve_open_questions(brain, args.resolve_open_questions)
         repo = None if args.all else (args.repo if args.repo is not None
                                       else _scope_args(args)[0])
         queue = build_queue(brain, repo=repo, branch=args.branch,

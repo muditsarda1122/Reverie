@@ -2645,22 +2645,48 @@ EC is an MCP server providing engineering memory for your codebase.
 It stores Engineering Cognition Units (ECUs) — conclusions, not facts —
 and retrieves them when you need them.
 
-EC provides four MCP tools:
+EC provides seven MCP tools:
 - ec_observe: Extract engineering conclusions from your reasoning
 - ec_query: Retrieve relevant engineering cognition
 - ec_get_summary: Get brain statistics at session start
 - ec_reconsolidate: Update a retrieved ECU with new evidence
+- ec_set_repo_state: Record the user's enablement answer for a repo
+- ec_review_list: Show the user's pending review candidates
+- ec_review_decide: Apply review decisions the user stated
 
-## Session Lifecycle
+## Repo Path — Pass It on Every Call
 
-EC requires an active session. The USER controls session lifecycle:
-- `/ec-start` — start or resume a session on the current branch
-- `/ec-stop` — end session and trigger review gate
-- `/ec-status` — show session and brain status
+Global MCP servers may be started in the home folder, where the repo
+cannot be detected. Pass the workspace path as the `repo_path` argument
+on every tool call.
 
-You do NOT control session lifecycle. Never suggest /ec-start or /ec-stop
-unless the user asks. If ec_observe or ec_query returns "no active session",
-tell the user to run /ec-start.
+## Enablement — The First-Time Question
+
+Reverie is enabled per repo, and the answer is remembered. The first time
+a tool call reports that a repo is undecided, ask the user exactly:
+
+Reverie isn't on for this repo. Turn it on? (yes / not now / never)
+
+Ask this question AT MOST ONCE per conversation. Record the answer with
+ec_set_repo_state:
+- "yes" -> state="enabled"
+- "not now" -> state="not_now" (stays off for now; do not ask again in
+  this conversation)
+- "never" -> state="disabled" (fully off for this repo: nothing is
+  captured, retrieved, or injected; existing memory is kept)
+
+If a tool response reports the repo is disabled, do nothing with EC in
+that repo and do not ask again.
+
+## Sessions Are Automatic
+
+In an enabled repo, every branch has a session that is created
+automatically on the first tool call and never needs closing. Switching
+branches mid-conversation switches session memory; long-term memory
+stays shared across branches. Never suggest starting or stopping a
+session. (For compatibility, `ec-start` enables the repo and shows
+status, and `ec-stop` is an alias for `ec review` — do not suggest
+either unless the user asks.)
 
 ## When to Call ec_observe
 
@@ -2708,12 +2734,12 @@ the agent used injected cognition heavily but produced worse work (quality dropp
 -0.589, groundedness dropped -0.480). The best results came when the agent
 established repository understanding FIRST, then consulted cognition.
 
-Pass a natural language query describing what you want to know. Be specific. 
-"How does the dependency injection container resolve circular imports?" is better 
-than "dependency injection." The query is embedded and compared semantically — 
+Pass a natural language query describing what you want to know. Be specific.
+"How does the dependency injection container resolve circular imports?" is better
+than "dependency injection." The query is embedded and compared semantically —
 precise engineering questions retrieve better than single keywords.
 
-If ec_query returns no results, proceed normally — this means EC has no relevant 
+If ec_query returns no results, proceed normally — this means EC has no relevant
 cognition yet. EC starts empty and builds up over sessions.
 
 ## When to Call ec_reconsolidate
@@ -2744,6 +2770,27 @@ the new finding — the Diffuser will handle the relationship at review time.
 Call ec_get_summary ONCE at session start to see what EC already knows.
 This helps you decide whether to ec_query for specific context before
 starting work. Returns brain statistics, not individual ECUs.
+
+If the response contains a pending-review backlog line (counts only),
+mention it to the user AT MOST ONCE per conversation and offer two ways
+to review: run `ec review` in a terminal, or say "show my Reverie
+candidates" here. Counts only — never candidate contents.
+
+## Review — The Human Decides
+
+Observations are stored as review candidates, never promoted
+automatically. The user reviews them:
+- in a terminal with `ec review`, or
+- through you: when the user asks to see their Reverie candidates, call
+  ec_review_list and show EVERY candidate's full conclusion text before
+  asking what they want to do.
+
+Rules for review through you:
+- Relay ONLY the decisions the user actually states, via ec_review_decide.
+- NEVER decide on the user's behalf.
+- NEVER bulk-accept unless the user explicitly asked for that group.
+- Be honest about the limits: Reverie cannot verify who made a decision;
+  every decision is recorded with its channel (tui, agent, or cli).
 
 ## Reading EC Output
 
@@ -2799,10 +2846,11 @@ as authoritative context. Always verify ECUs against the live codebase.
 Do not anchor on past beliefs if the current code contradicts them.
 If you notice a contradiction, call ec_observe to record the new finding.
 
-Observations are stored in the Session Brain, not the Canonical Brain. The 
-user reviews them at /ec-stop and accepts or rejects each one. Only accepted 
-observations are promoted to the Canonical Brain for future sessions. Don't 
-hesitate to observe something uncertain — the review gate filters it.
+Observations are stored in the Session Brain, not the Canonical Brain. The
+user reviews the candidates — via `ec review` in a terminal, or through you
+(see "Review — The Human Decides"). Only accepted observations are promoted
+to the Canonical Brain for future use. Don't hesitate to observe something
+uncertain — the review gate filters it.
 ```
 
 ### 28.10 Command Templates (Copy-Paste Ready for Development)
@@ -2811,31 +2859,25 @@ The install script creates three markdown files in `~/.ec/commands/`. These are 
 
 **`~/.ec/commands/ec-start.md`:**
 ```markdown
-Start or resume an EC session on the current git branch.
+(Compat) Enable EC for this repo and show status.
 
 Steps:
 1. Detect the current repository path and git branch.
-2. Check for an active EC session matching this (repo, branch).
-3. If found: resume it — load session ECUs and edges into the Session Brain.
-4. If not found: create a new session.
-5. Call ec_get_summary to get a brain overview.
-6. Report: session ID, branch, repo, session brain ECU count.
+2. Record the repo as enabled (ec_set_repo_state with state="enabled").
+3. Report: repo, branch, brain statistics (ec_get_summary).
+4. Sessions are automatic per branch — nothing needs starting.
 ```
 
 **`~/.ec/commands/ec-stop.md`:**
 ```markdown
-End the EC session and trigger the Review Gate.
+(Compat) Review — an alias for `ec review`.
 
 Steps:
-1. Run a final extraction pass on any unobserved reasoning since the last ec_observe call.
-2. Present all Session Brain ECUs for human review, grouped by topic.
-3. For each group: offer accept-all, reject-all, or review-individually.
-4. Accepted ECUs: send through the Full Diffuser into the Canonical Brain.
-5. Rejected ECUs: remove from session_ecus.
-6. Skipped ECUs: remain in session_ecus with review_status = skipped.
-7. Clean up: remove session_edges for accepted/rejected ECUs. Apply or discard pending_updates.
-8. Mark session as closed in sessions table.
-9. Report: accepted count, rejected count, skipped count, Canonical Brain total.
+1. Call ec_review_list to get the pending candidates.
+2. Show every candidate's full conclusion text to the user.
+3. Relay only the decisions the user states, via ec_review_decide.
+4. Never decide on the user's behalf; never bulk-accept unless the user
+   explicitly asked for that group.
 ```
 
 **`~/.ec/commands/ec-status.md`:**

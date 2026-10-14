@@ -306,8 +306,10 @@ class TestOpenQuestionResolution:
 
     def test_cli_stop_archive_and_skip_policies(self, tmp_path, monkeypatch,
                                                 model):
-        """#8 end-to-end through `python -m ec.session stop`: archive closes
-        every open question before the review flow; skip leaves them."""
+        """#8 end-to-end through `ec review` (the feat/flow review CLI,
+        reached via the ec-stop alias): archive resolves every open
+        question before the review flow; skip leaves them parked. Sessions
+        are never closed any more (D56) — the review is independent."""
         from ec.session import SessionManager
         from ec.session import main as session_main
 
@@ -332,7 +334,7 @@ class TestOpenQuestionResolution:
                 assert checker.get_ecu(id_a)["status"] == expected_status
                 assert checker.get_ecu(id_b)["status"] == expected_status
                 sessions = checker.list_sessions()
-                assert sessions[0]["status"] == "closed"
+                assert sessions[0]["status"] == "active"    # D56: no closing
             finally:
                 checker.close()
 

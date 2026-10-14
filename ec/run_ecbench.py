@@ -15,8 +15,10 @@ What the runner does, per condition (``ec`` | ``baseline``):
    - ``baseline``: no EC instructions, and the ``ec`` MCP server explicitly
      disabled (in case EC is installed in the user's global config)
 4. per session: ``ec.session start`` → run each prompt headlessly
-   (transcripts captured per prompt) → ``ec.session stop --all-accept``
-   (the review gate between sessions; ``--review skip`` also available)
+   (transcripts captured per prompt) → ``ec.session bench-close --review
+   accept`` (the review gate + session close between bench sessions;
+   ``--review skip`` also available — the user-facing flow never closes
+   sessions, this hook exists only for the harness)
 5. writes ``manifest.json`` (per-prompt transcripts, exit codes, durations,
    session logs, EC brain statistics) — scoring happens elsewhere
 
@@ -354,8 +356,11 @@ def run_condition(
         session_rec: dict = {"id": sid, "prompts": []}
 
         if condition == "ec":
+            # feat/flow: the user-facing `ec.session start` only enables
+            # the repo (sessions are automatic); the bench uses its hidden
+            # hook to enable + create the isolated session it measures.
             session_rec["start"] = _run_cli(
-                [python, "-m", "ec.session", "start",
+                [python, "-m", "ec.session", "bench-start",
                  "--repo", str(workdir), "--branch", branch],
                 session_cli_env, logs / f"{sid}_start.log", timeout=120)
             if session_rec["start"]["exit_code"] != 0:
@@ -389,9 +394,12 @@ def run_condition(
             _flush()
 
         if condition == "ec":
+            # feat/flow: the user-facing stop is now `ec review` (sessions
+            # stay open); the bench needs the old isolated-session
+            # semantics, so it uses the hidden bench-close hook.
             session_rec["stop"] = _run_cli(
-                [python, "-m", "ec.session", "stop", f"--all-{review}",
-                 "--repo", str(workdir), "--branch", branch],
+                [python, "-m", "ec.session", "bench-close", "--repo",
+                 str(workdir), "--branch", branch, "--review", review],
                 session_cli_env, logs / f"{sid}_stop.log", timeout=600)
             stop_log = Path(session_rec["stop"]["log"]).read_text(encoding="utf-8")
             session_rec["stop"]["diffusion_warning"] = \
@@ -468,7 +476,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  repo:       {repo_src} (branch {args.branch})")
     print(f"  conditions: {', '.join(conditions)}")
     print(f"  run dir:    {run_dir}")
-    print(f"  review:     --all-{args.review} between sessions")
+    print(f"  review:     --review {args.review} between sessions")
     print(f"  agent cmd:  {args.agent_cmd}")
     if args.dry_run:
         for condition in conditions:

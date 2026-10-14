@@ -412,6 +412,12 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "stop":
         # feat/flow: `stop` is an alias for `ec review` (nothing is closed).
         return main_stop(argv[1:])
+    if argv and argv[0] == "bench-close":
+        # bench/E2E-only hook — closes the session (never user-facing).
+        return _bench_close(argv[1:])
+    if argv and argv[0] == "bench-start":
+        # bench/E2E-only hook — enable + resolve-or-create the session.
+        return _bench_start(argv[1:])
     parser = argparse.ArgumentParser(
         prog="python -m ec.session",
         description="EC session lifecycle (§28.5/§28.6): start | stop | status",
@@ -499,24 +505,103 @@ def main_start(argv: list[str] | None = None) -> int:
 _STOP_COMPAT_FLAGS = ("--all-accept", "--all-skip")
 
 
+def _bench_start(argv: list[str] | None = None) -> int:
+    """Bench/E2E-only lifecycle hook (NOT user-facing): enable the repo and
+    resolve-or-create its session (D56) — the harness equivalent of what a
+    user gets automatically in an enabled repo. Hidden from help."""
+    parser = argparse.ArgumentParser(prog="ec.session bench-start")
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--branch", required=True)
+    args = parser.parse_args(argv or [])
+    try:
+        brain = Brain()
+    except BrainError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        from . import repos
+        info = repos.RepoInfo(repo_path=args.repo, branch=args.branch,
+                              repo_key=args.repo, url=None, via_git=False)
+        repos.set_repo_state(brain, info, "enabled")
+        row = SessionManager(brain).ensure_session(args.repo, args.branch)
+        print(f"Bench session {row['id']} on {args.branch} in {args.repo}")
+        return 0
+    except (SessionError, BrainError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        brain.close()
+
+
+def _bench_close(argv: list[str] | None = None) -> int:
+    """Bench/E2E-only lifecycle hook (NOT user-facing): apply review
+    decisions to the current session's candidates and CLOSE the session —
+    the §28.6 stop semantics the EC-Bench harness needs for per-spec-session
+    isolation. The user-facing flow never closes sessions (D56); this
+    subcommand exists so the benchmark keeps measuring what it always
+    measured. Hidden from help on purpose."""
+    parser = argparse.ArgumentParser(prog="ec.session bench-close")
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--branch", required=True)
+    parser.add_argument("--review", default="accept",
+                        choices=("accept", "skip"))
+    args = parser.parse_args(argv or [])
+    try:
+        brain = Brain()
+    except BrainError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        manager = SessionManager(brain)
+        row = manager.current_session(args.repo, args.branch)
+        if row is None:
+            return 0
+        decisions = {
+            ecu["id"]: args.review
+            for ecu in brain.list_session_ecus(row["id"])
+            if ecu["review_status"] in ("pending", "skipped")
+        }
+        result = review_gate.apply_review_decisions(brain, row["id"],
+                                                    decisions)
+        print(result.message)
+        warning = review_gate.diffusion_failure_warning(result)
+        if warning:
+            print(warning)
+        manager._activations.pop(row["id"], None)
+        return 0
+    except (SessionError, review_gate.ReviewGateError, BrainError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        brain.close()
+
+
 def main_stop(argv: list[str] | None = None) -> int:
     """``ec-stop`` (compat, feat/flow): an alias for ``ec review``.
 
     Old stop flags are accepted and refused politely — sessions are not
-    closed any more, so there is nothing to stop."""
+    closed any more, so there is nothing to stop. The open-question
+    policy flag keeps working (it is a review concern)."""
     from . import review_cli
     argv = list(argv or [])
     kept = []
+    skip_next = False
     for arg in argv:
+        if skip_next:
+            skip_next = False
+            kept.append(arg)
+            continue
         if arg in _STOP_COMPAT_FLAGS:
             print(f"(deprecated: {arg} — sessions are never closed now; "
                   "review is per-candidate via `ec review`)", file=sys.stderr)
             continue
         if arg.startswith("--resolve-open-questions"):
-            print("(deprecated: --resolve-open-questions — open questions "
-                  "resolve through the review gate as before)", file=sys.stderr)
-            if "=" not in arg:
-                continue
+            print("(moved: --resolve-open-questions now belongs to "
+                  "`ec review`)", file=sys.stderr)
+            kept.append(arg)                 # the flag keeps working
+            if arg == "--resolve-open-questions":
+                skip_next = True
+            continue
         kept.append(arg)
     return review_cli.main(kept)
 
