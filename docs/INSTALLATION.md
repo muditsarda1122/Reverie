@@ -2,7 +2,29 @@
 
 **Date of audit:** 2026-10-04
 **Updated:** 2026-10-14 for the bring-your-own-provider step (`feat/providers`): the LLM dependency check became a full provider-selection flow (registry in `ec/providers.py`, `--provider`, `--no-verify`, live ping). Line citations refer to the audit date and may have shifted.
+**Updated:** 2026-10-14 for the product flow (`feat/flow`) — see the addendum below; §7/§10's `ec-start`/`ec-stop` instructions are superseded by it.
 **Scope:** read-only archaeology of how Reverie is currently installed and wired into coding-agent harnesses. Every claim cites repository code (`ec/install.py` unless noted). No source, config, or environment was modified. Read together with `PRODUCT.md` (same directory) for the product-level map.
+
+---
+
+## 0. Addendum (2026-10-14, `feat/flow`): the product flow
+
+This addendum is current; the sections below are the pre-flow audit and are kept for history. Everything here is implementation-backed by `ec/repos.py`, `ec/review_queue.py`, `ec/review_cli.py`, `ec/transport.py`, `ec/cli.py`, and the updated `ec/mcp_server.py`/`ec/session.py`/`ec/install.py`.
+
+**There is no more `ec-start` / `ec-stop` flow.** The lifecycle is:
+
+1. **Install once, globally** — unchanged (`ec install`, §4).
+2. **Per-repo enablement.** The first time a Reverie tool call happens in a repo, the repo is `undecided`: every tool returns a short, structured ask-the-user response — "Reverie isn't on for this repo. Turn it on? (yes / not now / never)". The agent asks once per conversation and records the answer with `ec_set_repo_state` (`yes` → enabled, `not now` → asked-but-off, `never` → disabled). States live in the global brain (`repos` table), never inside the repo. `ec enable` / `ec disable` switch it directly; `ec repos` lists every known repo with its state and counts.
+3. **Automatic sessions.** In an enabled repo, any tool call resolves or creates the session for (repo, branch). Branch switches switch session memory mid-conversation; long-term memory is shared. Sessions are never closed by the user. Worktrees share the repo's enablement (identity = git common directory) but get their own sessions per worktree.
+4. **Review, independent of sessions.** One queue across every session, branch and repo. `ec review` is a calm terminal UI (one candidate at a time, single keypresses, `--list --json` / `--decide <id>=<action>` for scripts, `--expired` to revive). Or the agent relays: `ec_review_list` returns the ordered page plus a short-lived `review_token`; `ec_review_decide` applies only decisions stated by the user, refuses a bulk accept-all, and records the channel as `agent`. Non-reviewable-by-default: candidates unreviewed for `review.expire_after_days` (21) become `expired` — kept, still usable in session memory, revived only via `ec review --expired`.
+5. **Transport.** `ec export [file]` (ZIP: consistent `VACUUM INTO` snapshot + manifest), `ec import <file>` (direct when empty; `--replace` otherwise, automatic backup first; merging is not supported), `ec install --import <file>` for new-machine setup, `ec reset [--repo P] [--yes]` (always backs up first).
+6. **Compatibility shims (deprecated):** `ec-start` enables the repo and shows status; `ec-stop` is an alias for `ec review` (old flags are refused with a deprecation note, `--resolve-open-questions` still works and belongs to `ec review`); `ec-status` unchanged. Harness-specific slash-command registration is the next phase.
+
+**Repo identity, worktrees, moves/re-clones (documented choices):**
+
+- Identity = the resolved absolute **git common directory** (`git rev-parse --path-format=absolute --git-common-dir`), so a worktree is the same repo as its main checkout for enablement. Sessions stay keyed to the **worktree toplevel** + branch (§28.5) because grounding verification and commit provenance must run against the actual working tree.
+- A repo **moved or re-cloned** on the same machine is a new identity; on first use Reverie re-matches it by the recorded **origin remote URL** — exactly one match adopts the old state (and re-keys onto the new path). Ambiguous (several known repos share the URL) or URL-less remotes start fresh as `undecided`; a plain `ec enable` resolves it.
+- On **export/import to another machine**, absolute repo paths don't carry over: repo *states* re-match by remote URL on first use (same rule); sessions tied to paths that don't exist on the new machine stay inert.
 
 ---
 

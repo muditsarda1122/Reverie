@@ -7,14 +7,15 @@
 - **Extracts conclusions, not logs.** While your agent works, Reverie distills its reasoning into ECUs — Engineering Cognition Units: "authentication correctness depends on optimistic token refresh", not "TokenManager.refresh() was called".
 - **Confidence that evolves.** Every conclusion carries a Bayesian confidence (computed in log-odds space), starts stronger for debugging insights than for planning guesses, and is re-evaluated when new evidence contradicts it.
 - **Grounded in your code.** Each ECU references files, symbols and a commit hash. A background maintainer verifies that grounding against the live repository and deprecates conclusions whose code has disappeared.
-- **Reviewed by you.** A session brain captures raw extraction; nothing reaches the durable canonical brain until the terminal review gate — you accept, reject or skip each candidate.
+- **Reviewed by you, independently of sessions.** Observations wait as candidates in one review queue across every branch and repo. Review them with `ec review` in a terminal, or ask your agent to show them and decide in the chat. Nothing reaches the durable canonical brain without your decision.
 - **Demand-driven retrieval.** Cognition is never auto-injected. The agent consults it through `ec_query` when it recognizes a gap; a 4-factor ranker (relevance, confidence, scope proximity, recency) returns what fits the current task.
 
 ## Status and honest limits
 
 - Developed and tested on **macOS**. Other platforms may work but are untested.
-- The review gate happens **in the terminal**, one candidate at a time — there is no GUI.
-- **You start and end sessions yourself** (`ec-start` / `ec-stop`). Nothing is captured outside a session you open.
+- The terminal review UI is one candidate at a time, plain text — there is no GUI.
+- **Review through your agent relies on the agent relaying your choices.** Reverie records which channel applied each decision (terminal, agent, or cli) but cannot verify who actually made it.
+- Enabling/disabling is per repo and remembered; you can flip it any time (`ec enable` / `ec disable`). Disabled means fully off for that repo.
 - EC-Bench, the built-in benchmark, has **not** shown a clear advantage yet — see [Research](#research).
 
 ## Supported agents
@@ -47,17 +48,20 @@ export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY,
 #    (interactive; --all for non-interactive, --dry-run to preview)
 ec install
 
-# 4. In your project, start a session, work with your agent, end the session
+# 4. Just code. Sessions are automatic per branch; the first time your agent
+#    uses Reverie in a repo it asks you once whether to turn it on.
 cd your-project
-ec-start        # opens a session for (repo, branch); activates the MCP server
-# ... work with the agent; it calls ec_observe / ec_query / ec_reconsolidate
-ec-stop         # runs the review gate in your terminal, then diffuses
-                # accepted candidates into the canonical brain
+# ... work with your agent; it calls ec_observe / ec_query / ec_reconsolidate
+# ... whenever you like, review what it learned:
+ec review       # terminal UI, one candidate at a time
+#    or just say "show my Reverie candidates" and decide in the chat
 ```
 
-Handy extras: `ec-status` (current session + brain stats), `ec --dry-run` (show exactly what the installer would write), `ec-retry` (recover failed extractions / re-diffuse), `ec-repair` (ops recovery). Full details, including per-agent config files the installer touches, are in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+Handy extras: `ec enable` / `ec disable` / `ec repos` (per-repo control), `ec export` / `ec import` / `ec reset` (backup, migrate, wipe), `ec-status` (brain stats), `ec-retry` (recover failed extractions / re-diffuse), `ec-repair` (ops recovery). Full details, including per-agent config files the installer touches, are in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
-After `ec install`, your agent config points at the MCP server (`ec-mcp`). Restart your agent and the four tools below appear.
+After `ec install`, your agent config points at the MCP server (`ec-mcp`). Restart your agent and the tools below appear.
+
+> Deprecated shims, kept for compatibility: `ec-start` now enables the repo and shows status (nothing to "start"), `ec-stop` is an alias for `ec review`, `ec-status` unchanged.
 
 ## How it works
 
@@ -65,18 +69,24 @@ The short version: observe → extract → review → ground → retrieve. The l
 
 ## MCP tools
 
+Every tool takes an optional `repo_path` (the agent's workspace path — pass it explicitly; global MCP servers may start in the home folder). In an undecided repo, tools return a short "ask the user" prompt instead of acting; in a disabled repo they do nothing.
+
 | Tool | What it does | Parameters |
 |---|---|---|
 | `ec_observe` | Feeds the agent's reasoning to the extractor; new ECUs land in the **session** brain | `user_prompt`, `reasoning_trace` (required), `final_output` (optional) |
 | `ec_query` | Retrieves relevant engineering cognition, demand-driven | `query` (required), `scope` (optional), `mode` (optional — e.g. `debugging`, `architecture`) |
-| `ec_get_summary` | Brain stats for awareness without anchoring | — |
+| `ec_get_summary` | Brain stats for awareness without anchoring; adds one counts-only line when the review backlog is piling up | — |
 | `ec_reconsolidate` | Re-evaluates a retrieved ECU against new evidence | `ecu_id`, `evidence` (required), `relationship` (optional) |
+| `ec_set_repo_state` | Records the user's enablement answer (`enabled` / `disabled` / `not_now`) or flips a repo on/off | `state` (required) |
+| `ec_review_list` | The review queue page for the agent to relay (returns a short-lived `review_token`) | `all`, `by_topic`, `page` (optional) |
+| `ec_review_decide` | Applies decisions the **user stated**; refuses a bulk accept-all | `review_token`, `decisions` (required) |
 
 ## Configuration
 
 Everything lives in one YAML file, `~/.ec/config.yaml`, deep-merged over the defaults in [`ec/config.py`](ec/config.py). Useful blocks:
 
 - `llm` — `provider` selects from a registry (`opencode_zen`, `anthropic`, `openai`, `google`, `openrouter`, `ollama`, `custom`); fields you don't set (`model`, `base_url`, `api_key_env`, `wire_format`) are filled from the registry, and anything you set explicitly wins. Extras: `wire_format` (`anthropic`/`openai`) overrides the model-name request shape (use it for `claude-*` models on OpenAI-compatible gateways); `openai_reasoning: true` forces the reasoning-model parameter shape (`max_completion_tokens`, no temperature — auto-detected otherwise); `retry_attempts` / `retry_backoff` / `retry_backoff_cap` tune retry-with-backoff on 429/5xx/timeouts; `models.extraction` / `models.classification` / `models.mode_detection` optionally give each task its own model. Default: OpenCode Zen (`https://opencode.ai/zen/v1`) with `claude-haiku-4-5`. Temperature 0.0 for classification, 0.3 for extraction.
+- `review` — the queue's behaviour: `expire_after_days` (candidates unreviewed this long become `expired`; 0 disables), `nudge_threshold` / `nudge_age_days` (when `ec_get_summary` mentions the backlog — counts only), `page_size` (candidates shown per page in `ec review` and `ec_review_list`).
 - `confidence` — base priors per source type, scope multipliers, decay, thresholds.
 - `ranking` / `retrieval` / `activation` — retrieval weights and budgets.
 - `maintainer` / `clustering` — background maintenance intervals and HDBSCAN settings.

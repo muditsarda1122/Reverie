@@ -3001,3 +3001,154 @@ One Python process. One SQLite file. All projects.
 
 ---
 
+## Section 29 — The Product Flow (feat/flow, 2026-10-14)
+
+No more `ec-start` / `ec-stop`. The user installs once, then just codes.
+This section supersedes the §28.6 lifecycle story for the user-facing
+product; §28.5's (repo, branch) session keying and the review gate itself
+(§5/§7/§28.6/§28.7) are unchanged mechanics.
+
+### 29.1 Repo enablement (D55)
+
+Three states per repo — `undecided` (default) | `enabled` | `disabled` —
+stored in the global brain's `repos` table, never inside the repo.
+`~/.ec`-local, keyed by the repo's identity (D58). Plus a recorded
+`asked_at` stamp ("asked once, still undecided").
+
+- Every Reverie tool call first resolves the repo: the tool's optional
+  `repo_path` argument (the agent's workspace path — global MCP servers
+  may be started in the home folder) wins; fallback is the server's
+  working directory (and the `EC_REPO_PATH`/`EC_BRANCH` overrides).
+- `undecided` → every tool returns a short, structured ask-the-user
+  response instead of acting: "Reverie isn't on for this repo. Turn it
+  on? (yes / not now / never)". The agent asks once per conversation and
+  records the answer with `ec_set_repo_state`: `yes` → `enabled`,
+  `not now` → `not_now` (asked, stays off), `never` → `disabled`.
+- `disabled` → fully off for that repo: no capture, no retrieval,
+  nothing injected. Existing data is kept; re-enabling resumes with
+  everything intact (`ec disable` says so in its output).
+- Commands: `ec enable`, `ec disable` (inside a repo, any time), `ec
+  repos` (every known repo with state + counts), MCP tool
+  `ec_set_repo_state(state)`.
+
+### 29.2 Repo identity, worktrees, moves (D58)
+
+- **Identity** = the resolved absolute git common directory
+  (`git rev-parse --path-format=absolute --git-common-dir`). A worktree
+  shares its common directory with the main checkout → same repo for
+  enablement.
+- **Sessions stay keyed to the worktree toplevel + branch** (§28.5):
+  grounding verification and commit provenance must run against the
+  actual working tree. Two worktrees therefore get separate sessions
+  even with the same branch checked out.
+- **Move / re-clone on the same machine** = a new identity. On first use
+  Reverie re-matches by the recorded origin remote URL: exactly one
+  match adopts the old state and re-keys onto the new path; ambiguous
+  (several known repos share the URL) or URL-less remotes start fresh
+  as `undecided` (a plain `ec enable` resolves it).
+- **Branch switches** are resolved on every tool call. A session whose
+  branch no longer exists locally is marked `archived` at lookup
+  (best-effort; never on git failure); its unreviewed candidates stay
+  in the review queue (D56).
+
+### 29.3 Automatic sessions (D56 — replaces D15 for the MCP surface)
+
+In an enabled repo, any Reverie tool call resolves or creates the
+session for (repo, branch). Carry-over of unreviewed candidates is
+exactly session creation's §28.5 step 5 (from *closed* sessions of the
+same context; archived sessions' candidates stay in the queue instead).
+Sessions are never closed by the user: activation decays on its own on
+load (§6.6), labile-ECU tracking is keyed per session so it stays
+correct across branch switches, and nothing in the review flow depends
+on a close. The D15 rule (the server never creates sessions) survives
+only for the bench harness's hidden hooks (`ec.session bench-start` /
+`bench-close`), which exist so EC-Bench keeps measuring isolated
+sessions.
+
+### 29.4 Review independent of sessions (D57)
+
+One queue across all sessions and repos: every `session_ecus` row with
+`review_status` pending|skipped, joined with its session for
+repo/branch. Filters `--repo`, `--branch`, `--all` (default: the
+current repo, everything outside a repo). Ordering: strongest first by
+confidence; the §7.4 topic grouping stays an option (`--by-topic`).
+Pages of `review.page_size` (10) with "more" available — never a
+filter. Decisions go through `review_gate.apply_review_decisions`
+(`close=False`, `undecided="leave"`, `channel=…`) — the exact gate
+behaviour (contradictions, pending updates, diffusion, open-question
+sweep, audit), nothing duplicated. Bulk accept applies to one topic
+group at a time; never a global accept-all. Undo reverses the last
+decision of the run while it is still reversible — an accept has
+already been promoted and diffused, so undoing one says so plainly;
+rejects/skips reverse from a snapshot.
+
+- **Expiry:** candidates unreviewed for `review.expire_after_days`
+  (default 21; 0 disables) become `expired` — kept, never deleted,
+  still usable in session memory, never promoted until the user
+  revives them with `ec review --expired` (revive stamps a fresh
+  lease).
+- **Audit trail:** every decision records candidate id, decision,
+  edited text, timestamp, and channel (`tui` | `agent` | `cli`) in
+  `review_decisions`. Nothing consumes it yet; it exists so decisions
+  are attributable later. Honesty: Reverie cannot verify who made a
+  decision through the agent; the channel is the record.
+
+### 29.5 Review through the agent (D57)
+
+`ec_review_list` returns the same ordered page as the TUI in a compact
+form plus a short-lived `review_token` (TTL 1 h, server-held).
+`ec_review_decide(review_token, decisions)` applies decisions only to
+ids returned under that token, refuses a bulk accept-all (all ids of a
+multi-candidate token accepted in one call), and records the channel as
+`agent`. The agent instructions (`~/.ec/AGENTS.md`) require: show every
+candidate's full text before asking; relay only stated decisions; never
+decide on the user's behalf; never bulk-accept unless the user
+explicitly asked for that group.
+
+### 29.6 The nudge (D57)
+
+`ec_get_summary` adds one counts-only line when the unreviewed backlog
+exceeds `review.nudge_threshold` (10) or the oldest unreviewed
+candidate is older than `review.nudge_age_days` (5) — e.g. "14
+conclusions waiting for review (oldest 6 days)". The agent mentions it
+at most once per conversation and offers both review paths (terminal
+`ec review`, or "show my Reverie candidates" here). Counts only, never
+contents (§11.3).
+
+### 29.7 Export, import, reset (D58)
+
+- `ec export [file]` — one ZIP: a consistent `VACUUM INTO` snapshot of
+  the whole brain plus `manifest.json` (Reverie version, schema
+  version = `PRAGMA user_version`, embedding model + dimensions, row
+  counts, date).
+- `ec import <file>` — allowed directly when the local brain is empty;
+  otherwise requires `--replace`, which takes an automatic backup
+  export first and prints its path. **Merging two brains is out of
+  scope** (stated in the help text). Refused with a clear message when
+  the embedding model or dimensions mismatch, or when the export's
+  schema is newer than this Reverie.
+- `ec install --import <file>` — the new-machine migration path; only
+  an empty (freshly bootstrapped) brain accepts it.
+- `ec reset` — requires typing `reset`; `--yes` skips the prompt but
+  still takes the automatic backup first and prints its path.
+  `--repo <path>` resets only that repo's sessions + candidates
+  (long-term memory and the enablement row are kept).
+- Machine-specific data: repo states re-match by remote URL on first
+  use (29.2); sessions tied to paths that don't exist on the new
+  machine stay inert.
+
+### 29.8 Compatibility shims (deprecated)
+
+`ec-start` enables the repo and shows status (nothing needs starting);
+`ec-stop` aliases `ec review` (old `--all-accept`/`--all-skip` flags are
+refused with a deprecation note; `--resolve-open-questions` still works
+and moved to `ec review`); `ec-status` unchanged. Docs no longer
+present `ec-start`/`ec-stop` as the normal flow.
+
+### 29.9 New dependency policy
+
+The terminal review UI adds **zero** dependencies: rendering is plain
+text, single-keypress input uses stdlib `termios`/`tty` on POSIX with a
+line-based fallback elsewhere and for non-TTY stdin. `rich` /
+`prompt_toolkit` / Textual were considered and rejected — the screen is
+one candidate, a few muted metadata lines and one key-hint line.
