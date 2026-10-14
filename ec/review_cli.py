@@ -498,7 +498,7 @@ def _handle_key(run: ReviewRun, candidate: dict, key: str, page: list[dict],
         except ValueError as exc:
             print_fn(f"  ! {exc}")
             return
-        print_fn(f"  · {action}ed")
+        print_fn(f"  · {action}{'ped' if action == 'skip' else 'ed'}")
         if outcome.get("warning"):
             print_fn(f"  ⚠️ {outcome['warning']}")
         return
