@@ -31,7 +31,7 @@ Repository = "https://github.com/muditsarda1122/Reverie.git"
 Issues = "https://github.com/muditsarda1122/Reverie/issues"
 
 [project.scripts]
-ec = "ec.install:main"
+ec = "ec.cli:main"
 ec-mcp = "ec.mcp_server:main"
 ec-repair = "ec.repair:main"
 ec-retry = "ec.pending:main"

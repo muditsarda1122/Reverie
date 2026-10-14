@@ -204,44 +204,62 @@ def decide_candidate(
 # key input
 # ---------------------------------------------------------------------------
 
-def read_key_posix() -> str:
-    """One keypress, no Enter (POSIX cbreak)."""
-    import termios
-    import tty
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setcbreak(fd)
-        ch = sys.stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-    return ch
-
-
-def make_key_reader(input_fn=input):
+class KeyReader:
     """Single-keypress reader when possible, line fallback otherwise.
 
-    Line fallback maps full words and single letters alike (non-TTY and
-    tests). Raises ``Quit`` on q/quit/EOF."""
-    use_raw = False
-    try:
-        use_raw = sys.stdin.isatty() and os.name == "posix"
-    except Exception:
-        use_raw = False
+    The raw (cbreak) mode is entered ONCE for the whole run — before the
+    first screen — and restored at the end. Setting it per-key would race
+    with type-ahead: a keypress landing between screen render and
+    ``setcbreak`` would sit in canonical buffering (awaiting a newline)
+    and the TUI would wait forever. Raises ``Quit`` on q/quit/EOF."""
 
-    if use_raw:
-        def reader() -> str:
-            return read_key_posix()
-    else:
-        def reader() -> str:
-            try:
-                answer = input_fn("> ").strip().lower()
-            except EOFError:
-                raise Quit() from None
-            if answer in ("q", "quit", "exit"):
-                raise Quit()
-            return answer
-    return reader
+    def __init__(self, input_fn=input, reader_fn=None):
+        self._input_fn = input_fn
+        self._reader_fn = reader_fn     # injected reader: raw mode never used
+        self._saved = None
+
+    @property
+    def _raw_capable(self) -> bool:
+        if self._reader_fn is not None:
+            return False
+        try:
+            return sys.stdin.isatty() and os.name == "posix"
+        except Exception:
+            return False
+
+    def setup(self) -> None:
+        if self._raw_capable:
+            import termios
+            import tty
+            fd = sys.stdin.fileno()
+            self._saved = termios.tcgetattr(fd)
+            tty.setcbreak(fd)          # one keypress, no Enter needed
+
+    def teardown(self) -> None:
+        if self._saved is not None:
+            import termios
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN,
+                              self._saved)
+            self._saved = None
+
+    def __call__(self) -> str:
+        if self._reader_fn is not None:
+            return self._reader_fn()
+        if self._saved is not None:
+            return sys.stdin.read(1)
+        try:
+            answer = self._input_fn("> ").strip().lower()
+        except EOFError:
+            raise Quit() from None
+        if answer in ("q", "quit", "exit"):
+            raise Quit()
+        return answer
+
+
+def make_key_reader(input_fn=input) -> KeyReader:
+    """The reader for run_tui (raw when possible, line fallback otherwise —
+    the fallback maps full words and single letters alike)."""
+    return KeyReader(input_fn)
 
 
 # ---------------------------------------------------------------------------
@@ -372,11 +390,28 @@ def run_tui(
     ``review.page_size`` with 'more' available — never a filter."""
     cfg = config or get_config()
     run = ReviewRun(brain, channel=channel, config=cfg, now=now)
+    if key_reader is not None and not hasattr(key_reader, "setup"):
+        key_reader = KeyReader(reader_fn=key_reader)   # injected reader
     key_reader = key_reader or make_key_reader()
     edit_fn = edit_fn or (lambda text: edit_cognition(text, print_fn=print_fn))
     size = page_size or int(cfg.review.page_size)
     expired_mode = bool(queue) and queue[0].get("review_status") == "expired"
 
+    key_reader.setup()               # cbreak on BEFORE the first screen
+    try:
+        return _run_loop(
+            run, queue, key_reader=key_reader, print_fn=print_fn,
+            edit_fn=edit_fn, page_size=size, expired_mode=expired_mode,
+            config=cfg, now=now)
+    finally:
+        key_reader.teardown()
+
+
+def _run_loop(run: ReviewRun, queue: list[dict], *, key_reader, print_fn,
+              edit_fn, page_size: int, expired_mode: bool, config,
+              now: datetime | None) -> dict:
+    brain = run.brain
+    size = page_size
     remaining = list(queue)
     shown = 0
     while remaining:
@@ -677,3 +712,7 @@ def _apply_flag_decisions(brain: Brain, queue: list[dict],
     # diffusion failures are soft (promotion stands; `ec-retry --rediffuse`
     # recovers) — only undecidable candidates fail the command.
     return 1 if missing else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -750,7 +750,7 @@ def grounding_deprecation_notifications(brain: Brain,
 def _resolve_pending_updates(brain: Brain, session_id: str,
                              accepted: list[str], rejected: list[str],
                              handled_pairs: set, result: ReviewResult, cfg,
-                             embedding_model, now: datetime) -> None:
+                             embedding_model_or_fn, now: datetime) -> None:
     """Apply/discard the session's pending updates.
 
     Accepted source + the full diffuser already created an edge to the target
@@ -771,7 +771,10 @@ def _resolve_pending_updates(brain: Brain, session_id: str,
             if target is not None and pair not in handled_pairs:
                 new_ecu = brain.get_ecu(source_id)  # promoted by now
                 if new_ecu is not None:
-                    sim = _cosine(brain, new_ecu, target, embedding_model)
+                    model = (embedding_model_or_fn() if
+                             callable(embedding_model_or_fn)
+                             else embedding_model_or_fn)
+                    sim = _cosine(brain, new_ecu, target, model)
                     if pu["relationship_type"] == "supports":
                         new_c, delta = conf.support_update(
                             target["confidence"], new_ecu["confidence"], sim, cfg)
@@ -894,9 +897,16 @@ def apply_review_decisions(
         raise ReviewGateError(
             f"session {session_id} has unknown status {session['status']!r}"
         )
-    if embedding_model is None:
-        from .embeddings import get_embedding_model
-        embedding_model = get_embedding_model()
+    # feat/flow: the embedding model loads LAZILY — a reject/skip/undo run
+    # never pays the model load (an accept or a pending-update application
+    # triggers it once).
+    model_box = [embedding_model]
+
+    def _model():
+        if model_box[0] is None:
+            from .embeddings import get_embedding_model
+            model_box[0] = get_embedding_model()
+        return model_box[0]
 
     result = ReviewResult(session_id=session_id)
     parsed = _parse_decisions(decisions)
@@ -919,7 +929,7 @@ def apply_review_decisions(
                 )
                 action = "skip"
             if action == "accept":
-                canonical_id = _promote(brain, ecu, edited, embedding_model)
+                canonical_id = _promote(brain, ecu, edited, _model())
                 result.accepted.append(canonical_id)
                 brain.add_review_decision(
                     ecu["id"], "accept", channel, session_id=session_id,
@@ -927,7 +937,7 @@ def apply_review_decisions(
                 try:
                     dres = diffuser.diffuse_ecu(
                         brain, canonical_id,
-                        embedding_model=embedding_model, config=cfg,
+                        embedding_model=_model(), config=cfg,
                     )
                 except DiffuserError as exc:
                     # Promotion stands (the human decided); diffusion is
@@ -974,7 +984,7 @@ def apply_review_decisions(
     # -- step 5: pending updates -------------------------------------------
     _resolve_pending_updates(
         brain, session_id, result.accepted, result.rejected,
-        handled_pairs, result, cfg, embedding_model, now,
+        handled_pairs, result, cfg, _model, now,
     )
 
     # -- §14.3: opposing-edge pairs (decomposition signals) -----------------

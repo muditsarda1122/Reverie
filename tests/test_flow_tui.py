@@ -465,3 +465,19 @@ def test_topic_ordering_helper(brain):
                    scope_path="repo:a > db")
     queue = ordered_by_topic(build_queue(brain))
     assert [c["cognition"] for c in queue] == ["auth-1", "db-1"]
+
+
+def test_python_dash_m_review_cli_produces_output(tmp_path, monkeypatch,
+                                                  capsys):
+    """Regression: `python -m ec.review_cli` must actually run main() —
+    the missing __main__ guard once exited silently."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    env = dict(os.environ)
+    env["EC_HOME"] = str(tmp_path / "ec_home")
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
+    proc = subprocess.run([sys.executable, "-m", "ec.review_cli", "--list"],
+                          capture_output=True, text=True, env=env)
+    assert proc.returncode == 0
+    assert proc.stdout.strip(), proc.stderr
