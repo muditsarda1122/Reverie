@@ -180,7 +180,7 @@ class TestStampGroundingCommitHash:
 # ---------------------------------------------------------------------------
 
 def test_extract_and_store_session_stamps(brain, model):
-    sid = brain.create_session(str(model_home := Path("/repos/x")), REPO_BRANCH)
+    sid = brain.create_session(str(Path("/repos/x")), REPO_BRANCH)
     interaction = {"prompt": "p", "reasoning_trace": "r"}
     with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
         _, ids = extract_and_store_session(

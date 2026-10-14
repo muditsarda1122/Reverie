@@ -633,7 +633,7 @@ def _line_once(path: Path, home: Path, line: str, detail: str) -> PlannedWrite:
     disp = _display(path, home)
     if path.exists():
         text = path.read_text(encoding="utf-8")
-        if line in (l.strip() for l in text.splitlines()):
+        if line in (existing.strip() for existing in text.splitlines()):
             return PlannedWrite(path, "unchanged", None,
                                 f"{disp} already references {line} — unchanged")
         new = text if text.endswith("\n") else text + "\n"
@@ -704,7 +704,8 @@ def _codex_toml(path: Path, home: Path, detail: str) -> PlannedWrite:
         ) from exc
     lines = text.splitlines()
     start = next(
-        (i for i, l in enumerate(lines) if l.strip() == "[mcp_servers.ec]"),
+        (i for i, table_line in enumerate(lines)
+         if table_line.strip() == "[mcp_servers.ec]"),
         None,
     )
     if start is None:
@@ -872,7 +873,6 @@ _AGENTS_BY_KEY = {a.key: a for a in AGENTS}
 # ---------------------------------------------------------------------------
 
 def _ec_home_plans(home: Path, ec_home: Path) -> list[PlannedWrite]:
-    disp = _display(ec_home, home)
     db = ec_home / "ec.db"
     plans = [
         PlannedWrite(

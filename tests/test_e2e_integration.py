@@ -266,7 +266,6 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
     assert extracted_ids & surfaced, (
         f"no extracted ECU in retrieval output; extracted={extracted_ids}, "
         f"surfaced={surfaced}")
-    core_ids = {g["core_ecu"]["id"] for g in result["groups"]}
     print("[g] extracted ECUs surfaced:", extracted_ids & surfaced)
 
     # (h) relevance gate filtered the irrelevant ECU --------------------------

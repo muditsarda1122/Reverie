@@ -272,7 +272,7 @@ class TestReconsolidateRelatedAndValidation:
                       "client") > 0.6
 
         with patch("ec.diffuser.call_llm",
-                   return_value=classifications_response("supports")) as m:
+                   return_value=classifications_response("supports")):
             result = reconsolidate(brain, target, evidence,
                                    relationship="supports",
                                    embedding_model=model)

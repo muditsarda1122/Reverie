@@ -227,7 +227,7 @@ class TestOpenQuestionResolution:
         # a reverse-direction duplicate must also be removed
         brain.add_edge(id_b, id_a, "contradicts", weight=0.5,
                        confidence_delta=-0.05)
-        rec = review_gate.apply_open_question_resolution(
+        review_gate.apply_open_question_resolution(
             brain, id_a, id_b, "c", now=datetime(2026, 8, 23,
                                                  tzinfo=timezone.utc))
         assert brain.get_edges_for(id_a) == []
@@ -241,7 +241,7 @@ class TestOpenQuestionResolution:
     def test_resolution_archive(self, brain, model):
         """#7 (d): both archived, confidence frozen at the parked value."""
         id_a, id_b = _seed_open_pair(brain, model, conf_a=0.45, conf_b=0.42)
-        rec = review_gate.apply_open_question_resolution(brain, id_a, id_b, "d")
+        review_gate.apply_open_question_resolution(brain, id_a, id_b, "d")
         assert brain.get_ecu(id_a)["status"] == "archived"
         assert brain.get_ecu(id_b)["status"] == "archived"
         assert brain.get_ecu(id_a)["confidence"] == pytest.approx(0.45)
@@ -547,7 +547,7 @@ class TestConsoleScriptDetection:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
         monkeypatch.setattr(install, "_is_pip_installed", lambda: True)
-        out = run_install(home, home / ".ec", all_agents=True,
+        run_install(home, home / ".ec", all_agents=True,
                           environ={install.ZEN_KEY_ENV: "sk-test"},
                           input_answers=[""])
         claude = json.loads((home / ".claude.json").read_text())

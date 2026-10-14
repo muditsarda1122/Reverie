@@ -360,7 +360,7 @@ def test_contradiction_flag_both_high_confidence(brain, model, session_id):
 def test_contradiction_flag_engineering_scope(brain, model, session_id):
     """§17.4: engineering/domain-scope contradictions always flag, even
     below the 0.7 both-high threshold."""
-    target = insert_canonical(
+    insert_canonical(
         brain, model, ENG_T, confidence=0.5,
         scope={"level": "engineering", "path": "engineering"},
         provenance={"source_type": "architectural_reasoning"},

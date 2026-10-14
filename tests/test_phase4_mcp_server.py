@@ -214,7 +214,7 @@ def test_observe_auto_creates_session(server, brain):
 
 
 def test_query_auto_creates_session(server, brain, model):
-    c1 = make_canonical(brain, model, "Token refresh must be optimistic")
+    make_canonical(brain, model, "Token refresh must be optimistic")
     payload, result = call_tool(server, "ec_query", {"query": "token refresh"})
     assert payload["status"] == "ok"
     assert payload["session_active"] is True
