@@ -23,7 +23,7 @@ from ec.llm import LLMError, api_key
 from ec.mcp_server import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
-    NO_SESSION_ERROR,
+    NO_REPO_ERROR,
     PARSE_ERROR,
     PROTOCOL_VERSION,
     ECServer,
@@ -77,7 +77,12 @@ def manager(brain):
 
 @pytest.fixture()
 def server(brain, manager):
-    return ECServer(brain=brain, manager=manager)
+    """feat/flow: the repo starts ENABLED (the tests below use the
+    auto-session flow); undecided/disabled gating has its own tests."""
+    s = ECServer(brain=brain, manager=manager)
+    payload, _r = call_tool(s, "ec_set_repo_state", {"state": "enabled"})
+    assert payload["status"] == "ok"
+    return s
 
 
 @pytest.fixture(scope="session")
@@ -143,8 +148,8 @@ def test_ping(server):
 def test_tools_list(server):
     r = server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     tools = r["result"]["tools"]
-    # four tools since Phase 10 (design doc §5.2: ec_reconsolidate)
-    assert [t["name"] for t in tools] == [
+    # §28.3 four + feat/flow three (enablement + agent review)
+    assert [t["name"] for t in tools][:4] == [
         "ec_observe", "ec_query", "ec_get_summary", "ec_reconsolidate"]
     observe = tools[0]
     assert observe["inputSchema"]["required"] == ["user_prompt", "reasoning_trace"]
@@ -155,8 +160,7 @@ def test_tools_list(server):
         "debugging", "architecture", "implementation", "investigation", "planning",
     }
     summary = tools[2]
-    assert summary["inputSchema"]["properties"] == {}
-    assert "Works without an active session" in summary["description"]
+    assert "repo_path" in summary["inputSchema"]["properties"]
     recons = tools[3]
     assert recons["inputSchema"]["required"] == ["ecu_id", "evidence"]
     assert recons["inputSchema"]["properties"]["relationship"]["enum"] == [
@@ -184,36 +188,146 @@ def test_protocol_errors(server):
 
 
 # ---------------------------------------------------------------------------
-# error contracts (§16.3 / §28.4)
+# error contracts (§16.3 / §28.4) — feat/flow: enablement gate + auto sessions
 # ---------------------------------------------------------------------------
 
-def test_observe_no_active_session(server):
+def test_tools_list_includes_flow_tools(server):
+    r = server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    names = [t["name"] for t in r["result"]["tools"]]
+    assert names == [
+        "ec_observe", "ec_query", "ec_get_summary", "ec_reconsolidate",
+        "ec_set_repo_state", "ec_review_list", "ec_review_decide",
+    ]
+    for tool in r["result"]["tools"][:5]:
+        assert "repo_path" in tool["inputSchema"]["properties"]
+
+
+def test_observe_auto_creates_session(server, brain):
+    """D56: in an enabled repo, observe resolves-or-creates the session —
+    the D15 'no active session' error is gone."""
     payload, result = call_tool(server, "ec_observe", {
+        "user_prompt": "fix the bug", "reasoning_trace": "..."}, msg_id=77)
+    assert payload["status"] == "error"        # no real LLM in this test —
+    assert payload["session_active"] is True   # but the session exists
+    assert "Extraction failed" in payload["error"]
+    assert brain.list_sessions(REPO, BRANCH, status="active")
+
+
+def test_query_auto_creates_session(server, brain, model):
+    c1 = make_canonical(brain, model, "Token refresh must be optimistic")
+    payload, result = call_tool(server, "ec_query", {"query": "token refresh"})
+    assert payload["status"] == "ok"
+    assert payload["session_active"] is True
+    sessions = brain.list_sessions(REPO, BRANCH, status="active")
+    assert len(sessions) == 1
+
+
+def test_undecided_repo_returns_ask_user(brain, manager):
+    """D55: an undecided repo gets the structured first-time question
+    instead of action."""
+    s = ECServer(brain=brain, manager=manager)
+    payload, result = call_tool(s, "ec_observe", {
         "user_prompt": "fix the bug", "reasoning_trace": "..."})
-    assert payload == {
-        "status": "error", "session_active": False, "error": NO_SESSION_ERROR,
-    }
     assert result["isError"] is True
+    assert payload["status"] == "needs_consent"
+    assert payload["state"] == "undecided"
+    assert payload["question"] == (
+        "Reverie isn't on for this repo. Turn it on? (yes / not now / never)")
+    assert "ec_set_repo_state" in payload["instructions"]
+    # the ask is recorded (undecided-but-asked)
+    row = brain.get_repo(REPO)
+    assert row is not None and row["asked_at"] is not None
+    assert row["state"] == "undecided"
 
 
-def test_query_no_active_session(server):
-    payload, result = call_tool(server, "ec_query", {"query": "auth refresh"})
+def test_not_now_records_asked_and_stays_off(brain, manager):
+    s = ECServer(brain=brain, manager=manager)
+    payload, _ = call_tool(s, "ec_set_repo_state", {"state": "not_now"})
+    assert payload["status"] == "ok"
+    assert payload["state"] == "undecided"
+    assert brain.get_repo(REPO)["asked_at"] is not None
+    # every tool still refuses to act
+    for name, args in (("ec_observe", {"user_prompt": "x",
+                                       "reasoning_trace": "y"}),
+                       ("ec_query", {"query": "q"})):
+        payload, _ = call_tool(s, name, args)
+        assert payload["status"] == "needs_consent"
+
+
+def test_never_maps_to_disabled(brain, manager):
+    s = ECServer(brain=brain, manager=manager)
+    payload, _ = call_tool(s, "ec_set_repo_state", {"state": "disabled"})
+    assert payload["status"] == "ok"
+    assert brain.get_repo(REPO)["state"] == "disabled"
+    payload, _ = call_tool(s, "ec_observe", {
+        "user_prompt": "x", "reasoning_trace": "y"})
+    assert payload["status"] == "disabled"
+    assert "kept" in payload["error"]
+    payload, _ = call_tool(s, "ec_query", {"query": "q"})
+    assert payload["status"] == "disabled"
+
+
+def test_disabled_repo_can_re_enable(brain, manager):
+    s = ECServer(brain=brain, manager=manager)
+    call_tool(s, "ec_set_repo_state", {"state": "disabled"})
+    call_tool(s, "ec_set_repo_state", {"state": "enabled"})
+    payload, _ = call_tool(s, "ec_query", {"query": "anything"})
+    assert payload["status"] == "ok"
+
+
+def test_no_repo_error_when_detection_fails(server, monkeypatch, tmp_path):
+    monkeypatch.delenv("EC_REPO_PATH", raising=False)
+    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.chdir(tmp_path)             # not a git repo
+    payload, result = call_tool(server, "ec_observe", {
+        "user_prompt": "x", "reasoning_trace": "y"}, msg_id=91)
+    assert result["isError"] is True
     assert payload["status"] == "error"
-    assert payload["session_active"] is False
-    assert payload["error"] == NO_SESSION_ERROR
-    assert result["isError"] is True
+    assert payload["error_kind"] == "no_repo"
+    assert payload["error"] == NO_REPO_ERROR
+    assert "repo_path" in payload["error"]
 
 
-def test_summary_without_session(server):
+def test_repo_path_argument_resolves(monkeypatch, tmp_path, brain, manager):
+    """D55: an explicit repo_path beats cwd (harnesses launch global MCP
+    servers in the home folder)."""
+    monkeypatch.delenv("EC_REPO_PATH", raising=False)
+    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.chdir(tmp_path)             # cwd is NOT a repo
+    repo_dir = tmp_path / "workrepo"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo_dir, check=True,
+                   capture_output=True)
+    s = ECServer(brain=brain, manager=manager)
+    payload, _ = call_tool(s, "ec_set_repo_state", {
+        "state": "enabled", "repo_path": str(repo_dir)})
+    assert payload["status"] == "ok"
+    payload, _ = call_tool(s, "ec_query", {
+        "query": "q", "repo_path": str(repo_dir)})
+    assert payload["status"] == "ok"
+    sessions = brain.list_sessions(str(repo_dir.resolve()), "main")
+    assert len(sessions) == 1
+
+
+def test_summary_with_enabled_repo_auto_session(server):
     payload, result = call_tool(server, "ec_get_summary")
     assert payload["status"] == "ok"
     assert result["isError"] is False
-    assert payload["session"]["active"] is False
-    assert payload["canonical_brain"]["total_ecus"] == 0
+    assert payload["session"]["active"] is True
+    assert payload["session"]["branch"] == BRANCH
     assert set(payload["canonical_brain"]["by_scope"]) == {
         "engineering", "domain", "organization", "project",
         "repo", "module", "subsystem",
     }
+
+
+def test_summary_repo_less_still_works(server, monkeypatch):
+    monkeypatch.delenv("EC_REPO_PATH", raising=False)
+    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.chdir(Path("/"))            # no repo anywhere near
+    payload, result = call_tool(server, "ec_get_summary")
+    assert payload["status"] == "ok"
+    assert payload["session"]["active"] is False
 
 
 def test_observe_missing_params(server, active_session):
@@ -353,11 +467,21 @@ def test_stdio_server_subprocess(tmp_path):
                     "clientInfo": {"name": "test"}}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        # feat/flow: an undecided repo asks instead of acting
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-         "params": {"name": "ec_get_summary", "arguments": {}}},
-        {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
          "params": {"name": "ec_observe",
                     "arguments": {"user_prompt": "x", "reasoning_trace": "y"}}},
+        # record the user's yes
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+         "params": {"name": "ec_set_repo_state",
+                    "arguments": {"state": "enabled"}}},
+        # now the session auto-exists and observe acts (extract fails on
+        # the missing key, but the session side of the flow runs)
+        {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+         "params": {"name": "ec_observe",
+                    "arguments": {"user_prompt": "x", "reasoning_trace": "y"}}},
+        {"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+         "params": {"name": "ec_get_summary", "arguments": {}}},
     ]
     try:
         for req in requests:
@@ -365,20 +489,26 @@ def test_stdio_server_subprocess(tmp_path):
         proc.stdin.flush()
 
         responses = {}
-        for _ in range(4):  # the notification gets no response
+        for _ in range(6):  # the notification gets no response
             line = proc.stdout.readline()
             assert line, "server closed stdout unexpectedly"
             msg = json.loads(line)
             responses[msg["id"]] = msg
 
         assert responses[1]["result"]["serverInfo"]["name"] == "ec"
-        assert len(responses[2]["result"]["tools"]) == 4  # +ec_reconsolidate
-        summary = json.loads(responses[3]["result"]["content"][0]["text"])
+        assert len(responses[2]["result"]["tools"]) == 7  # +reconsolidate, flow
+        first_observe = json.loads(
+            responses[3]["result"]["content"][0]["text"])
+        assert first_observe["status"] == "needs_consent"
+        assert first_observe["question"].startswith("Reverie isn't on")
+        enabled = json.loads(responses[4]["result"]["content"][0]["text"])
+        assert enabled["status"] == "ok"
+        second_observe = json.loads(
+            responses[5]["result"]["content"][0]["text"])
+        assert second_observe["session_active"] is True
+        summary = json.loads(responses[6]["result"]["content"][0]["text"])
         assert summary["status"] == "ok"
-        assert summary["session"]["active"] is False
-        observe = json.loads(responses[4]["result"]["content"][0]["text"])
-        assert observe["error"] == NO_SESSION_ERROR
-        assert responses[4]["result"]["isError"] is True
+        assert summary["session"]["active"] is True
     finally:
         proc.stdin.close()
         proc.wait(timeout=30)

@@ -100,6 +100,12 @@ def manager(brain):
     return SessionManager(brain)
 
 
+def enable_repo(brain):
+    """feat/flow: enable the env-detected repo (call AFTER setenv)."""
+    from ec import repos
+    repos.set_repo_state(brain, repos.resolve_repo(), "enabled")
+
+
 @pytest.fixture()
 def server(brain, manager, model):
     return ECServer(brain=brain, manager=manager, embedding_model=model)
@@ -208,6 +214,7 @@ def test_commit_hash_stamped(tmp_path, monkeypatch, server, manager, model,
     _init_git_repo(repo)
     monkeypatch.setenv("EC_REPO_PATH", str(repo))
     monkeypatch.setenv("EC_BRANCH", REPO_BRANCH)
+    enable_repo(brain)
     sid = manager.start_session()["session_id"]
 
     with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
@@ -235,6 +242,7 @@ def test_commit_hash_no_git_repo(tmp_path, monkeypatch, server, manager,
     plain.mkdir()
     monkeypatch.setenv("EC_REPO_PATH", str(plain))
     monkeypatch.setenv("EC_BRANCH", REPO_BRANCH)
+    enable_repo(brain)
     sid = manager.start_session()["session_id"]
 
     with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \

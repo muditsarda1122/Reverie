@@ -399,6 +399,8 @@ def offline_ecosystem(tmp_path, monkeypatch, model):
     cfg = offline_config()
     brain = Brain(tmp_path / "ec.db")
     manager = SessionManager(brain, config=cfg, embedding_model=model)
+    from ec import repos
+    repos.set_repo_state(brain, repos.resolve_repo(), "enabled")  # feat/flow
     server = ECServer(brain=brain, manager=manager, config=cfg,
                       embedding_model=model)
     session = manager.start_session()

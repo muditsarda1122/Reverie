@@ -66,7 +66,10 @@ def manager(brain):
 
 @pytest.fixture()
 def server(brain, manager):
-    return ECServer(brain=brain, manager=manager, config=config())
+    from ec import repos
+    s = ECServer(brain=brain, manager=manager, config=config())
+    repos.set_repo_state(brain, repos.resolve_repo(), "enabled")  # feat/flow
+    return s
 
 
 @pytest.fixture(autouse=True)

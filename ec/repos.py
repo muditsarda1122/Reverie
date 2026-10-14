@@ -59,6 +59,8 @@ class RepoInfo:
     branch: str
     repo_key: str             # git common directory — enablement identity
     url: str | None = None    # origin remote URL (rematching, D58)
+    via_git: bool = True      # False under EC_REPO_PATH/EC_BRANCH override
+                              # (synthetic paths — archiving must not run)
 
 
 def remote_url(repo_path: str | Path) -> str | None:
@@ -98,7 +100,7 @@ def resolve_repo(cwd: str | Path | None = None) -> RepoInfo:
     if env_repo and env_branch:
         repo_path = str(Path(env_repo).expanduser().resolve())
         return RepoInfo(repo_path=repo_path, branch=env_branch,
-                        repo_key=repo_path, url=None)
+                        repo_key=repo_path, url=None, via_git=False)
     from .session import detect_repo_branch
     repo_path, branch = detect_repo_branch(cwd)
     return RepoInfo(repo_path=repo_path, branch=branch,

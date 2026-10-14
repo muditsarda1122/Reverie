@@ -73,6 +73,12 @@ def manager(brain):
     return SessionManager(brain)
 
 
+def enable_repo(brain):
+    """feat/flow: enable the env-detected repo (call AFTER setenv)."""
+    from ec import repos
+    repos.set_repo_state(brain, repos.resolve_repo(), "enabled")
+
+
 @pytest.fixture()
 def server(brain, manager, model):
     return ECServer(brain=brain, manager=manager, embedding_model=model)
@@ -103,10 +109,11 @@ def _pending_ecu(brain, sid, cognition):
 # ---------------------------------------------------------------------------
 
 class TestRejectionSummary:
-    def test_rejection_summary_in_payload(self, tmp_path, monkeypatch, server,
-                                          manager):
+    def test_rejection_summary_in_payload(self, tmp_path, monkeypatch, brain,
+                                          server, manager):
         monkeypatch.setenv("EC_REPO_PATH", REPO_A)
         monkeypatch.setenv("EC_BRANCH", BRANCH)
+        enable_repo(brain)
         manager.start_session()
 
         with patch("ec.extractor.call_llm", return_value=OBSERVE_PAYLOAD), \
@@ -125,12 +132,13 @@ class TestRejectionSummary:
         assert payload["ecus_rejected"] == 2
 
     def test_rejection_summary_defaults_to_empty_string(self, tmp_path,
-                                                        monkeypatch, server,
-                                                        manager):
+                                                        monkeypatch, brain,
+                                                        server, manager):
         """Extractor omits the field (e.g. nothing rejected) → empty string,
         never a KeyError."""
         monkeypatch.setenv("EC_REPO_PATH", REPO_A)
         monkeypatch.setenv("EC_BRANCH", BRANCH)
+        enable_repo(brain)
         manager.start_session()
 
         with patch("ec.extractor.call_llm", return_value=EMPTY_PAYLOAD), \
