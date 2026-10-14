@@ -237,6 +237,38 @@ class SessionManager:
         """The session's labile set (a copy — callers must not mutate)."""
         return set(self._labile.get(session_id, set()))
 
+    # -- automatic sessions (feat/flow, D56) --------------------------------
+
+    def ensure_session(
+        self,
+        repo_path: str | None = None,
+        branch: str | None = None,
+        now: datetime | None = None,
+    ) -> dict:
+        """Resolve or create the session for (repo, branch) — D56.
+
+        Replaces the D15 rule inside the MCP tools: in an enabled repo any
+        Reverie tool call lands in its session without the user ever
+        running /ec-start. Carry-over of unreviewed candidates is exactly
+        session creation's (§28.5 step 5: pending/skipped rows of closed
+        sessions of the same (repo, branch) move over). Archived sessions
+        (branch deleted) do NOT carry over — their candidates stay in the
+        cross-session review queue (ec/review_queue.py).
+
+        The database stays the source of truth (D15): the MCP server can
+        call this on every tool call — an existing session is a single
+        indexed lookup.
+        """
+        if repo_path is None or branch is None:
+            repo_path, branch = detect_repo_branch()
+        existing = self.brain.get_active_session(repo_path, branch)
+        if existing is not None:
+            return existing
+        self.start_session(repo_path, branch, now=now)
+        row = self.brain.get_active_session(repo_path, branch)
+        assert row is not None
+        return row
+
     # -- /ec-start (§28.5) -------------------------------------------------
 
     def start_session(
