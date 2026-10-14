@@ -57,11 +57,25 @@ ec review       # terminal UI, one candidate at a time
 #    or just say "show my Reverie candidates" and decide in the chat
 ```
 
-Handy extras: `ec enable` / `ec disable` / `ec repos` (per-repo control), `ec export` / `ec import` / `ec reset` (backup, migrate, wipe), `ec-status` (brain stats), `ec-retry` (recover failed extractions / re-diffuse), `ec-repair` (ops recovery). Full details, including per-agent config files the installer touches, are in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+Handy extras: `ec enable` / `ec disable` / `ec repos` (per-repo control), `ec review` (terminal review UI), `ec status` (session + brain report), `ec export` / `ec import` / `ec reset` (backup, migrate, wipe), `ec uninstall` (clean removal — see below), `ec-retry` (recover failed extractions / re-diffuse), `ec-repair` (ops recovery). Full details, including per-agent config files the installer touches, are in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
 After `ec install`, your agent config points at the MCP server (`ec-mcp`). Restart your agent and the tools below appear.
 
 > Deprecated shims, kept for compatibility: `ec-start` now enables the repo and shows status (nothing to "start"), `ec-stop` is an alias for `ec review`, `ec-status` unchanged.
+
+## Upgrading
+
+**If you installed Reverie before the `ec` subcommands existed** (`ec enable`, `ec review`, `ec export`, …): pull this version, then re-run the install command from step 1 — `pip install -e .` (or `pip install -U reverie` for a published wheel). **Console scripts only update on reinstall**: an `ec` command bound to an older entry point runs the installer instead of the multi-command CLI, and the new subcommands simply don't exist for it. `ec install` detects a stale binding and tells you; re-running the pip command fixes it.
+
+## Uninstall
+
+`ec uninstall` undoes exactly what `ec install` did, and nothing more:
+
+- For every supported harness it removes **only Reverie's own entries** — the `ec` MCP server entry, the `@~/.ec/AGENTS.md` import, the AGENTS.md reference blocks, `~/.cursor/rules/ec.md` — leaving every other key, line and file byte-identical. A file that is invalid JSON/TOML, or was edited so Reverie's entry can't be found unambiguously, is skipped and reported, never guessed at.
+- **Your memory (`~/.ec`) is kept by default**, so a reinstall picks up where you left off.
+- `--delete-data` removes it too: a final export is written outside `~/.ec` first (its path is printed; `--no-export` skips it), you must type `delete` to confirm, and only then is `~/.ec` removed. `--yes` skips the confirmation for scripts.
+- `--dry-run` prints every planned removal with the exact before/after and changes nothing.
+- The last step is yours: the running package can't remove itself — run the printed `pip uninstall engineering-cognition` command (or the pipx/uv equivalent).
 
 ## How it works
 

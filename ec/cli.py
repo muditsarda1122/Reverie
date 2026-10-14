@@ -189,12 +189,27 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--provider", default=None)
     p.add_argument("--no-verify", action="store_true")
     p.add_argument("--dry-run", action="store_true")
+
+    p = sub.add_parser("uninstall", help="remove what `ec install` did "
+                       "(your memory ~/.ec is kept unless --delete-data)")
+    p.add_argument("--delete-data", action="store_true",
+                   help="also remove ~/.ec — a final export is written "
+                        "first and you must type 'delete' to confirm")
+    p.add_argument("--no-export", action="store_true",
+                   help="with --delete-data: skip the final export "
+                        "(confirmation still required)")
+    p.add_argument("--yes", action="store_true",
+                   help="skip the confirmation prompt (the export still "
+                        "happens unless --no-export)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print every planned removal with the exact "
+                        "before/after; change nothing")
     return parser
 
 
 #: Every first-class subcommand (order shown by `ec --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
-               "import", "reset", "install")
+               "import", "reset", "uninstall", "install")
 
 
 def _unknown_command(word: str) -> int:
@@ -225,6 +240,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv[0] == "status":
         from . import session as session_mod
         return session_mod.main(["status", *argv[1:]])
+    if argv[0] == "uninstall":
+        from . import uninstall
+        return uninstall.main(argv[1:])
     args = _build_parser().parse_args(argv)
 
     if args.command == "enable":

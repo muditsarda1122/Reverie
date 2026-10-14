@@ -3149,8 +3149,11 @@ conversation and offers both review paths (terminal `ec review`, or
 `ec-start` enables the repo and shows status (nothing needs starting);
 `ec-stop` aliases `ec review` (old `--all-accept`/`--all-skip` flags are
 refused with a deprecation note; `--resolve-open-questions` still works
-and moved to `ec review`); `ec-status` unchanged. Docs no longer
-present `ec-start`/`ec-stop` as the normal flow.
+and moved to `ec review`); `ec-status` unchanged (also available as
+`ec status`). Bare `ec` prints the multi-command help; a mistyped first
+word is an error with a "did you mean" hint; only invocations whose
+first argument starts with `-` fall through to the installer. Docs no
+longer present `ec-start`/`ec-stop` as the normal flow.
 
 ### 29.9 New dependency policy
 

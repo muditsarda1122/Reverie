@@ -382,7 +382,7 @@ def test_import_survives_altered_column_order(brain, tmp_path):
 def test_replace_reports_tables_missing_from_source(brain, tmp_path):
     """Fix 2c: tables absent from the source are skipped, not errors, and
     reported in the result."""
-    sid = session_with_candidate(brain)
+    session_with_candidate(brain)
     seed(brain)
     snap = tmp_path / "partial.db"
     brain._conn.execute("VACUUM INTO ?", (str(snap),))
@@ -524,7 +524,7 @@ def test_reset_repo_covers_worktrees(brain, ec_home, tmp_path, capsys):
     assert remaining == {"/repos/other"}
     assert "Included worktree paths:" in out
     assert main_path in out and linked_path in out
-    assert f"repo identity: " in out                  # identity is printed
+    assert "repo identity:" in out                    # identity is printed
 
 
 def test_reset_cli_confirms_with_word(brain, monkeypatch, capsys):
