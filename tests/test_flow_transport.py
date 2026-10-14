@@ -492,6 +492,41 @@ def test_reset_repo_keeps_long_term_memory(brain, tmp_path):
     assert not brain.list_queue_candidates(repo_path="/repos/a")
 
 
+def test_reset_repo_covers_worktrees(brain, ec_home, tmp_path, capsys):
+    """Fix 7: sessions are keyed by worktree path while repo identity is
+    the git common dir — `ec reset --repo` must wipe every worktree
+    belonging to the repo and say which paths were included."""
+    main_wt = real_repo(tmp_path, "main-wt")
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"],
+                   cwd=main_wt, check=True, capture_output=True,
+                   env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+                        "HOME": str(tmp_path), "PATH": os.environ["PATH"]})
+    subprocess.run(["git", "worktree", "add", str(tmp_path / "linked-wt"),
+                    "-b", "linked"], cwd=main_wt, check=True,
+                   capture_output=True)
+    main_path = str(main_wt.resolve())
+    linked_path = str((tmp_path / "linked-wt").resolve())
+    session_with_candidate(brain, repo=main_path)
+    session_with_candidate(brain, repo=main_path, branch="dev")
+    session_with_candidate(brain, repo=linked_path)
+    session_with_candidate(brain, repo="/repos/other")   # untouched
+    seed(brain, "kept belief", repo=main_path)
+    brain.upsert_repo(str((tmp_path / "main-wt" / ".git").resolve()),
+                      state="enabled")
+
+    printed: list[str] = []
+    reset_brain(brain, repo=main_wt, print_fn=printed.append)
+    out = "\n".join(printed)
+    assert brain.count_ecus() == 1                    # long-term memory kept
+    assert brain.list_repos()[0]["state"] == "enabled"
+    remaining = {s["repo_path"] for s in brain.list_sessions()}
+    assert remaining == {"/repos/other"}
+    assert "Included worktree paths:" in out
+    assert main_path in out and linked_path in out
+    assert f"repo identity: " in out                  # identity is printed
+
+
 def test_reset_cli_confirms_with_word(brain, monkeypatch, capsys):
     seed(brain)
     monkeypatch.setattr("builtins.input", lambda _p="": "no")

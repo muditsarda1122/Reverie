@@ -43,7 +43,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__
+from . import __version__, repos
 from .brain import Brain, BrainError
 from .config import SCHEMA_VERSION, ec_home, get_config
 
@@ -248,13 +248,20 @@ def reset_brain(brain: Brain, *, repo: str | None = None, config=None,
     export_brain(brain, backup_path, config=cfg)
     print_fn(f"Automatic backup written to {backup_path}")
     if repo:
-        counts = brain.delete_repo_data(str(Path(repo).expanduser().resolve()))
+        # Sessions are keyed by worktree path while repo identity is the
+        # git common dir (§29.2/D58) — resolve the argument to its identity
+        # and wipe every worktree belonging to it (feat/flow review fix 7).
+        repo_arg = str(Path(repo).expanduser().resolve())
+        worktrees = repos.worktree_paths(repo_arg)
+        counts = brain.delete_repo_data(worktrees)
         print_fn(
-            f"Reset repo {repo}: {counts['sessions']} session(s), "
-            f"{counts['session_ecus']} candidate(s), "
+            f"Reset repo {repo} (repo identity: "
+            f"{repos.common_dir(repo_arg)}): {counts['sessions']} "
+            f"session(s), {counts['session_ecus']} candidate(s), "
             f"{counts['pending_extractions']} pending extraction(s) "
             "removed. Long-term memory and the repo's enablement state "
             "were kept.")
+        print_fn("Included worktree paths: " + ", ".join(worktrees))
     else:
         brain.clear_all_data()
         print_fn("Reverie brain reset — all sessions, candidates and "

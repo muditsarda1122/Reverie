@@ -1511,12 +1511,21 @@ class Brain:
         self._conn.commit()
         return cur.rowcount > 0
 
-    def delete_repo_data(self, repo_path: str) -> dict:
+    def delete_repo_data(self, repo_path: str | list[str]) -> dict:
         """Delete one repo's sessions, candidates and pending extractions
         (feat/flow `ec reset --repo`). Long-term memory — canonical ECUs,
-        edges — and the enablement row are kept."""
-        session_ids = [r["id"] for r in
-                       self.list_sessions(repo_path=repo_path)]
+        edges — and the enablement row are kept. Sessions are keyed by
+        worktree path while repo identity is the git common dir (§29.2), so
+        callers pass EVERY worktree path belonging to the repo (a str is
+        accepted for the single-path case)."""
+        paths = [repo_path] if isinstance(repo_path, str) else list(repo_path)
+        session_ids: list[str] = []
+        for path in paths:
+            session_ids.extend(
+                r["id"] for r in self.list_sessions(repo_path=path))
+        seen: set[str] = set()
+        session_ids = [sid for sid in session_ids
+                       if not (sid in seen or seen.add(sid))]
         counts = {"sessions": len(session_ids), "session_ecus": 0,
                   "session_edges": 0, "pending_updates": 0,
                   "pending_extractions": 0}
@@ -1531,12 +1540,13 @@ class Brain:
                 self.delete_pending_update(pu["id"])
                 counts["pending_updates"] += 1
             self.delete_session_activation(sid)
-        self._conn.execute(
-            "DELETE FROM sessions WHERE repo_path = ?", (repo_path,))
-        cur = self._conn.execute(
-            "DELETE FROM pending_extractions WHERE repo_path = ?",
-            (repo_path,))
-        counts["pending_extractions"] = cur.rowcount
+        for path in paths:
+            self._conn.execute(
+                "DELETE FROM sessions WHERE repo_path = ?", (path,))
+            cur = self._conn.execute(
+                "DELETE FROM pending_extractions WHERE repo_path = ?",
+                (path,))
+            counts["pending_extractions"] += cur.rowcount
         self._conn.commit()
         return counts
 

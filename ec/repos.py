@@ -159,6 +159,32 @@ def mark_asked(brain: Brain, info: RepoInfo) -> None:
 # branch existence + session archiving (feat/flow, D56)
 # ---------------------------------------------------------------------------
 
+def worktree_paths(repo_path: str | Path) -> list[str]:
+    """Every worktree toplevel of the repo at ``repo_path`` (resolved
+    absolute paths), including ``repo_path`` itself.
+
+    ``git worktree list --porcelain`` is the source of truth; any failure
+    (not a repo, old git, git missing) degrades to just the given path —
+    reset must never fail loudly here."""
+    base = str(Path(repo_path).expanduser().resolve())
+    try:
+        proc = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=base, capture_output=True, text=True, timeout=_GIT_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return [base]
+    if proc.returncode != 0:
+        return [base]
+    paths = []
+    for line in proc.stdout.splitlines():
+        if line.startswith("worktree "):
+            paths.append(str(Path(line[len("worktree "):]).resolve()))
+    if base not in paths:
+        paths.append(base)
+    return sorted(set(paths))
+
+
 def branch_exists(repo_path: str, branch: str) -> bool:
     """Whether the session's branch still exists locally.
 
