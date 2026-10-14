@@ -69,8 +69,9 @@ def ordered_by_topic(queue: list[dict]) -> list[dict]:
 
 
 def candidate_detail(brain: Brain, candidate: dict) -> dict:
-    """Grounding/evidence for the muted lines (fetched one page at a time)."""
-    row = brain.get_session_ecu(candidate["id"])
+    """Grounding/evidence for the muted lines (fetched one candidate at a
+    time — queue rows are deliberately lean)."""
+    row = brain.get_session_ecu_row(candidate["id"])
     if row is None:
         return {}
     doc = json.loads(row["document"]) if row.get("document") else {}
@@ -304,6 +305,11 @@ class ReviewRun:
 
     def apply(self, candidate: dict, action: str,
               edited: str | None = None) -> dict:
+        """Apply one decision through the gate and record its undo entry
+        (snapshot BEFORE the apply — a reject deletes the row; an accept's
+        entry is recorded too, and undo refuses it plainly)."""
+        snapshot = self.snapshot(candidate["id"]) if action == "reject" \
+            else None
         outcome = decide_candidate(
             self.brain, candidate, action,
             edited_cognition=edited, channel=self.channel,
@@ -311,6 +317,7 @@ class ReviewRun:
         )
         self.progress[{"accept": "accepted", "reject": "rejected",
                        "skip": "skipped"}[action]] += 1
+        self.record([(candidate["id"], action, snapshot)])
         return outcome
 
     def record(self, entries: list[tuple[str, str, dict | None]]) -> None:
@@ -376,6 +383,10 @@ def run_tui(
         page = remaining[:size]
         remaining = remaining[size:]
         for candidate in page:
+            fresh = brain.get_queue_candidate(candidate["id"])
+            if fresh is None or fresh["review_status"] not in (
+                    "pending", "skipped", "expired"):
+                continue               # already decided (e.g. by 'g') — skip
             shown += 1
             detail = candidate_detail(brain, candidate)
             partner = contradiction_partner(brain, candidate)
@@ -397,7 +408,27 @@ def run_tui(
         if remaining:
             print_fn(f"\n--- more available: {len(remaining)} candidate(s) "
                      "remain (q quits, decisions so far are kept) ---")
+    _end_screen(run, key_reader, print_fn)
     return {"progress": run.progress, "remaining": 0}
+
+
+def _end_screen(run: ReviewRun, key_reader, print_fn) -> None:
+    """After the last candidate: a calm close-out. Undo stays available —
+    the last decision of the run must be reversible too."""
+    p = run.progress
+    print_fn(f"\n--- all {p['accepted'] + p['rejected'] + p['skipped'] + p['revived']} "
+             f"candidate(s) decided ({p['accepted']} accepted · "
+             f"{p['rejected']} rejected · {p['skipped']} skipped) — "
+             "u undo last · q done ---")
+    while True:
+        try:
+            key = key_reader().strip().lower()
+        except Quit:
+            return
+        if key == "u":
+            print_fn(f"  · {run.undo()}")
+            continue
+        return
 
 
 def _handle_key(run: ReviewRun, candidate: dict, key: str, page: list[dict],
@@ -416,24 +447,22 @@ def _handle_key(run: ReviewRun, candidate: dict, key: str, page: list[dict],
                             now=run.now)
         action = {"a": "accept", "r": "reject"}[key]
         try:
-            run.apply(candidate, action)
+            outcome = run.apply(candidate, action)
         except ValueError as exc:
             print_fn(f"  ! {exc}")
             return
-        run.record([(candidate["id"], action, None)])
         print_fn(f"  · revived and {action}ed through the review gate")
+        if outcome.get("warning"):
+            print_fn(f"  ⚠️ {outcome['warning']}")
         return
 
     if key in ("a", "r", "s"):
         action = {"a": "accept", "r": "reject", "s": "skip"}[key]
-        entry = [(candidate["id"], action, run.snapshot(candidate["id"])
-                  if action == "reject" else None)]
         try:
             outcome = run.apply(candidate, action)
         except ValueError as exc:
             print_fn(f"  ! {exc}")
             return
-        run.record(entry)
         print_fn(f"  · {action}ed")
         if outcome.get("warning"):
             print_fn(f"  ⚠️ {outcome['warning']}")
@@ -441,13 +470,11 @@ def _handle_key(run: ReviewRun, candidate: dict, key: str, page: list[dict],
     if key == "e":
         edited = edit_fn(candidate["cognition"])
         if edited:
-            entry = [(candidate["id"], "accept", None)]
             try:
                 outcome = run.apply(candidate, "accept", edited=edited)
             except ValueError as exc:
                 print_fn(f"  ! {exc}")
                 return
-            run.record(entry)
             print_fn("  · accepted with your edit")
             if outcome.get("warning"):
                 print_fn(f"  ⚠️ {outcome['warning']}")
@@ -461,22 +488,21 @@ def _handle_key(run: ReviewRun, candidate: dict, key: str, page: list[dict],
             if any(m["id"] == candidate["id"] for m in members):
                 label, group = group_label, members
                 break
-        group = [m for m in group if m["id"] != candidate["id"]]
-        if not group:
-            print_fn("  · (group has no other candidates)")
-            return
-        entry = []
         try:
-            for member in group:
+            accepted_here = 0
+            for member in group:          # the group includes this one
+                fresh = brain.get_queue_candidate(member["id"])
+                if fresh is None or fresh["review_status"] not in (
+                        "pending", "skipped"):
+                    continue
                 outcome = run.apply(member, "accept")
-                entry.append((member["id"], "accept", None))
+                accepted_here += 1
                 if outcome.get("warning"):
                     print_fn(f"  ⚠️ {outcome['warning']}")
         except ValueError as exc:
             print_fn(f"  ! {exc}")
             return
-        run.record(entry)
-        print_fn(f"  · accepted {len(entry)} candidate(s) in group "
+        print_fn(f"  · accepted {accepted_here} candidate(s) in group "
                  f"{label}")
         return
     if key == "u":
