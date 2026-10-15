@@ -12,7 +12,8 @@ Primary use case: baseline interactive condition
   - JSONL transcripts captured per prompt
   - Each transcript judged immediately after capture
 
-Can also run EC headless condition (with --condition ec, needs ec package).
+Can also run the Reverie headless condition (with --condition ec, needs
+the reverie package).
 
 To compare against existing EC results, use the same --run-dir:
   python run_and_judge.py \\
@@ -22,7 +23,7 @@ To compare against existing EC results, use the same --run-dir:
       --run-id 20260813-141550 \\
       --condition baseline
 
-  This creates runs/20260813-141550/baseline/ alongside existing ec/.
+  This creates runs/20260813-141550/baseline/ alongside existing reverie/.
   Scores for both conditions are stored in runs/20260813-141550/scores.json.
   Use --report to generate a comparison report.
 
@@ -85,12 +86,12 @@ from pathlib import Path
 import requests
 
 # ============================================================
-# Optional EC imports (only needed for --condition ec)
+# Optional Reverie imports (only needed for --condition ec)
 # ============================================================
 
 try:
-    from ec.brain import Brain
-    from ec.install import AGENTS_MD, server_command
+    from reverie.brain import Brain
+    from reverie.install import AGENTS_MD, server_command
     EC_AVAILABLE = True
 except ImportError:
     EC_AVAILABLE = False
@@ -487,7 +488,7 @@ def load_spec(path: str | Path) -> dict:
 
 def build_agent_config(
     condition: str,
-    ec_home: Path,
+    reverie_home: Path,
     repo: Path,
     branch: str,
     model: str | None = None,
@@ -496,7 +497,7 @@ def build_agent_config(
     """Build the OpenCode config overlay for one condition.
 
     baseline: EC MCP server explicitly disabled (overrides global config).
-    ec: EC MCP server enabled with full environment.
+    ec: the Reverie MCP server enabled with full environment.
     """
     config: dict = {
         "$schema": "https://opencode.ai/config.json",
@@ -509,28 +510,29 @@ def build_agent_config(
     if condition == "ec":
         if not EC_AVAILABLE:
             raise BenchError(
-                "EC condition requires the ec package. Run from the EMS-v2 "
-                "directory where 'ec' is installed, or use --condition baseline."
+                "EC condition requires the reverie package. Run from the "
+                "EMS-v2 directory where 'reverie' is installed, or use "
+                "--condition baseline."
             )
         python, args, env = server_command()
         config["mcp"] = {
-            "ec": {
+            "reverie": {
                 "type": "local",
                 "command": [python, *args],
                 "environment": {
                     **env,
-                    "EC_HOME": str(ec_home),
-                    "EC_REPO_PATH": str(repo),
-                    "EC_BRANCH": branch,
+                    "REVERIE_HOME": str(reverie_home),
+                    "REVERIE_REPO_PATH": str(repo),
+                    "REVERIE_BRANCH": branch,
                 },
                 "enabled": True,
             },
         }
-        config["instructions"] = [str(ec_home / "AGENTS.md")]
+        config["instructions"] = [str(reverie_home / "AGENTS.md")]
     else:
-        # Baseline: disable EC to neutralise any global install
+        # Baseline: disable the reverie server to neutralise any global install
         config["mcp"] = {
-            "ec": {
+            "reverie": {
                 "type": "local",
                 "command": ["true"],  # dummy — never runs since disabled
                 "enabled": False,
@@ -653,13 +655,13 @@ def format_tool_input(name: str, input_data: dict) -> str:
         stype = input_data.get("subagent_type", "?")
         return f"desc: {desc}, type: {stype}"
 
-    if name == "ec_ec_get_summary":
+    if name == "reverie_summary":
         return "(none)"
 
-    if name == "ec_ec_query":
+    if name == "reverie_query":
         return f"query: {input_data.get('query', '?')}, mode: {input_data.get('mode', '?')}"
 
-    if name == "ec_ec_observe":
+    if name == "reverie_observe":
         prompt = input_data.get("user_prompt", "?")
         trace_len = len(input_data.get("reasoning_trace", ""))
         output_len = len(input_data.get("final_output", ""))
@@ -766,7 +768,7 @@ def format_transcript(transcript_path: Path) -> tuple[str | None, dict]:
             input_data = state.get("input", {})
             output = state.get("output", "")
 
-            is_ec = name.startswith("ec_")
+            is_ec = name.startswith("reverie_")
             limit = EC_TOOL_OUTPUT_LIMIT if is_ec else TOOL_OUTPUT_LIMIT
 
             input_summary = format_tool_input(name, input_data)
@@ -979,11 +981,11 @@ def judge_one(
 # EC BRAIN STATS (EC condition only)
 # ============================================================
 
-def collect_ec_stats(ec_home: Path) -> dict:
+def collect_ec_stats(reverie_home: Path) -> dict:
     """Brain stats for the ec condition."""
     if not EC_AVAILABLE:
         return {"brain": "ec_package_not_available"}
-    db = ec_home / "ec.db"
+    db = reverie_home / "reverie.db"
     if not db.exists():
         return {"brain": "absent"}
     brain = Brain(db)
@@ -1047,11 +1049,11 @@ def run_condition(
     If judge_only=True, skips running agents and only judges existing transcripts.
     """
     cond_dir = run_dir / condition
-    ec_home = cond_dir / "ec_home"
+    reverie_home = cond_dir / "reverie_home"
     workdir = (cond_dir / "workdir").resolve()
     logs = cond_dir / "logs"
     transcripts_dir = cond_dir / "transcripts"
-    for d in (ec_home, logs, transcripts_dir):
+    for d in (reverie_home, logs, transcripts_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     # 1. Fresh copy of the target repo (skip if judge_only or already exists)
@@ -1062,13 +1064,13 @@ def run_condition(
     # 2. EC home + agent config (skip if judge_only)
     if not judge_only:
         if condition == "ec" and EC_AVAILABLE:
-            (ec_home / "AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
-            Brain(ec_home / "ec.db").close()  # create empty brain
+            (reverie_home / "AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
+            Brain(reverie_home / "reverie.db").close()  # create empty brain
 
         config_path = cond_dir / "opencode_config.json"
         config_path.write_text(
             json.dumps(
-                build_agent_config(condition, ec_home, workdir, branch,
+                build_agent_config(condition, reverie_home, workdir, branch,
                                    model=model, small_model=small_model),
                 indent=2),
             encoding="utf-8",
@@ -1077,9 +1079,9 @@ def run_condition(
     # 3. Environment setup
     session_cli_env = {
         **os.environ,
-        "EC_HOME": str(ec_home),
-        "EC_REPO_PATH": str(workdir),
-        "EC_BRANCH": branch,
+        "REVERIE_HOME": str(reverie_home),
+        "REVERIE_REPO_PATH": str(workdir),
+        "REVERIE_BRANCH": branch,
         "HF_HUB_OFFLINE": os.environ.get("HF_HUB_OFFLINE", "1"),
     }
     agent_env = {
@@ -1090,7 +1092,7 @@ def run_condition(
         "XDG_STATE_HOME": str(cond_dir / "xdg_state"),
     }
     if condition == "ec":
-        agent_env["EC_HOME"] = str(ec_home)
+        agent_env["REVERIE_HOME"] = str(reverie_home)
     # Copy agent auth to isolated XDG dir
     src_auth = Path.home() / ".local" / "share" / "opencode" / "auth.json"
     if src_auth.exists():
@@ -1110,7 +1112,7 @@ def run_condition(
     manifest: dict = {
         "condition": condition,
         "workdir": str(workdir),
-        "ec_home": str(ec_home),
+        "reverie_home": str(reverie_home),
         "agent_config": str(cond_dir / "opencode_config.json"),
         "agent_cmd": agent_cmd,
         "interactive": interactive,
@@ -1133,12 +1135,12 @@ def run_condition(
         # EC session start
         if condition == "ec" and EC_AVAILABLE and not judge_only:
             session_rec["start"] = _run_cli(
-                [sys.executable, "-m", "ec.session", "start",
+                [sys.executable, "-m", "reverie.session", "start",
                  "--repo", str(workdir), "--branch", branch],
                 session_cli_env, logs / f"{sid}_start.log", timeout=120)
             if session_rec["start"]["exit_code"] != 0:
                 raise BenchError(
-                    f"ec.session start failed for {sid} — see "
+                    f"reverie.session start failed for {sid} — see "
                     f"{session_rec['start']['log']}")
 
         # Run/judge each prompt
@@ -1290,7 +1292,7 @@ def run_condition(
         # EC session stop
         if condition == "ec" and EC_AVAILABLE and not judge_only:
             session_rec["stop"] = _run_cli(
-                [sys.executable, "-m", "ec.session", "stop",
+                [sys.executable, "-m", "reverie.session", "stop",
                  f"--all-{review}",
                  "--repo", str(workdir), "--branch", branch],
                 session_cli_env, logs / f"{sid}_stop.log", timeout=600)
@@ -1300,7 +1302,7 @@ def run_condition(
                 "promoted without diffusion" in stop_log
             if session_rec["stop"]["exit_code"] != 0:
                 raise BenchError(
-                    f"ec.session stop failed for {sid} — see "
+                    f"reverie.session stop failed for {sid} — see "
                     f"{session_rec['stop']['log']}")
 
         manifest["sessions"].append(session_rec)
@@ -1308,7 +1310,7 @@ def run_condition(
 
     # 7. EC brain stats
     if condition == "ec" and not judge_only:
-        manifest["ec_stats"] = collect_ec_stats(ec_home)
+        manifest["ec_stats"] = collect_ec_stats(reverie_home)
 
     manifest["finished_at"] = _utcnow_iso()
     _flush_manifest()

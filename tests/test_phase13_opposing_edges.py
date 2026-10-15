@@ -17,15 +17,15 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import pytest
 
-from ec.brain import Brain
-from ec.config import DEFAULT_CONFIG, _to_attrdict
-from ec.diffuser import (
+from reverie.brain import Brain
+from reverie.config import DEFAULT_CONFIG, _to_attrdict
+from reverie.diffuser import (
     DiffusionResult,
     _check_opposing_edges,
     _handle_contradiction,
     _handle_support,
 )
-from ec.review_gate import ReviewResult, _opposing_edge_notifications
+from reverie.review_gate import ReviewResult, _opposing_edge_notifications
 
 # ---------------------------------------------------------------------------
 # fixtures + helpers
@@ -38,14 +38,14 @@ def config():
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
 
 @pytest.fixture(scope="session")
 def embedding_model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
@@ -77,7 +77,7 @@ def _run_contradiction(brain, new_ecu, existing, cfg, monkeypatch):
     """Drive the real contradiction handler with Stage-2 adjudication
     mocked genuine (same scope + grounding overlap passes Stage 1)."""
     monkeypatch.setattr(
-        "ec.diffuser._adjudicate_contradiction",
+        "reverie.diffuser._adjudicate_contradiction",
         lambda *args, **kwargs: "genuine_contradiction",
     )
     result = DiffusionResult(ecu_id=new_ecu["id"])
@@ -200,7 +200,7 @@ class TestHandlerWiring:
                                                  monkeypatch):
         """D8 path: classifier says supersedes but the §15.5 trigger fails →
         downgrade to supports → the opposing-edge check still runs."""
-        from ec.diffuser import _handle_supersedes
+        from reverie.diffuser import _handle_supersedes
         a, b = _pair(brain)
         brain.add_edge(a["id"], b["id"], "contradicts", weight=0.8,
                        confidence_delta=-0.04)
@@ -313,7 +313,7 @@ class TestGateEndToEnd:
         """The gate's post-pass runs on every review: a canonical pair that
         accumulated its two edges across earlier sessions surfaces in the
         ReviewResult even when THIS gate's accept creates no edges at all."""
-        from ec.review_gate import apply_review_decisions
+        from reverie.review_gate import apply_review_decisions
 
         # History: pair accumulated both edge types across sessions.
         x, b = _pair(brain)

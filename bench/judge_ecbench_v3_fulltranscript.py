@@ -615,13 +615,13 @@ def format_tool_input(name: str, input_data: dict) -> str:
         stype = input_data.get("subagent_type", "?")
         return f"desc: {desc}, type: {stype}"
 
-    if name == "ec_ec_get_summary":
+    if name == "ec_reverie_summary":
         return "(none)"
 
-    if name == "ec_ec_query":
+    if name == "ec_reverie_query":
         return f"query: {input_data.get('query', '?')}, mode: {input_data.get('mode', '?')}"
 
-    if name == "ec_ec_observe":
+    if name == "ec_reverie_observe":
         prompt = input_data.get("user_prompt", "?")
         trace_len = len(input_data.get("reasoning_trace", ""))
         output_len = len(input_data.get("final_output", ""))

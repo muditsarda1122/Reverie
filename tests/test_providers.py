@@ -10,9 +10,9 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import pytest
 
-from ec import providers
-from ec.config import load_config
-from ec.providers import MENU_KEYS, REGISTRY, Provider, llm_block
+from reverie import providers
+from reverie.config import load_config
+from reverie.providers import MENU_KEYS, REGISTRY, Provider, llm_block
 
 
 class TestRegistryShape:

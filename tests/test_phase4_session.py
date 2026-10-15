@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from ec.activation import ActivationState
-from ec.brain import Brain
-from ec.session import (
+from reverie.activation import ActivationState
+from reverie.brain import Brain
+from reverie.session import (
     SessionError,
     SessionManager,
     brain_summary,
@@ -34,13 +34,13 @@ REPO_A, REPO_B = "/repos/project-a", "/repos/project-b"
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    monkeypatch.delenv("EC_REPO_PATH", raising=False)
-    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+    monkeypatch.delenv("REVERIE_BRANCH", raising=False)
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -80,8 +80,8 @@ def test_detect_repo_branch_git(tmp_path):
 
 
 def test_detect_repo_branch_env_override(monkeypatch, tmp_path):
-    monkeypatch.setenv("EC_REPO_PATH", str(tmp_path / "x"))
-    monkeypatch.setenv("EC_BRANCH", "feature/auth")
+    monkeypatch.setenv("REVERIE_REPO_PATH", str(tmp_path / "x"))
+    monkeypatch.setenv("REVERIE_BRANCH", "feature/auth")
     repo_path, branch = detect_repo_branch()
     assert repo_path == str((tmp_path / "x").resolve())
     assert branch == "feature/auth"
@@ -101,7 +101,7 @@ def test_start_creates_session(manager, brain):
     assert report["status"] == "ok"
     assert report["resumed"] is False
     assert report["carried_over"] == 0
-    assert "Started EC session on branch main in project-a." == report["message"]
+    assert "Started a session on branch main in project-a." == report["message"]
     row = brain.get_active_session(REPO_A, "main")
     assert row is not None and row["id"] == report["session_id"]
     # Summary rides the start report ONCE (awareness without anchoring, §11.3)
@@ -119,7 +119,7 @@ def test_start_twice_resumes(manager):
     assert second["resumed"] is True
     assert second["session_id"] == first["session_id"]
     assert second["message"] == (
-        "Resuming EC session on branch main (0 ECUs in session brain)."
+        "Resuming the session on branch main (0 conclusions in session memory)."
     )
 
 
@@ -191,7 +191,7 @@ def test_no_carry_over_when_fully_reviewed(manager, brain):
 
 
 # ---------------------------------------------------------------------------
-# /ec-stop — close semantics (§28.6)
+# /ec-stop-REMOVED — close semantics (§28.6)
 # ---------------------------------------------------------------------------
 
 def test_stop_closes_session(manager, brain):
@@ -212,19 +212,19 @@ def test_stop_closes_session(manager, brain):
 
 
 def test_stop_without_active_session(manager):
-    with pytest.raises(SessionError, match="No active EC session"):
+    with pytest.raises(SessionError, match="No active Reverie session"):
         manager.stop_session(REPO_A, "main")
 
 
 def test_double_stop_raises(manager, brain):
     manager.start_session(REPO_A, "main")
     manager.stop_session(REPO_A, "main", decisions={})
-    with pytest.raises(SessionError, match="No active EC session"):
+    with pytest.raises(SessionError, match="No active Reverie session"):
         manager.stop_session(REPO_A, "main", decisions={})
 
 
 # ---------------------------------------------------------------------------
-# brain summary (§16.3 ec_get_summary)
+# brain summary (§16.3 reverie_summary)
 # ---------------------------------------------------------------------------
 
 def test_brain_summary_stats(brain):
@@ -246,7 +246,7 @@ def test_brain_summary_stats(brain):
     assert canonical["last_ecu_added"] is not None
     assert canonical["last_maintenance_run"] is None
     assert summary["session"]["active"] is False
-    assert "The EC brain has 3 ECUs" in summary["message"]
+    assert "The brain holds 3 conclusions" in summary["message"]
 
 
 def test_brain_summary_with_session(brain, manager):
@@ -262,40 +262,30 @@ def test_brain_summary_with_session(brain, manager):
 
 
 # ---------------------------------------------------------------------------
-# CLI smoke (§28.10 templates invoke python -m ec.session)
+# CLI smoke (§28.10 templates invoke python -m reverie.session)
 # ---------------------------------------------------------------------------
 
-def test_cli_start_status_subprocess(tmp_path):
-    """feat/flow compat: `start` enables the repo and reports (nothing to
-    start); `status` reports; `stop` aliases `ec review` (sessions are
-    never closed — with no candidates it simply says so)."""
+def test_cli_status_subprocess(tmp_path):
+    """`python -m reverie.session status` reports the brain + session state
+    (the report behind `reverie status`). Sessions are automatic; there is
+    nothing to start or stop."""
     env = dict(os.environ)
-    env["EC_HOME"] = str(tmp_path / "ec_home")
-    env["EC_REPO_PATH"] = "/repos/cli-repo"
-    env["EC_BRANCH"] = "main"
+    env["REVERIE_HOME"] = str(tmp_path / "reverie_home")
+    env["REVERIE_REPO_PATH"] = "/repos/cli-repo"
+    env["REVERIE_BRANCH"] = "main"
     env["PYTHONPATH"] = str(ROOT)
-    base = [sys.executable, "-m", "ec.session"]
-
-    start = subprocess.run(base + ["start"], env=env, cwd=ROOT,
-                           capture_output=True, text=True, timeout=60)
-    assert start.returncode == 0, start.stderr
-    assert "Reverie is on for /repos/cli-repo" in start.stdout
-    assert "sessions are automatic" in start.stdout
-
-    again = subprocess.run(base + ["start"], env=env, cwd=ROOT,
-                           capture_output=True, text=True, timeout=60)
-    assert "Reverie is on for /repos/cli-repo" in again.stdout   # idempotent
+    base = [sys.executable, "-m", "reverie.session"]
 
     status = subprocess.run(base + ["status"], env=env, cwd=ROOT,
                             capture_output=True, text=True, timeout=60)
     assert status.returncode == 0
-    assert "The EC brain has 0 ECUs" in status.stdout
+    assert "The brain holds 0 conclusions" in status.stdout
+    assert "No active session." in status.stdout
 
-    stop = subprocess.run(base + ["stop", "--all-skip"], env=env, cwd=ROOT,
+    # a mistyped word is an error (the start/stop shims are gone)
+    gone = subprocess.run(base + ["start"], env=env, cwd=ROOT,
                           capture_output=True, text=True, timeout=60)
-    assert stop.returncode == 0, stop.stderr
-    assert "No pending candidates" in stop.stdout
-    assert "deprecated: --all-skip" in stop.stderr
+    assert gone.returncode != 0
 
 
 def test_cli_review_decide_surfaces_diffusion_failure(tmp_path):
@@ -303,20 +293,19 @@ def test_cli_review_decide_surfaces_diffusion_failure(tmp_path):
     prominent warning when promotion succeeded but the full diffuser could
     not run (here: no API key, so the classification call fails)."""
     env = dict(os.environ)
-    env["EC_HOME"] = str(tmp_path / "ec_home")
-    env["EC_REPO_PATH"] = "/repos/cli-repo"
-    env["EC_BRANCH"] = "main"
+    env["REVERIE_HOME"] = str(tmp_path / "reverie_home")
+    env["REVERIE_REPO_PATH"] = "/repos/cli-repo"
+    env["REVERIE_BRANCH"] = "main"
     env["PYTHONPATH"] = str(ROOT)
     env["HF_HUB_OFFLINE"] = "1"
     env.pop("OPENCODE_ZEN_API_KEY", None)  # the diffuser's LLM call will fail
-    base = [sys.executable, "-m", "ec.session"]
 
     # seed the shared DB (WAL: the CLI subprocess sees these rows): one
     # canonical ECU + one similar session ECU (verified sim >= 0.6 forces
     # the classification call, which then fails without a key)
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     model = get_embedding_model()
-    brain = Brain(tmp_path / "ec_home" / "ec.db")
+    brain = Brain(tmp_path / "reverie_home" / "reverie.db")
     sid = brain.create_session("/repos/cli-repo", "main")
     canonical = "Token refresh must precede cache clear in the auth flow"
     session = "The auth bug was stale tokens from un-ordered refresh/clear"
@@ -327,7 +316,8 @@ def test_cli_review_decide_surfaces_diffusion_failure(tmp_path):
     brain.close()
 
     stop = subprocess.run(
-        base + ["stop", "--decide", f"{s}=accept"], env=env, cwd=ROOT,
+        [sys.executable, "-m", "reverie.review_cli",
+         "--decide", f"{s}=accept"], env=env, cwd=ROOT,
         capture_output=True, text=True, timeout=120)
     assert stop.returncode == 0, stop.stderr
     assert "Applied 1 decision(s)." in stop.stdout

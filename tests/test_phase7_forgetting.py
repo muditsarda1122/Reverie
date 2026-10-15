@@ -2,7 +2,7 @@
 
 Covers (design doc Section 2, §12.4 test table):
 
-- lazy confidence decay math in ec/confidence.py (effective_confidence,
+- lazy confidence decay math in reverie/confidence.py (effective_confidence,
   ecu_effective_confidence, reinforce_stored_confidence)
 - effective confidence wired into retrieval ranking
 - retrieval reinforcement bump + decay-clock reset (D17 write path)
@@ -24,9 +24,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ec import maintainer, retrieval
-from ec.brain import Brain
-from ec.confidence import (
+from reverie import maintainer, retrieval
+from reverie.brain import Brain
+from reverie.confidence import (
     FROZEN_STATUSES,
     ecu_effective_confidence,
     effective_confidence,
@@ -34,7 +34,7 @@ from ec.confidence import (
     to_log_odds,
     to_probability,
 )
-from ec.config import DEFAULT_CONFIG, _to_attrdict
+from reverie.config import DEFAULT_CONFIG, _to_attrdict
 
 # ---------------------------------------------------------------------------
 # fixtures + helpers
@@ -56,14 +56,14 @@ def config():
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
@@ -342,15 +342,15 @@ def list_maintenance_rows(brain):
 # §2.1/§2.3 — retrieval reinforcement bump (D17 write path)  [table #7, #8]
 # ---------------------------------------------------------------------------
 
-from ec.mcp_server import ECServer  # noqa: E402
+from reverie.mcp_server import ReverieServer  # noqa: E402
 
 
 def make_server(brain, config):
-    return ECServer(brain=brain, config=config)
+    return ReverieServer(brain=brain, config=config)
 
 
 def core_result(ecu_ids_by_brain):
-    """Minimal ec_query-shaped result for _record_retrieval_metadata."""
+    """Minimal reverie_query-shaped result for _record_retrieval_metadata."""
     return {
         "groups": [
             {"core_ecu": {"id": ecu_id, "brain": brain_name},

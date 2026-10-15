@@ -1,4 +1,4 @@
-"""Phase 13 tests — ``ec repair`` (design doc §7, D51; SPEC §28.4).
+"""Phase 13 tests — ``reverie repair`` (design doc §7, D51; SPEC §28.4).
 
 repair() checks structural brain health and performs only SAFE, NON-DESTRUCTIVE
 recovery: create missing tables (additive schema re-apply), WAL checkpoint,
@@ -17,13 +17,13 @@ import sqlite3
 
 import pytest
 
-from ec.brain import Brain
-from ec.repair import REQUIRED_TABLES, main, repair
+from reverie.brain import Brain
+from reverie.repair import REQUIRED_TABLES, main, repair
 
 
 @pytest.fixture()
 def db_path(tmp_path):
-    return tmp_path / "ec.db"
+    return tmp_path / "reverie.db"
 
 
 @pytest.fixture()

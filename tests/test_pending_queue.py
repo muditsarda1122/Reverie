@@ -1,8 +1,8 @@
 """feat/providers — pending-extraction queue and re-diffusion tests.
 
-Offline: LLM calls mocked (ec.extractor.call_llm / ec.pending.diffuse_ecu);
-embeddings real (HF cache); brains in tmp_path. The ec-retry CLI runs in
-process against a redirected EC_HOME.
+Offline: LLM calls mocked (reverie.extractor.call_llm / reverie.pending.diffuse_ecu);
+embeddings real (HF cache); brains in tmp_path. The `reverie retry` CLI runs in
+process against a redirected REVERIE_HOME.
 """
 
 import copy
@@ -14,13 +14,13 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import pytest
 
-from ec import pending
-from ec.brain import Brain
-from ec.config import DEFAULT_CONFIG, _to_attrdict
-from ec.diffuser import DiffuserError
-from ec.llm import LLMError
-from ec.mcp_server import ECServer
-from ec.session import SessionManager
+from reverie import pending
+from reverie.brain import Brain
+from reverie.config import DEFAULT_CONFIG, _to_attrdict
+from reverie.diffuser import DiffuserError
+from reverie.llm import LLMError
+from reverie.mcp_server import ReverieServer
+from reverie.session import SessionManager
 
 REPO, BRANCH = "/repos/retry-repo", "main"
 
@@ -54,7 +54,7 @@ def config(**llm_overrides):
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -66,16 +66,16 @@ def manager(brain):
 
 @pytest.fixture()
 def server(brain, manager):
-    from ec import repos
-    s = ECServer(brain=brain, manager=manager, config=config())
+    from reverie import repos
+    s = ReverieServer(brain=brain, manager=manager, config=config())
     repos.set_repo_state(brain, repos.resolve_repo(), "enabled")  # feat/flow
     return s
 
 
 @pytest.fixture(autouse=True)
 def _repo_env(monkeypatch):
-    monkeypatch.setenv("EC_REPO_PATH", REPO)
-    monkeypatch.setenv("EC_BRANCH", BRANCH)
+    monkeypatch.setenv("REVERIE_REPO_PATH", REPO)
+    monkeypatch.setenv("REVERIE_BRANCH", BRANCH)
 
 
 @pytest.fixture()
@@ -85,7 +85,7 @@ def active_session(manager):
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
@@ -150,7 +150,7 @@ class TestRetryPending:
 
     def test_retry_recovers_into_active_session(self, brain, active_session, model):
         self._save(brain, active_session)
-        with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
+        with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
             summary = pending.retry_pending(brain, embedding_model=model)
         assert summary["recovered"] == 1
         assert brain.count_pending_extractions() == 0
@@ -164,12 +164,12 @@ class TestRetryPending:
         assert summary["skipped"] == 1
         assert summary["recovered"] == 0
         assert brain.count_pending_extractions() == 1
-        assert "ec-start" in summary["details"][0]["reason"]
+        assert "next tool call" in summary["details"][0]["reason"]
 
     def test_retry_failure_records_attempt_and_keeps_item(
             self, brain, active_session, model):
         item_id = self._save(brain, active_session)
-        with patch("ec.extractor.call_llm",
+        with patch("reverie.extractor.call_llm",
                    side_effect=LLMError("HTTP 503: still down")):
             summary = pending.retry_pending(brain, embedding_model=model)
         assert summary["failed"] == 1
@@ -182,7 +182,7 @@ class TestRetryPending:
     def test_retry_item_id_filter(self, brain, active_session, model):
         self._save(brain, active_session)
         other = brain.add_pending_extraction(REPO, BRANCH, dict(INTERACTION))
-        with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
+        with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
             summary = pending.retry_pending(brain, item_id=other,
                                             embedding_model=model)
         assert summary["recovered"] == 1
@@ -201,23 +201,23 @@ OBSERVE_ARGS = {
 
 class TestObservePersistence:
     def test_failed_observe_persists_interaction(self, server, active_session):
-        with patch("ec.extractor.call_llm",
+        with patch("reverie.extractor.call_llm",
                    side_effect=LLMError("HTTP 503: gateway down")):
-            payload, envelope = call_tool(server, "ec_observe", OBSERVE_ARGS)
+            payload, envelope = call_tool(server, "reverie_observe", OBSERVE_ARGS)
         assert envelope["isError"] is True
         assert payload["pending_extraction_id"]
         assert "saved locally" in payload["error"]
-        assert "ec-retry" in payload["error"]
+        assert "reverie retry" in payload["error"]
         assert server._brain.count_pending_extractions() == 1
 
     def test_next_successful_observe_retries_pending(
             self, server, active_session, model):
-        with patch("ec.extractor.call_llm",
+        with patch("reverie.extractor.call_llm",
                    side_effect=LLMError("HTTP 503: gateway down")):
-            failed, _ = call_tool(server, "ec_observe", OBSERVE_ARGS)
+            failed, _ = call_tool(server, "reverie_observe", OBSERVE_ARGS)
         assert failed["status"] == "error"
-        with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
-            ok, _ = call_tool(server, "ec_observe", OBSERVE_ARGS)
+        with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
+            ok, _ = call_tool(server, "reverie_observe", OBSERVE_ARGS)
         assert ok["status"] == "ok"
         assert ok["pending_recovered"] == 1
         assert "recovered" in ok["message"]
@@ -226,8 +226,8 @@ class TestObservePersistence:
 
     def test_successful_observe_with_no_pending_is_untouched(
             self, server, active_session):
-        with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
-            payload, _ = call_tool(server, "ec_observe", OBSERVE_ARGS)
+        with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
+            payload, _ = call_tool(server, "reverie_observe", OBSERVE_ARGS)
         assert payload["pending_recovered"] == 0
         assert "recovered" not in payload["message"]
 
@@ -256,10 +256,10 @@ class TestRediffuse:
              "scope": {"level": "repo", "path": "repo:retry-repo"},
              "conclusion_type": "invariant"},
             embedding=model.encode_one("webhook handlers idempotent"))
-        with patch("ec.review_gate.diffuser.diffuse_ecu",
+        with patch("reverie.review_gate.diffuser.diffuse_ecu",
                    side_effect=DiffuserError("relationship classification "
                                              "failed: LLMError offline")):
-            from ec import review_gate
+            from reverie import review_gate
             result = review_gate.apply_review_decisions(
                 brain, session_id, {ecu_id: "accept"}, embedding_model=model,
                 config=config())
@@ -271,7 +271,7 @@ class TestRediffuse:
     def test_rediffuse_clears_flag_on_success(self, brain, model):
         ecu_id = self._make_ecu(brain, model)
         brain.update_ecu_metadata(ecu_id, diffusion_failed=True)
-        with patch("ec.pending.diffuse_ecu"):
+        with patch("reverie.pending.diffuse_ecu"):
             summary = pending.rediffuse(brain, embedding_model=model)
         assert summary["rediffused"] == 1
         assert brain.get_ecu(ecu_id)["metadata"]["diffusion_failed"] is False
@@ -280,7 +280,7 @@ class TestRediffuse:
     def test_rediffuse_keeps_flag_on_failure(self, brain, model):
         ecu_id = self._make_ecu(brain, model)
         brain.update_ecu_metadata(ecu_id, diffusion_failed=True)
-        with patch("ec.pending.diffuse_ecu",
+        with patch("reverie.pending.diffuse_ecu",
                    side_effect=DiffuserError("LLM API returned HTTP 503")):
             summary = pending.rediffuse(brain, embedding_model=model)
         assert summary["failed"] == 1
@@ -292,7 +292,7 @@ class TestRediffuse:
         b = self._make_ecu(brain, model)
         for ecu in (a, b):
             brain.update_ecu_metadata(ecu, diffusion_failed=True)
-        with patch("ec.pending.diffuse_ecu"):
+        with patch("reverie.pending.diffuse_ecu"):
             summary = pending.rediffuse(brain, ecu_id=a, embedding_model=model)
         assert summary["targets"] == 1
         assert brain.get_ecu(a)["metadata"]["diffusion_failed"] is False
@@ -304,19 +304,19 @@ class TestRediffuse:
 
 
 # ---------------------------------------------------------------------------
-# ec-retry CLI
+# reverie retry CLI
 # ---------------------------------------------------------------------------
 
 class TestRetryCli:
     @pytest.fixture()
-    def ec_home(self, tmp_path, monkeypatch):
+    def reverie_home(self, tmp_path, monkeypatch):
         home = tmp_path / "ec-home"
-        monkeypatch.setenv("EC_HOME", str(home))
+        monkeypatch.setenv("REVERIE_HOME", str(home))
         return home
 
     def _session_and_pending(self) -> str:
-        """Session + pending item in the EC_HOME brain (what the CLI reads)."""
-        b = Brain()          # uses EC_HOME
+        """Session + pending item in the REVERIE_HOME brain (what the CLI reads)."""
+        b = Brain()          # uses REVERIE_HOME
         try:
             sid = SessionManager(b).start_session()["session_id"]
             return pending.save_pending_extraction(
@@ -326,17 +326,17 @@ class TestRetryCli:
             b.close()
 
     def _brain(self):
-        return Brain()          # uses EC_HOME
+        return Brain()          # uses REVERIE_HOME
 
-    def test_list_empty(self, ec_home, capsys):
+    def test_list_empty(self, reverie_home, capsys):
         assert pending.main(["--list"]) == 0
         assert "No pending extractions" in capsys.readouterr().out
 
-    def test_list_and_default_retry(self, ec_home, capsys, model):
+    def test_list_and_default_retry(self, reverie_home, capsys, model):
         self._session_and_pending()
         assert pending.main(["--list"]) == 0
         assert REPO in capsys.readouterr().out
-        with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
+        with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
             assert pending.main([]) == 0
         assert "recovered" in capsys.readouterr().out
         b = self._brain()
@@ -345,7 +345,7 @@ class TestRetryCli:
         finally:
             b.close()
 
-    def test_drop(self, ec_home, capsys):
+    def test_drop(self, reverie_home, capsys):
         item_id = self._session_and_pending()
         assert pending.main(["--drop", item_id]) == 0
         assert "Dropped" in capsys.readouterr().out
@@ -355,7 +355,7 @@ class TestRetryCli:
         finally:
             b.close()
 
-    def test_rediffuse_flag(self, ec_home, capsys):
+    def test_rediffuse_flag(self, reverie_home, capsys):
         b = self._brain()
         ecu_id = b.insert_ecu({
             "cognition": "x", "conclusion_type": "pattern",
@@ -365,6 +365,6 @@ class TestRetryCli:
         })
         b.update_ecu_metadata(ecu_id, diffusion_failed=True)
         b.close()
-        with patch("ec.pending.diffuse_ecu"):
+        with patch("reverie.pending.diffuse_ecu"):
             assert pending.main(["--rediffuse"]) == 0
         assert "rediffused" in capsys.readouterr().out

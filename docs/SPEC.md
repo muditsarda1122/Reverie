@@ -1,13 +1,13 @@
 # Engineering Cognition (EC) — Implementation Specification
 
-**Document Status:** Implementation spec for EC v2 system build
+**Document Status:** Implementation spec for Reverie (EC v2 system build)
 **Date:** 12 August 2026
-**Based on:** EC Design Spec v2.17
+**Based on:** the EC Design Spec v2.17 (Engineering Cognition)
 **Scope:** All components needed for EC-Bench v2 + demo video. HDBSCAN clustering, Cognition Maintainer, Controlled Forgetting, Reconsolidation Loop, and Grounding Verification are explicitly deferred and NOT in this document.
 
 ## What This Spec Covers
 
-This spec contains everything needed to implement the EC system end-to-end:
+This spec contains everything needed to implement the Reverie system end-to-end:
 - **ECU data model** (Section 1)
 - **System architecture** (Section 2)
 - **Extractor** — prompt-based, Claude Haiku 4.5 via OpenCode Zen (Section 3)
@@ -38,7 +38,7 @@ This spec contains everything needed to implement the EC system end-to-end:
 
 - **LLM for all components:** Claude Haiku 4.5 via OpenCode Zen API. Endpoint: `https://opencode.ai/zen/v1/messages` (Anthropic Messages API format). API key env var: `OPENCODE_ZEN_API_KEY`. Temperature: 0.3 for extraction/diffusion, 0.0 for mode detection. JSON post-processing required (strip markdown code fences from Claude output).
 - **Embedding model:** `all-MiniLM-L6-v2` (384-dim, sentence-transformers). Set at init, never changed.
-- **Database:** SQLite at `~/.ec/ec.db`. Global brain — one database for all projects.
+- **Database:** SQLite at `~/.reverie/reverie.db`. Global brain — one database for all projects.
 - **Python version:** 3.12. On Intel Mac: pin `numpy<2`, `scipy<1.13`, `scikit-learn<1.5`, `transformers<5` for torch 2.2.2 compatibility.
 - **Reference implementation:** The file `test_retrieval_ranking_zen_v2.py` (from Experiment 2) contains working, tested code for the retrieval pipeline including relevance gate, normalized activation, within-group dedup, and cross-group dedup. Adapt this code rather than implementing from scratch.
 - **Extractor prompt:** The file `extractor_prompt.md` (alongside this spec) contains the tested, MIT-licensed extraction prompt. Load it at runtime.
@@ -614,7 +614,7 @@ The brain has two memory systems operating simultaneously:
 - **Hippocampus (episodic, fast, uncurated):** Experiences are stored immediately, loosely, available for immediate use. No quality gate. This is how you can use something you just learned within the same conversation.
 - **Neocortex (semantic, slow, curated):** Through consolidation, hippocampal traces are reviewed, refined, and integrated into long-term schemas. Quality control happens here.
 
-EC mirrors this with two brains:
+Reverie mirrors this with two brains:
 
 ### 6.2 Session Brain (Hippocampal)
 
@@ -958,18 +958,18 @@ EC-Bench Finding 1 states: "The highest-quality investigations consistently esta
 
 **The single trigger — On-demand (agent-initiated):**
 
-The agent has an `ec_query(query, scope?, mode?)` tool available for targeted lookups. The agent decides when to query based on AGENTS.md heuristics (see Section [FORGETTING - DEFERRED]9). There is no automatic injection at prompt boundaries. The agent must actively call `ec_query` to retrieve any cognition.
+The agent has an `reverie_query(query, scope?, mode?)` tool available for targeted lookups. The agent decides when to query based on AGENTS.md heuristics (see Section [FORGETTING - DEFERRED]9). There is no automatic injection at prompt boundaries. The agent must actively call `reverie_query` to retrieve any cognition.
 
 **Session start — awareness without anchoring:**
 
-At session start, the agent calls `ec_get_summary` once. This returns brain statistics (total ECUs, scope distribution, last maintenance run) — NOT individual ECUs. The agent learns "the brain has 847 ECUs, 230 about auth, 180 about database" without seeing any conclusions. This is awareness without anchoring: the agent knows cognition *exists* about auth without knowing *what* it says. The agent can then decide whether to query based on what it encounters in the repository.
+At session start, the agent calls `reverie_summary` once. This returns brain statistics (total ECUs, scope distribution, last maintenance run) — NOT individual ECUs. The agent learns "the brain has 847 ECUs, 230 about auth, 180 about database" without seeing any conclusions. This is awareness without anchoring: the agent knows cognition *exists* about auth without knowing *what* it says. The agent can then decide whether to query based on what it encounters in the repository.
 
 **Flow:**
 
 ```
 User runs /ec-start
        ↓
-Agent calls ec_get_summary (ONCE — brain stats only, no ECUs)
+Agent calls reverie_summary (ONCE — brain stats only, no ECUs)
        ↓
 User submits prompt
        ↓
@@ -981,23 +981,23 @@ Agent recognizes a moment where past cognition might help:
   - Sees a pattern it doesn't recognise
   - Working with a file/module for the first time in this session
        ↓
-Agent calls ec_query(query) → EC returns cognitive groups
+Agent calls reverie_query(query) → EC returns cognitive groups
        ↓
 Agent uses retrieved cognition (framed as past beliefs to verify)
        ↓
 Agent responds
        ↓
-Agent calls ec_observe(reasoning_trace) → Extractor produces candidate ECUs
+Agent calls reverie_observe(reasoning_trace) → Extractor produces candidate ECUs
 ```
 
 **The critical rule — EC-Bench Finding 1 encoded:**
 
-The agent must NOT query EC before it has read the relevant code files. The AGENTS.md explicitly instructs: "Do NOT call ec_query before you have read the relevant code files. Establish your own understanding of the repository first. EC cognition is a supplement to your understanding, not a replacement for it."
+The agent must NOT query EC before it has read the relevant code files. The AGENTS.md explicitly instructs: "Do NOT call reverie_query before you have read the relevant code files. Establish your own understanding of the repository first. EC cognition is a supplement to your understanding, not a replacement for it."
 
 **Why pure demand-driven is the correct choice for v2:**
 
 1. EC-Bench showed injection at the beginning caused anchoring — the agent used cognition heavily but produced worse work.
-2. The "LLMs don't know what they don't know" problem is addressed by `ec_get_summary` at session start (awareness without anchoring) and strong AGENTS.md heuristics.
+2. The "LLMs don't know what they don't know" problem is addressed by `reverie_summary` at session start (awareness without anchoring) and strong AGENTS.md heuristics.
 3. Mode-aware retrieval still applies (Section 6.9) — when the agent *does* query, the mode determines depth, budget, and prioritization. But mode no longer controls *when* retrieval happens; it controls *what* comes back when the agent asks.
 4. Under-querying is recoverable (the agent can query again). Over-injection is not (the agent is anchored and doesn't know to un-ask). The asymmetry favours demand-driven.
 
@@ -1184,7 +1184,7 @@ If no ECU scores above the relevance threshold, don't return empty context. Retu
 
 **Retrieval restraint — the asymmetry principle:**
 
-An under-injected agent can query for more via `query_ec`. An over-injected agent is anchored and doesn't know to un-ask. This asymmetry means the default token budgets are deliberately conservative (2000-6000 tokens depending on mode). EC errs on the side of injecting less, not more.
+An under-injected agent can query for more via `reverie_query`. An over-injected agent is anchored and doesn't know to un-ask. This asymmetry means the default token budgets are deliberately conservative (2000-6000 tokens depending on mode). Reverie errs on the side of injecting less, not more.
 
 ### 11.6 Anti-Anchoring Defences
 
@@ -1192,7 +1192,7 @@ The v1 mistake (cognition injected as authoritative context → agent anchored o
 
 **Defence 1 — Demand-driven retrieval (structural):**
 
-EC never injects cognition automatically. The agent must actively call `ec_query` to retrieve any cognition. This is the primary anti-anchoring defence — if the agent hasn't asked for it, it doesn't see it. The agent reads the repository first, forms its own understanding, and only queries EC when it recognizes a gap. This directly addresses EC-Bench Finding 1: "Engineering cognition should support reasoning once uncertainty emerges, not initialise it before repository understanding is established" [cite:f6100d2cb].
+EC never injects cognition automatically. The agent must actively call `reverie_query` to retrieve any cognition. This is the primary anti-anchoring defence — if the agent hasn't asked for it, it doesn't see it. The agent reads the repository first, forms its own understanding, and only queries EC when it recognizes a gap. This directly addresses EC-Bench Finding 1: "Engineering cognition should support reasoning once uncertainty emerges, not initialise it before repository understanding is established" [cite:f6100d2cb].
 
 **Defence 2 — Framing:**
 
@@ -1268,7 +1268,7 @@ EC-Bench Finding 3 explicitly showed that different engineering modes required d
 
 **How mode is detected:**
 
-Mode is detected from the agent's `ec_query` call. The agent can pass a `mode` parameter explicitly, or if omitted, EC classifies the query: "Classify this engineering query into one of: debugging, architecture, implementation, investigation, planning." This is a lightweight LLM call on the query text. (v2 can fall back to keyword heuristics if LLM call cost is a concern.)
+Mode is detected from the agent's `reverie_query` call. The agent can pass a `mode` parameter explicitly, or if omitted, EC classifies the query: "Classify this engineering query into one of: debugging, architecture, implementation, investigation, planning." This is a lightweight LLM call on the query text. (v2 can fall back to keyword heuristics if LLM call cost is a concern.)
 
 **Important: mode controls WHAT comes back, not WHEN.**
 
@@ -1308,7 +1308,7 @@ Mode: planning
   - bias: toward ECUs with provenance.source_type = "planning"
 ```
 
-> **Reconciliation note (Phase 13):** These parameters mirror the verified Experiment-2 reference implementation (D4/D11), which is what ships — see `ec/config.py::DEFAULT_CONFIG["modes"]`. `prioritize` slots resolve against `conclusion_type` values, plus one special edge-type slot (`contradictions` in debugging mode, resolved as "challenged or has a contradicts edge"). Earlier draft slots like `superseded_ecus` and `architecture` were dropped because they are not conclusion types (and superseded ECUs are non-retrievable by design), so they could never fire; biases resolve strictly against `provenance.source_type`.
+> **Reconciliation note (Phase 13):** These parameters mirror the verified Experiment-2 reference implementation (D4/D11), which is what ships — see `reverie/config.py::DEFAULT_CONFIG["modes"]`. `prioritize` slots resolve against `conclusion_type` values, plus one special edge-type slot (`contradictions` in debugging mode, resolved as "challenged or has a contradicts edge"). Earlier draft slots like `superseded_ecus` and `architecture` were dropped because they are not conclusion types (and superseded ECUs are non-retrievable by design), so they could never fire; biases resolve strictly against `provenance.source_type`.
 
 **EC-Bench Finding 2 — mode matters for quality:**
 
@@ -1374,7 +1374,7 @@ An ECU is scoped to one of these levels. "Always use parameterised queries" migh
 
 **Retrieval searches UP the hierarchy, never down:**
 
-When retrieving, EC searches from the current scope UP the hierarchy:
+When retrieving, Reverie searches from the current scope UP the hierarchy:
 
 ```
 Search: subsystem (token refresh) → module (auth) → repo (api-server) → project (my SaaS app) → organization (company conventions) → domain (web backend) → engineering
@@ -1754,7 +1754,7 @@ The principle: **flag when the resolution has consequences the user should know 
 
 1. **When one side has low confidence (< θ_contradiction_flag, default: 0.7).** The system is already handling this — the low-confidence ECU will decay further and eventually be superseded. The user doesn't need to know that a weak belief was contradicted. This is the normal Bayesian resolution path.
 
-2. **When the contradiction is Case 3 (competing hypotheses) during an active investigation.** Competing hypotheses are expected during debugging. They'll resolve when evidence arrives. Flagging them mid-investigation would be noise — the user is actively working on the problem and doesn't need EC to tell them "you have two hypotheses."
+2. **When the contradiction is Case 3 (competing hypotheses) during an active investigation.** Competing hypotheses are expected during debugging. They'll resolve when evidence arrives. Flagging them mid-investigation would be noise — the user is actively working on the problem and doesn't need Reverie to tell them "you have two hypotheses."
 
 3. **When the contradiction is between a session-brain ECU and a canonical-brain ECU.** The Pending Update mechanism (Section [RECONSOLIDATION - DEFERRED]5) already handles this. The user will see it at review time. No separate notification needed.
 
@@ -1773,7 +1773,7 @@ The principle: **flag when the resolution has consequences the user should know 
 **The notification mechanism:**
 
 - **Not blocking.** The agent continues to work. Notifications are for the human, not the agent.
-- **Accumulated at review gate.** Contradictions are surfaced during the Human Review Gate, grouped by topic: "During recent sessions, EC detected 2 contradictions worth your attention."
+- **Accumulated at review gate.** Contradictions are surfaced during the Human Review Gate, grouped by topic: "During recent sessions, Reverie detected 2 contradictions worth your attention."
 - **Retrieval flagging.** When a `challenged` ECU is retrieved during a session, it comes with a flag: "⚠️ This cognition is challenged — there is contradicting evidence. See: [ECU_X]." The agent knows to be cautious but isn't blocked.
 
 ### 17.5 Competing Hypothesis Persistence Limits
@@ -1824,9 +1824,9 @@ Returned by retrieval but with lower ranking weight (they're uncertain). Flagged
 
 ### 17.6 Biological Basis
 
-Cognitive dissonance theory (Festinger): humans hold contradictory beliefs simultaneously. The brain tolerates them, and resolution happens slowly through consolidation (especially during sleep, per Walker's research on sleep-dependent memory processing). EC mirrors this: contradictions are tolerated, tracked, and resolved through evidence accumulation, not immediate forced resolution.
+Cognitive dissonance theory (Festinger): humans hold contradictory beliefs simultaneously. The brain tolerates them, and resolution happens slowly through consolidation (especially during sleep, per Walker's research on sleep-dependent memory processing). Reverie mirrors this: contradictions are tolerated, tracked, and resolved through evidence accumulation, not immediate forced resolution.
 
-The `open_question` status mirrors the Zeigarnik effect — uncompleted tasks (or unresolved questions) are remembered better than completed ones. The brain doesn't forget open questions; it parks them and brings them up when relevant. EC's `open_question` is the brain's way of saying "I haven't forgotten about this, but I'm not actively working on it."
+The `open_question` status mirrors the Zeigarnik effect — uncompleted tasks (or unresolved questions) are remembered better than completed ones. The brain doesn't forget open questions; it parks them and brings them up when relevant. Reverie's `open_question` is the brain's way of saying "I haven't forgotten about this, but I'm not actively working on it."
 
 ### 17.7 Physics Parallel — Quantum Decoherence
 
@@ -1987,7 +1987,7 @@ lightweight_diffusion:
 
 # LLM Configuration
 #
-# EC needs an LLM for extraction, relationship classification (lightweight diffuser),
+# Reverie needs an LLM for extraction, relationship classification (lightweight diffuser),
 # and mode detection. These are classification/extraction tasks that require strong
 # instruction following and engineering comprehension.
 #
@@ -2002,7 +2002,7 @@ lightweight_diffusion:
 #   - GPT models    → https://opencode.ai/zen/v1/responses (OpenAI Responses API)
 #   - Others        → https://opencode.ai/zen/v1/chat/completions (OpenAI Chat)
 #
-# Any registry provider works (ec/providers.py): setting `provider` fills the
+# Any registry provider works (reverie/providers.py): setting `provider` fills the
 # unset fields from the registry; fields set explicitly always win. `custom`
 # keeps today's behaviour (every field used as written).
 #
@@ -2092,47 +2092,53 @@ contradiction:
 
 ## 16. Agent Integration and MCP Layer
 
+> **Supersession note (Phase 3, 2026-10-15).** Section 28 describes the
+> layer's mechanics and remains authoritative for them, EXCEPT where §29
+> (the product flow) and §30 (the Phase 3 rename) say otherwise. In
+> particular: sessions are automatic per branch (§29.3) — there is no
+> `/ec-start` / `/ec-stop` / `/ec-status` lifecycle; the §28.10 command
+> templates are replaced by per-harness user-level slash commands (§30.3);
+> the tool names are the `reverie_*` ones (§30.1); and user-facing text says
+> "conclusion" — ECU stays the internal name. The lifecycle command/error
+> strings quoted in §28 are historical.
+
 ### 28.1 Global Brain — One Database, All Projects
 
-The Canonical Brain is a **single global SQLite database at `~/.ec/ec.db`**. It is NOT per-repo. The scope hierarchy (Section 1.2) handles project/repo/module separation logically — an ECU scoped to `repo:my-project` lives in the same database as an ECU scoped to `engineering`. Retrieval filters by `scope_path`, not by which database file to open (Section 6.11).
+The Canonical Brain is a **single global SQLite database at `~/.reverie/reverie.db`**. It is NOT per-repo. The scope hierarchy (Section 1.2) handles project/repo/module separation logically — an ECU scoped to `repo:my-project` lives in the same database as an ECU scoped to `engineering`. Retrieval filters by `scope_path`, not by which database file to open (Section 6.11).
 
 This means:
 - Engineering principles (scope: `engineering`) are available when working on any repo.
 - Domain knowledge (scope: `domain`) transfers across repos in the same domain.
 - A single user working on 5 different repos has one brain, not five.
-- No `.ec/` directory inside repos. No `.gitignore` needed. Everything lives at `~/.ec/`.
+- No `.ec/` directory inside repos. No `.gitignore` needed. Everything lives at `~/.reverie/`.
 
 ### 28.2 Directory Structure
 
 ```
-~/.ec/
-  ec.db            ← SQLite brain (Canonical Brain + Session Brains + embeddings)
-  config.yaml      ← EC configuration (all parameters from Section 22)
-  AGENTS.md        ← Agent instructions (how/when to use EC tools)
-  commands/        ← Slash command templates (referenced by agent configs)
-    ec-start.md    ← /ec-start command template
-    ec-stop.md     ← /ec-stop command template
-    ec-status.md   ← /ec-status command template
+~/.reverie/
+  reverie.db            ← SQLite brain (Canonical Brain + Session Brains + embeddings)
+  config.yaml      ← Reverie configuration (all parameters from Section 22)
+  AGENTS.md        ← Agent instructions (how/when to use the reverie_* tools)
 ```
 
-All files live in the user's home directory. Nothing is stored inside project repos. The brain, config, and agent instructions are global — available to every agent in every project. The `commands/` directory contains markdown templates that agent configs reference — different agents wire these differently (OpenCode uses `"template": "Execute ~/.ec/commands/ec-start.md"`, Claude Code uses `CLAUDE.md` imports, Cursor uses `.cursor/rules/`).
+All files live in the user's home directory. Nothing is stored inside project repos. The brain, config, and agent instructions are global — available to every agent in every project. (Phase 3: the per-harness slash commands live in each harness's own user-level command directory, not here — see §30.3.)
 
 ### 28.3 MCP Server Specification
 
-EC runs as a **local MCP server using stdio transport**. No HTTP, no WebSocket. The agent starts EC as a subprocess and communicates over stdin/stdout. This is the standard for local MCP servers and is supported by all four target agents.
+Reverie runs as a **local MCP server using stdio transport**. No HTTP, no WebSocket. The agent starts Reverie as a subprocess and communicates over stdin/stdout. This is the standard for local MCP servers and is supported by all four target agents.
 
-The MCP server is a Python module (`ec.mcp_server`) that:
+The MCP server is a Python module (`reverie.mcp_server`) that:
 1. Starts when the agent launches it as a subprocess.
 2. Exposes MCP tools to the agent.
-3. Reads/writes to `~/.ec/ec.db`.
+3. Reads/writes to `~/.reverie/reverie.db`.
 4. Runs the Extractor, Diffuser, and retrieval logic in-process.
 
 #### MCP Tools Exposed to the Agent
 
-**1. `ec_observe`** — Extract engineering cognition from the agent's reasoning.
+**1. `reverie_observe`** — Extract engineering cognition from the agent's reasoning.
 
 ```
-Tool: ec_observe
+Tool: reverie_observe
 Description: >
   Extract engineering conclusions from your reasoning trace and store them
   in the Session Brain for immediate use. Call this AFTER you:
@@ -2141,14 +2147,14 @@ Description: >
   - Make an architectural decision with rationale
   - Discover that a previous assumption was wrong
 
-  Do NOT call ec_observe for:
+  Do NOT call reverie_observe for:
   - Simple code changes with no insight
   - Things already captured in existing ECUs
   - Pure factual observations (the Extractor handles the lifting to conclusions)
 
-  ec_observe runs the Extractor on your reasoning, produces candidate ECUs,
+  reverie_observe runs the Extractor on your reasoning, produces candidate ECUs,
   and stores them in the Session Brain. They are immediately available for
-  retrieval via ec_query. The user reviews these ECUs at session close (/ec-stop).
+  retrieval via reverie_query. The user reviews these ECUs at session close (/ec-stop).
 
   If no session is active, returns an error — tell the user to run /ec-start.
 
@@ -2157,7 +2163,7 @@ Parameters:
     response. The Extractor processes the full interaction — prompt, reasoning,
     and output — not just the reasoning alone.
   reasoning_trace (string, required): Your reasoning trace since the last
-    ec_observe call. Include your thinking, decisions, and rationale — not
+    reverie_observe call. Include your thinking, decisions, and rationale — not
     just the final code output.
   final_output (string, optional): Your final output (code, explanation,
     plan, etc.). If the output is just a code diff with no explanation,
@@ -2183,10 +2189,10 @@ Error example (no session):
   }
 ```
 
-**2. `ec_query`** — Retrieve engineering cognition from the brain.
+**2. `reverie_query`** — Retrieve engineering cognition from the brain.
 
 ```
-Tool: ec_query
+Tool: reverie_query
 Description: >
   Retrieve engineering conclusions relevant to your current task. Call this
   AFTER reading the relevant code files, when you recognize a gap that past
@@ -2287,12 +2293,12 @@ Error example (no session):
   }
 ```
 
-**3. `ec_get_summary`** — Get a brain overview at session start.
+**3. `reverie_summary`** — Get a brain overview at session start.
 
 ```
-Tool: ec_get_summary
+Tool: reverie_summary
 Description: >
-  Get a summary of what the EC brain knows. Call this ONCE at session start
+  Get a summary of what the Reverie brain knows. Call this ONCE at session start
   to understand what engineering cognition is already stored before you begin
   work. Returns brain statistics and scope distribution — not individual ECUs.
 
@@ -2336,7 +2342,7 @@ Returns:
 
 ### 28.4 Error Message Design — Guide the Agent
 
-Every error message returned by EC MCP tools includes actionable guidance for the agent. Errors never say just "Error: X" — they say what to do about it.
+Every error message returned by the Reverie MCP tools includes actionable guidance for the agent. Errors never say just "Error: X" — they say what to do about it.
 
 | Error | Message |
 |-------|---------|
@@ -2344,8 +2350,8 @@ Every error message returned by EC MCP tools includes actionable guidance for th
 | Session already active | *(superseded by §28.5 resume behavior)* "EC session already active (started {duration} ago, {count} ECUs in session brain). Use /ec-status to check." — never emitted: `/ec-start` on an active (repo, branch) resumes the existing session per §28.5, which is more useful than erroring. Kept here for historical completeness only. |
 | Extraction failed | "Extraction failed: {reason}. The reasoning trace may be too short or contain no engineering conclusions. This is not an error — not every response produces ECUs." |
 | No ECUs found | "No ECUs found for query '{query}'. Try broadening the scope or rephrasing. The brain may not have relevant cognition for this topic yet." |
-| Brain not initialised | "EC brain not found at ~/.ec/ec.db. Run `ec init` to initialise the brain, then /ec-start to begin a session." |
-| Database locked | "EC brain is locked by another process. Close other EC instances and try again. If the problem persists, run `ec repair`." |
+| Brain not initialised | "EC brain not found at ~/.reverie/reverie.db. Run `ec init` to initialise the brain, then /ec-start to begin a session." |
+| Database locked | "EC brain is locked by another process. Close other EC instances and try again. If the problem persists, run `reverie repair`." |
 
 ### 28.5 Session Lifecycle — Per-Branch Sessions
 
@@ -2403,7 +2409,7 @@ pending_updates table:
 1. Detect current `repo_path` and `branch` (via `git rev-parse --show-toplevel` and `git branch --show-current`).
 2. Query `sessions` table for active session matching `(repo_path, branch)`.
 3. If found → **resume**: load its `session_ecus` back into the Session Brain. Print: "Resuming EC session on branch {branch} ({count} ECUs in session brain)."
-4. If not found → **create new session**: insert into `sessions` table. Print: "Started EC session on branch {branch} in {repo_name}."
+4. If not found → **create new session**: insert into `sessions` table. Print: "Started a session on branch {branch} in {repo_name}."
 5. If a closed session exists for this `(repo_path, branch)` → check if any ECUs from the old session remain in `session_ecus` with `review_status = skipped`. If so, these carry over to the new session (they were never reviewed). If the old session's ECUs were all accepted or rejected (no skipped), create a new empty session. The old session's `session_ecus` and `session_edges` records for accepted/rejected ECUs were already cleaned up during `/ec-stop`.
 
 #### Multiple Concurrent Sessions
@@ -2427,7 +2433,7 @@ Constraint: only **one active session per (repo, branch)**. If the user runs `/e
 - Prints: session ID, branch, repo, session brain ECU count.
 
 **`/ec-stop`** — End the EC session and trigger the Review Gate.
-- Runs a final extraction pass on any unobserved reasoning (if the agent has reasoning since the last `ec_observe` call).
+- Runs a final extraction pass on any unobserved reasoning (if the agent has reasoning since the last `reverie_observe` call).
 - Presents the Review Gate (Section [FORGETTING - DEFERRED]7).
 - After Review Gate completes: accepted ECUs → Full Diffuser → Canonical Brain.
 - **Session cleanup:**
@@ -2502,14 +2508,15 @@ Commands within the Review Gate:
 
 In individual mode, the ECU is shown in truncated form by default. Pressing `d` shows the full ECU with all fields — cognition, scope path, provenance (source type, source ID, origin agent, created at), grounding (files, symbols, commit hash, code snapshot), evidence pointers, and any edges to other ECUs.
 
-### 28.8 Installation — `ec install`
+### 28.8 Installation — `reverie install`
 
-One command configures EC for all detected coding agents.
+One command configures Reverie for all detected coding agents. (Phase 3
+transcript — §30.3's per-harness commands replace the old templates.)
 
 ```
-$ ec install
+$ reverie install
 
-Engineering Cognition — Installation
+Reverie — Installation
 
 Detecting installed coding agents...
   ✓ Claude Code found
@@ -2517,7 +2524,7 @@ Detecting installed coding agents...
   ✗ OpenCode not found
   ✓ Codex found
 
-Add EC to all detected agents? (y/n): n
+Add Reverie to all detected agents? (y/n): n
 
 Select agents to configure:
   [1] Claude Code
@@ -2528,36 +2535,49 @@ Enter numbers (comma-separated): 1,3
 
 Configuring Claude Code...
   ✓ Added MCP server to ~/.claude.json (user scope)
-  ✓ Added @~/.ec/AGENTS.md import to ~/.claude/CLAUDE.md
+  ✓ Added @~/.reverie/AGENTS.md import to ~/.claude/CLAUDE.md
+  ✓ Wrote ~/.claude/commands/reverie-review.md (/reverie-review)
+  ✓ Wrote ~/.claude/commands/reverie-status.md (/reverie-status)
 
 Configuring Codex...
-  ✓ Added [mcp_servers.ec] to ~/.codex/config.toml
+  ✓ Added [mcp_servers.reverie] to ~/.codex/config.toml
+  ✓ Wrote ~/.codex/prompts/reverie-review.md (/prompts:reverie-review)
 
-Creating ~/.ec/ directory...
-  ✓ Created ~/.ec/ec.db (empty brain, initialised)
-  ✓ Created ~/.ec/config.yaml (default configuration)
-  ✓ Created ~/.ec/AGENTS.md (agent instructions)
-  ✓ Created ~/.ec/commands.md (command reference)
+Creating ~/.reverie/ directory...
+  ✓ Created ~/.reverie/reverie.db (empty brain, initialised)
+  ✓ Created ~/.reverie/config.yaml (default configuration)
+  ✓ Wrote ~/.reverie/AGENTS.md (agent instructions)
 
 Checking LLM provider...
   ✓ ANTHROPIC_API_KEY detected (Anthropic)
-  ✓ Configured ~/.ec/config.yaml for Anthropic (anthropic)
-  · Ollama detected — available as an offline fallback (provider "ollama", model "qwen2.5-coder:14b").
+  ✓ Configured ~/.reverie/config.yaml for Anthropic (anthropic)
   Verifying with a live ping...
-  ✓ 'OK' — EC's LLM features are live
+  ✓ 'OK' — Reverie's LLM features are live
 
-EC is ready!
+Reverie is ready!
+
+Configured:
+  Claude Code:
+    ✓ ~/.claude.json
+    ✓ ~/.claude/CLAUDE.md
+    ✓ ~/.claude/commands/reverie-review.md
+    ✓ ~/.claude/commands/reverie-status.md
+    Next: restart Claude Code; the tools load in every project,
+    /reverie-review and /reverie-status are available in the chat.
 
 Commands:
-  /ec-start   Start or resume an EC session on the current branch
-  /ec-stop    End session and review extracted cognition
-  /ec-status   Show session and brain status
+  reverie review   Review pending candidates (terminal UI)
+  reverie enable / reverie disable / reverie repos
+  reverie export / reverie import / reverie reset
 
 How to use:
-  1. Open your coding agent (Claude Code, Cursor, or Codex)
-  2. Run /ec-start to begin a session
-  3. Work normally — the agent will automatically call ec_observe and ec_query
-  4. Run /ec-stop when done to review and save engineering cognition
+  1. Open your coding agent and restart it so the MCP server loads
+  2. Work normally — in an enabled repo, sessions are automatic per
+     branch and never need closing
+  3. The agent asks once whether to turn Reverie on for a new repo
+     (your answer is remembered)
+  4. Review candidates with `reverie review`, or say "show my Reverie
+     candidates" in the agent
 ```
 
 #### Installation Logic per Agent
@@ -2566,9 +2586,9 @@ The install script detects agents by checking for their config files or binaries
 
 **Claude Code:**
 - Detection: `claude` binary on PATH or `~/.claude.json` exists.
-- MCP config: `claude mcp add --scope user --transport stdio ec -- python -m ec.mcp_server`
+- MCP config: `claude mcp add --scope user --transport stdio ec -- python -m reverie.mcp_server`
 - This writes to `~/.claude.json` under the top-level `mcpServers` key (user scope = all projects).
-- Agent instructions: Claude Code reads `CLAUDE.md`, not `AGENTS.md`. The install script adds `@~/.ec/AGENTS.md` to `~/.claude/CLAUDE.md` (or creates it if it doesn't exist). Claude Code's `@file` import syntax loads the EC instructions at session start.
+- Agent instructions: Claude Code reads `CLAUDE.md`, not `AGENTS.md`. The install script adds `@~/.reverie/AGENTS.md` to `~/.claude/CLAUDE.md` (or creates it if it doesn't exist). Claude Code's `@file` import syntax loads the EC instructions at session start.
 - If `~/.claude/CLAUDE.md` already exists, the import line is appended. If not, the file is created with just the import.
 
 **Cursor:**
@@ -2577,15 +2597,15 @@ The install script detects agents by checking for their config files or binaries
 ```json
 {
   "mcpServers": {
-    "ec": {
-      "command": "python",
-      "args": ["-m", "ec.mcp_server"]
+    "reverie": {
+      "command": "reverie-mcp"
     }
   }
 }
 ```
-- If `~/.cursor/mcp.json` already exists, merge the `ec` entry into the existing `mcpServers` object without overwriting other servers.
-- Agent instructions: Cursor reads `.cursorrules` or `.cursor/rules/` files. The install script creates `~/.cursor/rules/ec.md` with a reference to `~/.ec/AGENTS.md`. (Cursor's global rules directory is `~/.cursor/rules/`.)
+- If `~/.cursor/mcp.json` already exists, merge the `reverie` entry into the existing `mcpServers` object without overwriting other servers.
+- Instructions (Phase 3): **no global rules file is written.** Cursor documents no global rules file load path (`~/.cursor/rules` exists as a mechanism but its format is undocumented, and project rules require `.mdc` frontmatter); the usage contract arrives via the server `instructions` field and the tool descriptions, and users who want it always-on paste it into Cursor Settings → Rules (the documented global mechanism). Reverie never writes into the user's repos.
+- Commands: `~/.cursor/commands/reverie-review.md` / `reverie-status.md` (plain markdown; the commands feature is beta).
 
 **OpenCode:**
 - Detection: `opencode` binary on PATH or `~/.config/opencode/opencode.json` exists.
@@ -2594,65 +2614,74 @@ The install script detects agents by checking for their config files or binaries
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "ec": {
+    "reverie": {
       "type": "local",
-      "command": ["python", "-m", "ec.mcp_server"],
+      "command": ["python", "-m", "reverie.mcp_server"],
       "enabled": true
     }
   }
 }
 ```
-- If `~/.config/opencode/opencode.json` already exists, merge the `ec` entry into the existing `mcp` object.
-- Agent instructions: OpenCode reads `AGENTS.md` in the project root. For global instructions, the install script creates `~/.config/opencode/AGENTS.md` with a reference to `~/.ec/AGENTS.md`. (OpenCode's global config directory.)
+- If `~/.config/opencode/opencode.json` already exists, merge the `reverie` entry into the existing `mcp` object.
+- Agent instructions: OpenCode reads `AGENTS.md` in the project root. For global instructions, the install script creates `~/.config/opencode/AGENTS.md` with a reference to `~/.reverie/AGENTS.md`. (OpenCode's global config directory.)
 
 **LLM provider (bring your own; default OpenCode Zen):**
-- Detection: check the environment for every registry provider's key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY / GOOGLE_API_KEY, OPENROUTER_API_KEY, OPENCODE_ZEN_API_KEY) — `ec/providers.py` is the registry.
-- Exactly one key found: the installer offers it as the default ("Configure EC for <provider> using <VAR>? (Y/n)").
+- Detection: check the environment for every registry provider's key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY / GOOGLE_API_KEY, OPENROUTER_API_KEY, OPENCODE_ZEN_API_KEY) — `reverie/providers.py` is the registry.
+- Exactly one key found: the installer offers it as the default ("Configure Reverie for <provider> using <VAR>? (Y/n)").
 - Several found: the installer lists them (marked "✓ key set") and asks the user to pick.
 - None found: the installer lists the providers plus "Local via Ollama" and "Skip for now".
-- Selection merges the resolved `llm` block (provider, base_url, model, api_key_env, wire_format from the registry) into `~/.ec/config.yaml` — existing keys are preserved. The key itself is NEVER written to disk (environment variables only).
+- Selection merges the resolved `llm` block (provider, base_url, model, api_key_env, wire_format from the registry) into `~/.reverie/config.yaml` — existing keys are preserved. The key itself is NEVER written to disk (environment variables only).
 - The installer prints the exact `export VAR='your-key'` line for the chosen provider.
 - Verification: one cheap live ping through the configured model, skippable with `--no-verify` (`--provider <name>` works non-interactively). Success/failure is reported clearly; a failure is never fatal.
 - The MCP server calls the configured LLM directly (`requests`, two wire formats — Anthropic Messages and OpenAI Chat; `llm.wire_format` overrides model-name routing). Different model families use different endpoints (Anthropic Messages API for Claude, OpenAI Chat for others). No LLM SDK is used.
 - Transient failures (429, 5xx, timeouts) are retried with capped exponential backoff and jitter, honouring `Retry-After`; other 4xx errors fail immediately.
-- Extraction failures after retries are persisted (`pending_extractions`) and retried automatically at the next successful `ec_observe`, or manually via `ec-retry` (which also re-diffuses promoted-but-undiffused ECUs).
+- Extraction failures after retries are persisted (`pending_extractions`) and retried automatically at the next successful `reverie_observe`, or manually via `reverie retry` (which also re-diffuses promoted-but-undiffused ECUs).
 - JSON post-processing: Claude models wrap JSON in markdown code fences. The Extractor strips these before parsing (see config block for implementation).
 
 **Ollama (offline fallback):**
 - If the user wants offline/local inference, they can switch the config to `provider: "ollama"` with `model: "qwen2.5-coder:14b"`.
-- Detection: `ollama` binary on PATH. Offer to pull: `ollama pull qwen2.5-coder:14b` (also reachable as the "Local via Ollama" menu option and via `ec install --provider ollama`)
+- Detection: `ollama` binary on PATH. Offer to pull: `ollama pull qwen2.5-coder:14b` (also reachable as the "Local via Ollama" menu option and via `reverie install --provider ollama`)
 - Warning: local model extraction quality is significantly lower than Zen (tested: missed deep invariants, no Self-Review Pass, format compliance issues).
 
 **Codex:**
 - Detection: `codex` binary on PATH or `~/.codex/config.toml` exists.
 - MCP config: Write to `~/.codex/config.toml` (TOML format, NOT JSON):
 ```toml
-[mcp_servers.ec]
-command = "python"
-args = ["-m", "ec.mcp_server"]
+[mcp_servers.reverie]
+command = "reverie-mcp"
 ```
-- If `~/.codex/config.toml` already exists, append the `[mcp_servers.ec]` table without overwriting other configuration.
-- Agent instructions: Codex reads `AGENTS.md`. The install script creates or appends to `~/.codex/AGENTS.md` with a reference to `~/.ec/AGENTS.md`.
+- If `~/.codex/config.toml` already exists, append the `[mcp_servers.reverie]` table without overwriting other configuration.
+- Agent instructions: Codex reads `AGENTS.md`. The install script creates or appends to `~/.codex/AGENTS.md` with a reference to `~/.reverie/AGENTS.md`.
+- Commands: `~/.codex/prompts/reverie-review.md` / `reverie-status.md` (invoked as `/prompts:reverie-review`; custom prompts are deprecated upstream in favour of skills, but remain the user-level command mechanism).
+- Codex reads the MCP `instructions` field of the initialize response as server-wide guidance (documented).
+
+**Gemini CLI (Phase 3):**
+- Detection: `gemini` binary on PATH or `~/.gemini/settings.json` exists.
+- MCP config: Write to `~/.gemini/settings.json` (JSON, `mcpServers.reverie` with `command`/`args`/`env`).
+- Agent instructions: block appended to `~/.gemini/GEMINI.md` (its global context file; `@file` imports supported).
+- Commands: `~/.gemini/commands/reverie-review.toml` / `reverie-status.toml` (TOML, required `prompt`, optional `description`).
+- Gemini CLI appends MCP server instructions to its system instructions (documented).
 
 ### 28.9 AGENTS.md (Copy-Paste Ready for Development)
 
-This is the complete `~/.ec/AGENTS.md` file. The install script writes this verbatim. Development should produce this file exactly.
+This is the complete `~/.reverie/AGENTS.md` file. The install script writes this verbatim. Development should produce this file exactly.
 
 ```markdown
-# Engineering Cognition — Agent Instructions
+# Reverie — Agent Instructions
 
-EC is an MCP server providing engineering memory for your codebase.
-It stores Engineering Cognition Units (ECUs) — conclusions, not facts —
-and retrieves them when you need them.
+Reverie is an MCP server providing engineering memory for your codebase.
+It stores engineering conclusions (the internal record is an Engineering
+Cognition Unit, ECU) — conclusions, not facts — and retrieves them when
+you need them.
 
-EC provides seven MCP tools:
-- ec_observe: Extract engineering conclusions from your reasoning
-- ec_query: Retrieve relevant engineering cognition
-- ec_get_summary: Get brain statistics at session start
-- ec_reconsolidate: Update a retrieved ECU with new evidence
-- ec_set_repo_state: Record the user's enablement answer for a repo
-- ec_review_list: Show the user's pending review candidates
-- ec_review_decide: Apply review decisions the user stated
+Reverie provides seven MCP tools:
+- reverie_observe: Extract engineering conclusions from your reasoning
+- reverie_query: Retrieve relevant engineering cognition
+- reverie_summary: Get brain statistics at session start
+- reverie_reconsolidate: Update a retrieved conclusion with new evidence
+- reverie_set_repo_state: Record the user's enablement answer for a repo
+- reverie_review_list: Show the user's pending review candidates
+- reverie_review_decide: Apply review decisions the user stated
 
 ## Repo Path — Pass It on Every Call
 
@@ -2668,15 +2697,15 @@ a tool call reports that a repo is undecided, ask the user exactly:
 Reverie isn't on for this repo. Turn it on? (yes / not now / never)
 
 Ask this question AT MOST ONCE per conversation. Record the answer with
-ec_set_repo_state:
+reverie_set_repo_state:
 - "yes" -> state="enabled"
 - "not now" -> state="not_now" (stays off for now; do not ask again in
   this conversation)
 - "never" -> state="disabled" (fully off for this repo: nothing is
   captured, retrieved, or injected; existing memory is kept)
 
-If a tool response reports the repo is disabled, do nothing with EC in
-that repo and do not ask again.
+If a tool response reports the repo is disabled, do nothing with
+Reverie in that repo and do not ask again.
 
 ## Sessions Are Automatic
 
@@ -2684,13 +2713,11 @@ In an enabled repo, every branch has a session that is created
 automatically on the first tool call and never needs closing. Switching
 branches mid-conversation switches session memory; long-term memory
 stays shared across branches. Never suggest starting or stopping a
-session. (For compatibility, `ec-start` enables the repo and shows
-status, and `ec-stop` is an alias for `ec review` — do not suggest
-either unless the user asks.)
+session — there is nothing to start or stop.
 
-## When to Call ec_observe
+## When to Call reverie_observe
 
-Call ec_observe AFTER you:
+Call reverie_observe AFTER you:
 - Discover a non-obvious invariant or dependency
 - Debug a tricky issue and find the root cause
 - Make an architectural decision with rationale
@@ -2700,20 +2727,20 @@ Call ec_observe AFTER you:
 Pass your reasoning trace (your thinking, decisions, and rationale) — not
 just the final code output. The Extractor lifts observations into conclusions.
 
-Do NOT call ec_observe for:
+Do NOT call reverie_observe for:
 - Simple code changes with no insight
-- Things already captured in existing ECUs
+- Things already captured in existing conclusions
 - Pure factual observations (e.g., "this function returns a string")
 - Every single response — only when you have engineering insight worth saving
 
-## When to Call ec_query
+## When to Call reverie_query
 
-Call ec_query when you recognize a gap that past engineering cognition might fill.
-Read the relevant code files FIRST. Do NOT call ec_query before you have grounded
-yourself in the repository. EC cognition is a supplement to your understanding,
-not a replacement for reading the code.
+Call reverie_query when you recognize a gap that past engineering cognition might fill.
+Read the relevant code files FIRST. Do NOT call reverie_query before you have grounded
+yourself in the repository. Reverie's memory is a supplement to your
+understanding, not a replacement for reading the code.
 
-Call ec_query AFTER reading the code, when:
+Call reverie_query AFTER reading the code, when:
 - You're about to make a decision between multiple approaches
 - You're debugging and the cause isn't obvious from the code alone
 - You see a pattern in the code you don't recognise
@@ -2723,7 +2750,7 @@ Call ec_query AFTER reading the code, when:
 - You're planning an architectural change and want to check for existing
   architectural decisions or constraints
 
-Do NOT call ec_query:
+Do NOT call reverie_query:
 - Before you have read the relevant code files (this causes anchoring bias)
 - For simple code changes with no engineering insight needed
 - On every single response — only when you genuinely need past context
@@ -2739,62 +2766,63 @@ Pass a natural language query describing what you want to know. Be specific.
 than "dependency injection." The query is embedded and compared semantically —
 precise engineering questions retrieve better than single keywords.
 
-If ec_query returns no results, proceed normally — this means EC has no relevant
-cognition yet. EC starts empty and builds up over sessions.
+If reverie_query returns no results, proceed normally — this means Reverie
+has no relevant memory yet. It starts empty and builds up over sessions.
 
-## When to Call ec_reconsolidate
+## When to Call reverie_reconsolidate
 
-Call ec_reconsolidate when you discover that a previously retrieved ECU needs
-updating based on what you've found in the current codebase. This is how EC
-stays current — beliefs that are no longer accurate get corrected.
+Call reverie_reconsolidate when you discover that a previously retrieved
+conclusion needs updating based on what you've found in the current
+codebase. This is how Reverie stays current — beliefs that are no longer
+accurate get corrected.
 
-Call ec_reconsolidate when:
-- You verified a retrieved ECU against the code and found it's no longer accurate
-- You discovered new evidence that strengthens a retrieved ECU
-- You discovered new evidence that contradicts a retrieved ECU
-- The code an ECU is grounded in has changed, and the conclusion needs updating
+Call reverie_reconsolidate when:
+- You verified a retrieved conclusion against the code and found it's no longer accurate
+- You discovered new evidence that strengthens a retrieved conclusion
+- You discovered new evidence that contradicts a retrieved conclusion
+- The code a conclusion is grounded in has changed, and the conclusion needs updating
 
-Pass the ECU ID (from the ec_query result), your evidence (your reasoning about
+Pass the ECU ID (from the reverie_query result), your evidence (your reasoning about
 what changed), and optionally the relationship (supports/contradicts/supersedes).
 
-Do NOT call ec_reconsolidate for:
-- New insights unrelated to a previously retrieved ECU (use ec_observe)
-- ECUs you haven't retrieved in this session (ec_query first)
+Do NOT call reverie_reconsolidate for:
+- New insights unrelated to a previously retrieved conclusion (use reverie_observe)
+- Conclusions you haven't retrieved in this session (reverie_query first)
 - Simple code changes with no impact on engineering conclusions
 
-If ec_reconsolidate is not available (older EC version), use ec_observe to record
+If reverie_reconsolidate is not available, use reverie_observe to record
 the new finding — the Diffuser will handle the relationship at review time.
 
-## When to Call ec_get_summary
+## When to Call reverie_summary
 
-Call ec_get_summary ONCE at session start to see what EC already knows.
-This helps you decide whether to ec_query for specific context before
-starting work. Returns brain statistics, not individual ECUs.
+Call reverie_summary ONCE at session start to see what Reverie already
+knows. This helps you decide whether to reverie_query for specific context
+before starting work. Returns brain statistics, not individual conclusions.
 
 If the response contains a pending-review backlog line (counts only),
 mention it to the user AT MOST ONCE per conversation and offer two ways
-to review: run `ec review` in a terminal, or say "show my Reverie
+to review: run `reverie review` in a terminal, or say "show my Reverie
 candidates" here. Counts only — never candidate contents.
 
 ## Review — The Human Decides
 
 Observations are stored as review candidates, never promoted
 automatically. The user reviews them:
-- in a terminal with `ec review`, or
+- in a terminal with `reverie review`, or
 - through you: when the user asks to see their Reverie candidates, call
-  ec_review_list and show EVERY candidate's full conclusion text before
+  reverie_review_list and show EVERY candidate's full conclusion text before
   asking what they want to do.
 
 Rules for review through you:
-- Relay ONLY the decisions the user actually states, via ec_review_decide.
+- Relay ONLY the decisions the user actually states, via reverie_review_decide.
 - NEVER decide on the user's behalf.
 - NEVER bulk-accept unless the user explicitly asked for that group.
 - Be honest about the limits: Reverie cannot verify who made a decision;
   every decision is recorded with its channel (tui, agent, or cli).
 
-## Reading EC Output
+## Reading Reverie Output
 
-When ec_query returns ECUs, interpret them as follows:
+When reverie_query returns conclusions, interpret them as follows:
 
 ### Confidence levels:
 - High (>0.7): Reliable, act on this. Verify grounding if the decision is critical.
@@ -2805,91 +2833,63 @@ When ec_query returns ECUs, interpret them as follows:
 ### Status indicators:
 - active: Normal, current belief. Safe to use.
 - challenged: Contradicting evidence exists. Be careful — this belief
-  may be wrong. Check for a newer ECU that might supersede it.
+  may be wrong. Check for a newer conclusion that might supersede it.
 - open_question: Unresolved engineering question with competing hypotheses.
   Both sides may be returned. Treat as "this is debated."
 
 ### Grounding references:
-Every ECU includes grounding references (files, symbols, commit hash).
-ALWAYS verify these against the current codebase before acting on the ECU.
-If the referenced file or symbol no longer exists, the ECU may be stale.
+Every conclusion includes grounding references (files, symbols, commit hash).
+ALWAYS verify these against the current codebase before acting on it.
+If the referenced file or symbol no longer exists, it may be stale.
 
-EC's Maintainer periodically verifies grounding references against the live
-repository and deprecates ECUs whose grounding has disappeared. Deprecated
-ECUs are not returned by ec_query. If you discover that an ECU's grounding
-is stale before EC's Maintainer has caught it, call ec_reconsolidate to
-update the ECU with what you've found.
+Reverie's Maintainer periodically verifies grounding references against the
+live repository and deprecates conclusions whose grounding has disappeared.
+Deprecated conclusions are not returned by reverie_query. If you discover
+that a conclusion's grounding is stale before the Maintainer has caught it,
+call reverie_reconsolidate to update it with what you've found.
 
 ### Warnings:
-ec_query may return warnings (e.g., "2 ECUs have low confidence",
-"1 ECU is challenged"). Read these warnings and adjust your trust accordingly.
+reverie_query may return warnings (e.g., "2 conclusions have low
+confidence", "1 conclusion is challenged"). Read these warnings and adjust
+your trust accordingly.
 
-## What EC Stores
+## What Reverie Stores
 
-ECUs are engineering conclusions, not raw information. Examples:
+Conclusions are engineering conclusions, not raw information. Examples:
 - STORED: "Authentication correctness depends on optimistic token refresh;
   future implementations should preserve this invariant."
 - NOT STORED: "TokenManager.refresh() is called before cache.clear()"
 
-Each ECU has:
+Each record has:
 - cognition: The irreducible engineering conclusion (text)
 - confidence: 0.0 to 1.0, Bayesian-updated belief strength
 - scope: Where this applies (engineering, domain, organization, project, repo,
   module, subsystem)
 - grounding: References to code files, symbols, and commit state
-- edges: Connections to other ECUs (supports, contradicts, supersedes, depends_on)
+- edges: Connections to other conclusions (supports, contradicts, supersedes, depends_on)
 
 ## Important: Anti-Anchoring
 
-EC memory is framed as "past beliefs to verify against current code," NOT
-as authoritative context. Always verify ECUs against the live codebase.
+Reverie's memory is framed as "past beliefs to verify against current
+code," NOT as authoritative context. Always verify conclusions against the
+live codebase.
 Do not anchor on past beliefs if the current code contradicts them.
-If you notice a contradiction, call ec_observe to record the new finding.
+If you notice a contradiction, call reverie_observe to record the new finding.
 
 Observations are stored in the Session Brain, not the Canonical Brain. The
-user reviews the candidates — via `ec review` in a terminal, or through you
+user reviews the candidates — via `reverie review` in a terminal, or through you
 (see "Review — The Human Decides"). Only accepted observations are promoted
 to the Canonical Brain for future use. Don't hesitate to observe something
 uncertain — the review gate filters it.
 ```
 
-### 28.10 Command Templates (Copy-Paste Ready for Development)
+### 28.10 Commands (superseded by §30.3 — Phase 3)
 
-The install script creates three markdown files in `~/.ec/commands/`. These are command templates that agent configs reference. Different agents wire them differently — OpenCode uses `"template": "Execute ~/.ec/commands/ec-start.md"`, while other agents may import them differently.
-
-**`~/.ec/commands/ec-start.md`:**
-```markdown
-(Compat) Enable EC for this repo and show status.
-
-Steps:
-1. Detect the current repository path and git branch.
-2. Record the repo as enabled (ec_set_repo_state with state="enabled").
-3. Report: repo, branch, brain statistics (ec_get_summary).
-4. Sessions are automatic per branch — nothing needs starting.
-```
-
-**`~/.ec/commands/ec-stop.md`:**
-```markdown
-(Compat) Review — an alias for `ec review`.
-
-Steps:
-1. Call ec_review_list to get the pending candidates.
-2. Show every candidate's full conclusion text to the user.
-3. Relay only the decisions the user states, via ec_review_decide.
-4. Never decide on the user's behalf; never bulk-accept unless the user
-   explicitly asked for that group.
-```
-
-**`~/.ec/commands/ec-status.md`:**
-```markdown
-Show current EC status.
-
-Steps:
-1. Check if an EC session is active for the current (repo, branch).
-2. If active: report session duration, branch, repo, session brain ECU count.
-3. Report Canonical Brain: total ECUs, last maintenance run, pending review count.
-4. If no session active: report brain stats only.
-```
+The original templates lived in `~/.reverie/commands/` (`ec-start.md`,
+`ec-stop.md`, `ec-status.md`) and were wired differently per agent. No
+harness ever scanned that directory, and §29 removed the lifecycle they
+automated. Phase 3 replaced them with real user-level slash commands
+installed in each harness's own command directory and format — see §30.3.
 
 ### 28.11 Structured Return Values
 
@@ -2904,7 +2904,7 @@ The agent reads `status` first. If `"error"`, it reads `error` for guidance (e.g
 
 ### 28.12 MCP Tool Descriptions — Written for the Agent
 
-The `description` field in each MCP tool definition is the primary way the agent learns how to use EC. These descriptions are written for the agent, not the human. They must be:
+The `description` field in each MCP tool definition is the primary way the agent learns how to use Reverie. These descriptions are written for the agent, not the human. They must be:
 
 1. **Actionable**: Tell the agent exactly when to call the tool and what to pass.
 2. **Constrained**: Tell the agent when NOT to call the tool.
@@ -2923,7 +2923,7 @@ The extraction flow during a live session:
 Agent generates response (reasoning + output)
          │
          ▼
-Agent calls ec_observe(reasoning_trace)
+Agent calls reverie_observe(reasoning_trace)
          │
          ▼
 Extractor runs on reasoning_trace
@@ -2942,7 +2942,7 @@ Lightweight Diffusion (Section 4.4):
 ECUs stored in Session Brain (session_ecus table)
          │
          ▼
-ECUs immediately available for ec_query in agent's next response
+ECUs immediately available for reverie_query in agent's next response
 ```
 
 The Extractor processes each LLM response independently. ECUs from response 1 enter the Session Brain immediately and are available for response 2 (Section 5, line 667). No batching — extraction is per-response.
@@ -2956,7 +2956,7 @@ At `/ec-stop`, all Session Brain ECUs go to the Review Gate. Only after human re
 │                     Coding Agent                             │
 │  (Claude Code / Cursor / OpenCode / Codex)                  │
 │                                                             │
-│  Reads ~/.ec/AGENTS.md (via CLAUDE.md import,               │
+│  Reads ~/.reverie/AGENTS.md (via CLAUDE.md import,               │
 │    .cursor/rules/, ~/.config/opencode/, ~/.codex/AGENTS.md) │
 │                                                             │
 │  User runs: /ec-start, /ec-stop, /ec-status                 │
@@ -2965,9 +2965,9 @@ At `/ec-stop`, all Session Brain ECUs go to the Review Gate. Only after human re
                     stdio (MCP)
                          │
 ┌────────────────────────▼────────────────────────────────────┐
-│              EC MCP Server (python -m ec.mcp_server)        │
+│              EC MCP Server (python -m reverie.mcp_server)        │
 │                                                             │
-│  Tools: ec_observe, ec_query, ec_get_summary               │
+│  Tools: reverie_observe, reverie_query, reverie_summary               │
 │                                                             │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────┐  │
 │  │Extractor │  │ Diffuser │  │Retrieval │  │Maintainer │  │
@@ -2977,7 +2977,7 @@ At `/ec-stop`, all Session Brain ECUs go to the Review Gate. Only after human re
 │       └──────────────┴──────┬───────┴──────────────┘        │
 │                              │                               │
 │              ┌───────────────▼───────────────┐               │
-│              │     ~/.ec/ec.db (SQLite)      │               │
+│              │     ~/.reverie/reverie.db (SQLite)      │               │
 │              │                               │               │
 │              │  ecus table (Canonical Brain) │               │
 │              │  edges table                  │               │
@@ -3012,24 +3012,24 @@ product; §28.5's (repo, branch) session keying and the review gate itself
 
 Three states per repo — `undecided` (default) | `enabled` | `disabled` —
 stored in the global brain's `repos` table, never inside the repo.
-`~/.ec`-local, keyed by the repo's identity (D58). Plus a recorded
+`~/.reverie`-local, keyed by the repo's identity (D58). Plus a recorded
 `asked_at` stamp ("asked once, still undecided").
 
 - Every Reverie tool call first resolves the repo: the tool's optional
   `repo_path` argument (the agent's workspace path — global MCP servers
   may be started in the home folder) wins; fallback is the server's
-  working directory (and the `EC_REPO_PATH`/`EC_BRANCH` overrides).
+  working directory (and the `REVERIE_REPO_PATH`/`REVERIE_BRANCH` overrides).
 - `undecided` → every tool returns a short, structured ask-the-user
   response instead of acting: "Reverie isn't on for this repo. Turn it
   on? (yes / not now / never)". The agent asks once per conversation and
-  records the answer with `ec_set_repo_state`: `yes` → `enabled`,
+  records the answer with `reverie_set_repo_state`: `yes` → `enabled`,
   `not now` → `not_now` (asked, stays off), `never` → `disabled`.
 - `disabled` → fully off for that repo: no capture, no retrieval,
   nothing injected. Existing data is kept; re-enabling resumes with
-  everything intact (`ec disable` says so in its output).
-- Commands: `ec enable`, `ec disable` (inside a repo, any time), `ec
+  everything intact (`reverie disable` says so in its output).
+- Commands: `reverie enable`, `reverie disable` (inside a repo, any time), `ec
   repos` (every known repo with state + counts), MCP tool
-  `ec_set_repo_state(state)`.
+  `reverie_set_repo_state(state)`.
 
 ### 29.2 Repo identity, worktrees, moves (D58)
 
@@ -3045,7 +3045,7 @@ stored in the global brain's `repos` table, never inside the repo.
   Reverie re-matches by the recorded origin remote URL: exactly one
   match adopts the old state and re-keys onto the new path; ambiguous
   (several known repos share the URL) or URL-less remotes start fresh
-  as `undecided` (a plain `ec enable` resolves it).
+  as `undecided` (a plain `reverie enable` resolves it).
 - **Branch switches** are resolved on every tool call. A session whose
   branch no longer exists locally is marked `archived` at lookup
   (best-effort; never on git failure); its unreviewed candidates stay
@@ -3061,7 +3061,7 @@ Sessions are never closed by the user: activation decays on its own on
 load (§6.6), labile-ECU tracking is keyed per session so it stays
 correct across branch switches, and nothing in the review flow depends
 on a close. The D15 rule (the server never creates sessions) survives
-only for the bench harness's hidden hooks (`ec.session bench-start` /
+only for the bench harness's hidden hooks (`reverie.session bench-start` /
 `bench-close`), which exist so EC-Bench keeps measuring isolated
 sessions.
 
@@ -3085,7 +3085,7 @@ rejects/skips reverse from a snapshot.
 - **Expiry:** candidates unreviewed for `review.expire_after_days`
   (default 21; 0 disables) become `expired` — kept, never deleted,
   still usable in session memory, never promoted until the user
-  revives them with `ec review --expired` (revive stamps a fresh
+  revives them with `reverie review --expired` (revive stamps a fresh
   lease).
 - **Audit trail:** every decision records candidate id, decision,
   edited text, timestamp, and channel (`tui` | `agent` | `cli`) in
@@ -3095,48 +3095,48 @@ rejects/skips reverse from a snapshot.
 
 ### 29.5 Review through the agent (D57)
 
-`ec_review_list` returns the same ordered page as the TUI in a compact
+`reverie_review_list` returns the same ordered page as the TUI in a compact
 form plus a short-lived `review_token` (TTL 1 h, server-held).
-`ec_review_decide(review_token, decisions)` applies decisions only to
+`reverie_review_decide(review_token, decisions)` applies decisions only to
 ids returned under that token, refuses a bulk accept-all (all ids of a
 multi-candidate token accepted in one call), and records the channel as
 `agent`. Tokens are single-use: a successful decide call consumes the
 token, so accepting part of a listing and then the rest in a second call
 with the same token is refused — the next batch requires a fresh
-`ec_review_list`. This adds friction; it is not a security boundary
+`reverie_review_list`. This adds friction; it is not a security boundary
 (§29.4's honesty note stands: the channel is the record). The agent
-instructions (`~/.ec/AGENTS.md`) require: show every candidate's full
+instructions (`~/.reverie/AGENTS.md`) require: show every candidate's full
 text before asking; relay only stated decisions; never decide on the
 user's behalf; never bulk-accept unless the user explicitly asked for
 that group.
 
 ### 29.6 The nudge (D57)
 
-`ec_get_summary` adds one counts-only line when the unreviewed backlog
+`reverie_summary` adds one counts-only line when the unreviewed backlog
 exceeds `review.nudge_threshold` (10) or the oldest unreviewed candidate
 is older than `review.nudge_age_days` (5). When a repo resolves, the line
-splits the count to match what `ec_review_list` will show for that repo
+splits the count to match what `reverie_review_list` will show for that repo
 — e.g. "14 conclusions waiting for review (3 in this repo, oldest 6
 days)"; outside a repo it stays global-only ("14 conclusions waiting for
 review (oldest 6 days)"). The agent mentions it at most once per
-conversation and offers both review paths (terminal `ec review`, or
+conversation and offers both review paths (terminal `reverie review`, or
 "show my Reverie candidates" here). Counts only, never contents (§11.3).
 
 ### 29.7 Export, import, reset (D58)
 
-- `ec export [file]` — one ZIP: a consistent `VACUUM INTO` snapshot of
+- `reverie export [file]` — one ZIP: a consistent `VACUUM INTO` snapshot of
   the whole brain plus `manifest.json` (Reverie version, schema
   version = `PRAGMA user_version`, embedding model + dimensions, row
   counts, date).
-- `ec import <file>` — allowed directly when the local brain is empty;
+- `reverie import <file>` — allowed directly when the local brain is empty;
   otherwise requires `--replace`, which takes an automatic backup
   export first and prints its path. **Merging two brains is out of
   scope** (stated in the help text). Refused with a clear message when
   the embedding model or dimensions mismatch, or when the export's
   schema is newer than this Reverie.
-- `ec install --import <file>` — the new-machine migration path; only
+- `reverie install --import <file>` — the new-machine migration path; only
   an empty (freshly bootstrapped) brain accepts it.
-- `ec reset` — requires typing `reset`; `--yes` skips the prompt but
+- `reverie reset` — requires typing `reset`; `--yes` skips the prompt but
   still takes the automatic backup first and prints its path.
   `--repo <path>` resets only that repo's sessions + candidates
   (long-term memory and the enablement row are kept).
@@ -3144,16 +3144,17 @@ conversation and offers both review paths (terminal `ec review`, or
   use (29.2); sessions tied to paths that don't exist on the new
   machine stay inert.
 
-### 29.8 Compatibility shims (deprecated)
+### 29.8 Compatibility shims (removed in Phase 3)
 
-`ec-start` enables the repo and shows status (nothing needs starting);
-`ec-stop` aliases `ec review` (old `--all-accept`/`--all-skip` flags are
-refused with a deprecation note; `--resolve-open-questions` still works
-and moved to `ec review`); `ec-status` unchanged (also available as
-`ec status`). Bare `ec` prints the multi-command help; a mistyped first
-word is an error with a "did you mean" hint; only invocations whose
-first argument starts with `-` fall through to the installer. Docs no
-longer present `ec-start`/`ec-stop` as the normal flow.
+Phase 3 removed the deprecated shims entirely — no external users existed,
+so there was one clean rename with no aliases. `ec-start`, `ec-stop`,
+`ec-status`, `ec-retry` and `ec-repair` are gone as console scripts:
+`reverie retry` and `reverie repair` are subcommands of the one `reverie`
+CLI, `reverie status` is the status report, and `reverie review` is the
+review surface (with `--resolve-open-questions`). Bare `reverie` prints the
+multi-command help; a mistyped first word is an error with a "did you mean"
+hint. The old flags (`--all-accept`/`--all-skip`) are gone with the shims —
+review is per-candidate or per-group by explicit choice only.
 
 ### 29.9 New dependency policy
 
@@ -3162,3 +3163,100 @@ text, single-keypress input uses stdlib `termios`/`tty` on POSIX with a
 line-based fallback elsewhere and for non-TTY stdin. `rich` /
 `prompt_toolkit` / Textual were considered and rejected — the screen is
 one candidate, a few muted metadata lines and one key-hint line.
+
+---
+
+## Section 30 — Phase 3: the Reverie rename and real users (`feat/reverie`, 2026-10-15)
+
+No external users existed, so this was ONE clean rename with no
+compatibility aliases. Everything a user sees is now `reverie`.
+
+### 30.1 Names
+
+| Thing | Was | Now |
+|---|---|---|
+| Python package / module | `ec` | `reverie` |
+| CLI | `ec` (+ `ec-start`/`ec-stop`/`ec-status`/`ec-retry`/`ec-repair` scripts) | `reverie` with subcommands `install enable disable repos review status export import reset retry repair uninstall`; the only other console script is `reverie-mcp` |
+| MCP server (in harness configs) | `ec` / `mcp.ec` / `[mcp_servers.ec]` | `reverie` / `mcp.reverie` / `[mcp_servers.reverie]` |
+| MCP server name (initialize `serverInfo`) | `ec` | `reverie` |
+| Tools | `ec_observe`, `ec_query`, `ec_get_summary`, `ec_reconsolidate`, `ec_set_repo_state`, `ec_review_list`, `ec_review_decide` | `reverie_observe`, `reverie_query`, `reverie_summary`, `reverie_reconsolidate`, `reverie_set_repo_state`, `reverie_review_list`, `reverie_review_decide` |
+| Data directory | `~/.ec` | `~/.reverie` |
+| Database file | `ec.db` | `reverie.db` |
+| Env vars | `EC_HOME`, `EC_REPO_PATH`, `EC_BRANCH` | `REVERIE_HOME`, `REVERIE_REPO_PATH`, `REVERIE_BRANCH` |
+| Instructions file | `~/.ec/AGENTS.md` | `~/.reverie/AGENTS.md` |
+| Distribution (PyPI) | `engineering-cognition` | `reverie` (name verified free 2026-10-15; `reverie-memory` is an unrelated package) |
+
+Names that stay: **Engineering Cognition** (the research programme),
+**EC-Bench** (the published benchmark), **ECU** (the internal schema name).
+User-facing text — CLI output, tool descriptions, agent instructions,
+README — says "conclusion"; the README glossary explains that a conclusion
+is stored internally as an ECU.
+
+### 30.2 MCP `instructions` field
+
+The initialize response carries `instructions`: the core usage contract in
+a few lines — query only after reading the code; treat results as past
+understanding to verify against current code; never decide reviews for the
+user; ask once per repo before turning Reverie on; pass `repo_path` on
+every call. This works in any client that surfaces server instructions and
+is the fallback where instruction files aren't read. Client support
+(vendor docs, 2026-10-15): Claude Code — documented; Codex — documented
+("reads the MCP `instructions` field … uses it as server-wide guidance");
+Gemini CLI — documented ("appended to the system instructions"); OpenCode —
+captured in recent versions (source; not clearly documented); Cursor — not
+documented (rely on tool descriptions).
+
+### 30.3 Harness integration (per current vendor docs, 2026-10-15)
+
+- **Claude Code** — user-scope MCP in `~/.claude.json` (top-level
+  `mcpServers`); `@~/.reverie/AGENTS.md` import in `~/.claude/CLAUDE.md`
+  (auto-trusted for user files); user-level commands in
+  `~/.claude/commands/*.md` (legacy command files still work; commands
+  have merged into skills).
+- **Codex** — `[mcp_servers.reverie]` in `~/.codex/config.toml`; global
+  instructions `~/.codex/AGENTS.md`; commands `~/.codex/prompts/*.md`
+  (deprecated upstream, still the user-level mechanism).
+- **Cursor** — global MCP `~/.cursor/mcp.json`; **no global rules file is
+  written** (Cursor documents no global rules file format; the documented
+  global mechanism is User Rules in settings); commands
+  `~/.cursor/commands/*.md` (beta, plain markdown).
+- **OpenCode** — `mcp.reverie` in `~/.config/opencode/opencode.json`
+  (`type: local`, argv `command`, `environment` key — v1 shape); global
+  rules `~/.config/opencode/AGENTS.md`; commands
+  `~/.config/opencode/commands/*.md` (plural; markdown + frontmatter).
+- **Gemini CLI** — `mcpServers.reverie` in `~/.gemini/settings.json`;
+  global context `~/.gemini/GEMINI.md`; commands
+  `~/.gemini/commands/*.toml` (TOML, required `prompt`).
+
+Each harness gets `/reverie-review` and `/reverie-status`. The installer
+ends with a per-harness summary of what was written and the next step.
+Uninstall removes all of the above (reverse merges; verbatim-owned files
+deleted only while unedited) after showing the full plan and taking ONE
+confirmation.
+
+### 30.4 Request shapes for post-Opus-4.6 Claude models
+
+Anthropic models released after Claude Opus 4.6 (Opus 4.7/4.8/5/5.5,
+Sonnet 5/5.5, Haiku 5.5) return HTTP 400 for any non-default
+`temperature`/`top_p`/`top_k`. `call_llm` therefore omits the sampling
+parameters for that family — one conservative model-name rule
+(`reverie.llm._claude_rejects_sampling`, vendor prefixes and dated suffixes
+stripped; forceable with `llm.claude_no_sampling`), consistent with the
+OpenAI reasoning-model rule (`llm.openai_reasoning`).
+
+These models also run adaptive thinking by default, billed as output
+tokens. The cheapest valid configuration per model, applied only on the
+Anthropic wire format:
+
+- `claude-haiku-5-5`: `thinking: {"type": "disabled"}` (valid at effort
+  `high` or below) + `output_config: {"effort": "low"}`.
+- `claude-sonnet-5-5`: `disabled` is rejected at every effort; the
+  documented alternative is `thinking: {"type": "between_tools"}` +
+  effort `low`.
+- `claude-opus-5-5`: thinking cannot be disabled; the request sends no
+  `thinking` field, only `output_config: {"effort": "low"}`.
+
+`max_tokens` is still required and always sent. `anthropic-version:
+2023-06-01` remains current. Source checked 2026-10-15:
+platform.claude.com/docs/en/build-with-claude/thinking,
+/docs/en/models/haiku-5-5/migration-guide, /docs/en/api/messages.

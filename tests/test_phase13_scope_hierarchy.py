@@ -16,8 +16,8 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import pytest
 
-from ec.brain import Brain
-from ec.retrieval import (
+from reverie.brain import Brain
+from reverie.retrieval import (
     _filter_by_scope_hierarchy,
     retrieve,
 )
@@ -25,13 +25,13 @@ from ec.retrieval import (
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 

@@ -24,10 +24,10 @@ from unittest.mock import patch
 
 import pytest
 
-from ec import maintainer
-from ec.brain import Brain
-from ec.config import DEFAULT_CONFIG, AttrDict, _to_attrdict
-from ec.maintainer import (
+from reverie import maintainer
+from reverie.brain import Brain
+from reverie.config import DEFAULT_CONFIG, AttrDict, _to_attrdict
+from reverie.maintainer import (
     TASK_ORDER,
     MaintainerThread,
     MaintenanceResult,
@@ -53,7 +53,7 @@ def config():
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -92,7 +92,7 @@ def seed_run(brain, last_run_at, ecu_count):
 
 class TestSchemaMigration:
     def test_fresh_db_has_maintenance_tables(self, tmp_path):
-        b = Brain(tmp_path / "ec.db")
+        b = Brain(tmp_path / "reverie.db")
         try:
             names = set(b.table_names())
             assert "maintenance_state" in names
@@ -188,7 +188,7 @@ class TestRunMaintenance:
 
         assert isinstance(result, MaintenanceResult)
         assert [t.action for t in result.tasks] == list(TASK_ORDER)
-        # ec_get_summary's last_maintenance_run is now populated
+        # reverie_summary's last_maintenance_run is now populated
         assert brain.last_maintenance_run() is not None
 
     def test_maintenance_state_persisted(self, brain, config):
@@ -286,13 +286,13 @@ class TestMaintainerThread:
     ):
         """Daemon thread wakes each interval and runs maintenance when
         overdue (#7)."""
-        with patch("ec.maintainer.is_maintenance_overdue",
+        with patch("reverie.maintainer.is_maintenance_overdue",
                    return_value=True), \
-             patch("ec.maintainer.run_maintenance") as mock_run:
+             patch("reverie.maintainer.run_maintenance") as mock_run:
             t = MaintainerThread(brain, fast, check_interval=0.05)
             t.start()
             assert t.daemon is True
-            assert t.name == "ec-maintainer"
+            assert t.name == "reverie-maintainer"
             deadline = time.monotonic() + 5.0
             while mock_run.call_count == 0 and time.monotonic() < deadline:
                 time.sleep(0.01)
@@ -303,9 +303,9 @@ class TestMaintainerThread:
 
     def test_background_thread_skips_when_not_overdue(self, brain, fast):
         """Trigger check gates the run: not overdue -> no maintenance."""
-        with patch("ec.maintainer.is_maintenance_overdue",
+        with patch("reverie.maintainer.is_maintenance_overdue",
                    return_value=False), \
-             patch("ec.maintainer.run_maintenance") as mock_run:
+             patch("reverie.maintainer.run_maintenance") as mock_run:
             t = MaintainerThread(brain, fast, check_interval=0.05)
             t.start()
             time.sleep(0.15)
@@ -315,8 +315,8 @@ class TestMaintainerThread:
 
     def test_background_thread_stops(self, brain, fast):
         """stop() sets the event; the thread exits without running again (#8)."""
-        with patch("ec.maintainer.is_maintenance_overdue", return_value=True), \
-             patch("ec.maintainer.run_maintenance"):
+        with patch("reverie.maintainer.is_maintenance_overdue", return_value=True), \
+             patch("reverie.maintainer.run_maintenance"):
             t = MaintainerThread(brain, fast, check_interval=0.05)
             t.start()
             t.stop()
@@ -332,9 +332,9 @@ class TestMaintainerThread:
             calls.append(1)
             raise RuntimeError("transient failure")
 
-        with patch("ec.maintainer.is_maintenance_overdue",
+        with patch("reverie.maintainer.is_maintenance_overdue",
                    return_value=True), \
-             patch("ec.maintainer.run_maintenance", side_effect=flaky_run):
+             patch("reverie.maintainer.run_maintenance", side_effect=flaky_run):
             t = MaintainerThread(brain, fast, check_interval=0.05)
             t.start()
             deadline = time.monotonic() + 5.0
@@ -348,7 +348,7 @@ class TestMaintainerThread:
 
     def test_disabled_maintainer_thread_does_nothing(self, brain):
         cfg = make_config(enabled=False)
-        with patch("ec.maintainer.run_maintenance") as mock_run:
+        with patch("reverie.maintainer.run_maintenance") as mock_run:
             t = MaintainerThread(brain, cfg, check_interval=0.05)
             t.start()
             time.sleep(0.15)
@@ -366,8 +366,8 @@ class TestMaintainerThread:
             return MaintenanceResult(started_at=iso(utcnow()),
                                      finished_at=iso(utcnow()))
 
-        with patch("ec.maintainer.is_maintenance_overdue", return_value=True), \
-             patch("ec.maintainer.run_maintenance", side_effect=capture):
+        with patch("reverie.maintainer.is_maintenance_overdue", return_value=True), \
+             patch("reverie.maintainer.run_maintenance", side_effect=capture):
             t = MaintainerThread(None, fast, check_interval=0.05,
                                  db_path=brain.db_path)
             t.start()
@@ -381,10 +381,10 @@ class TestMaintainerThread:
 
 
 # ---------------------------------------------------------------------------
-# ECServer startup check + non-blocking guarantee (#6, #10)
+# ReverieServer startup check + non-blocking guarantee (#6, #10)
 # ---------------------------------------------------------------------------
 
-from ec.mcp_server import ECServer  # noqa: E402  (import here to keep the
+from reverie.mcp_server import ReverieServer  # noqa: E402  (import here to keep the
 
                                      # module-level import list maintainer-only)
 
@@ -392,7 +392,7 @@ from ec.mcp_server import ECServer  # noqa: E402  (import here to keep the
 class TestServerStartupCheck:
     @pytest.fixture()
     def server(self, brain, config):
-        s = ECServer(brain=brain, config=config)
+        s = ReverieServer(brain=brain, config=config)
         yield s
         s.stop_maintenance()
 
@@ -400,7 +400,7 @@ class TestServerStartupCheck:
         """Overdue brain -> synchronous run at startup + thread started (#6)."""
         seed_run(brain, utcnow() - timedelta(days=30), ecu_count=0)
         insert_ecu(brain)
-        with patch("ec.maintainer.run_maintenance",
+        with patch("reverie.maintainer.run_maintenance",
                    wraps=maintainer.run_maintenance) as mock_run:
             ran = server.start_maintenance()
         assert ran is not None
@@ -412,16 +412,16 @@ class TestServerStartupCheck:
         """Recent run + few new ECUs -> no synchronous run, but the
         background thread still starts."""
         seed_run(brain, utcnow() - timedelta(minutes=1), ecu_count=0)
-        with patch("ec.maintainer.run_maintenance") as mock_run:
+        with patch("reverie.maintainer.run_maintenance") as mock_run:
             ran = server.start_maintenance()
         assert ran is None
         mock_run.assert_not_called()
         assert server._maintainer_thread is not None
 
     def test_startup_check_disabled(self, brain):
-        server = ECServer(brain=brain, config=make_config(enabled=False))
+        server = ReverieServer(brain=brain, config=make_config(enabled=False))
         try:
-            with patch("ec.maintainer.run_maintenance") as mock_run:
+            with patch("reverie.maintainer.run_maintenance") as mock_run:
                 ran = server.start_maintenance()
             assert ran is None
             mock_run.assert_not_called()
@@ -433,7 +433,7 @@ class TestServerStartupCheck:
         """A failing startup run is swallowed; the server still starts the
         thread and answers requests."""
         seed_run(brain, utcnow() - timedelta(days=30), ecu_count=0)
-        with patch("ec.maintainer.run_maintenance",
+        with patch("reverie.maintainer.run_maintenance",
                    side_effect=RuntimeError("boom")):
             ran = server.start_maintenance()      # must not raise
         assert ran is None
@@ -447,7 +447,7 @@ class TestServerStartupCheck:
         and the stdio loop never joins the maintainer thread."""
         cfg = make_config(check_interval_minutes=0.001)   # ~60ms checks
         seed_run(brain, utcnow() - timedelta(minutes=1), ecu_count=0)
-        server = ECServer(brain=brain, config=cfg)
+        server = ReverieServer(brain=brain, config=cfg)
 
         started = threading.Event()
         release = threading.Event()
@@ -459,7 +459,7 @@ class TestServerStartupCheck:
                                      finished_at=iso(utcnow()))
 
         try:
-            with patch("ec.maintainer.run_maintenance", side_effect=slow_run):
+            with patch("reverie.maintainer.run_maintenance", side_effect=slow_run):
                 assert server.start_maintenance() is None   # fresh: no sync run
                 # trip the real ECU-count trigger
                 for i in range(10):

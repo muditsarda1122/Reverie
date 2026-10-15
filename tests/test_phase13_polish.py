@@ -1,7 +1,7 @@
 """Phase 13 tests — polish items (design doc §9 + §10, D56 + D57).
 
 §9 (D56): ``rejection_summary`` is parsed by the extractor since Phase 2 but
-was never surfaced in the ec_observe payload — §5.3 says the point is to
+was never surfaced in the reverie_observe payload — §5.3 says the point is to
 "make the filtering visible and debuggable". Now it ships.
 
 §10 (D57): /ec-status must report a pending review count (§28.10 step 3).
@@ -10,7 +10,7 @@ session's (repo, branch) when one is active; ``brain_summary`` carries it in
 the canonical_brain block.
 
 Run: .venv/bin/python -m pytest tests/test_phase13_polish.py -v
-Offline: mocked LLM calls for ec_observe; real embeddings.
+Offline: mocked LLM calls for reverie_observe; real embeddings.
 """
 
 import os
@@ -22,10 +22,10 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.brain import Brain
-from ec.mcp_server import ECServer
-from ec.session import SessionManager, brain_summary
-from ec.session import main as session_main
+from reverie.brain import Brain
+from reverie.mcp_server import ReverieServer
+from reverie.session import SessionManager, brain_summary
+from reverie.session import main as session_main
 
 REPO_A, REPO_B = "/repos/project-a", "/repos/project-b"
 BRANCH = "main"
@@ -57,13 +57,13 @@ EMPTY_PAYLOAD = json.dumps({
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -75,13 +75,13 @@ def manager(brain):
 
 def enable_repo(brain):
     """feat/flow: enable the env-detected repo (call AFTER setenv)."""
-    from ec import repos
+    from reverie import repos
     repos.set_repo_state(brain, repos.resolve_repo(), "enabled")
 
 
 @pytest.fixture()
 def server(brain, manager, model):
-    return ECServer(brain=brain, manager=manager, embedding_model=model)
+    return ReverieServer(brain=brain, manager=manager, embedding_model=model)
 
 
 def call_tool(server, name, arguments=None):
@@ -105,21 +105,21 @@ def _pending_ecu(brain, sid, cognition):
 
 
 # ---------------------------------------------------------------------------
-# §9 / D56 — rejection_summary in the ec_observe payload
+# §9 / D56 — rejection_summary in the reverie_observe payload
 # ---------------------------------------------------------------------------
 
 class TestRejectionSummary:
     def test_rejection_summary_in_payload(self, tmp_path, monkeypatch, brain,
                                           server, manager):
-        monkeypatch.setenv("EC_REPO_PATH", REPO_A)
-        monkeypatch.setenv("EC_BRANCH", BRANCH)
+        monkeypatch.setenv("REVERIE_REPO_PATH", REPO_A)
+        monkeypatch.setenv("REVERIE_BRANCH", BRANCH)
         enable_repo(brain)
         manager.start_session()
 
-        with patch("ec.extractor.call_llm", return_value=OBSERVE_PAYLOAD), \
-             patch("ec.diffuser.call_llm",
+        with patch("reverie.extractor.call_llm", return_value=OBSERVE_PAYLOAD), \
+             patch("reverie.diffuser.call_llm",
                   return_value=json.dumps({"classifications": []})):
-            payload, result = call_tool(server, "ec_observe", {
+            payload, result = call_tool(server, "reverie_observe", {
                 "user_prompt": "p",
                 "reasoning_trace": "I traced the auth race to refresh order...",
             })
@@ -136,15 +136,15 @@ class TestRejectionSummary:
                                                         server, manager):
         """Extractor omits the field (e.g. nothing rejected) → empty string,
         never a KeyError."""
-        monkeypatch.setenv("EC_REPO_PATH", REPO_A)
-        monkeypatch.setenv("EC_BRANCH", BRANCH)
+        monkeypatch.setenv("REVERIE_REPO_PATH", REPO_A)
+        monkeypatch.setenv("REVERIE_BRANCH", BRANCH)
         enable_repo(brain)
         manager.start_session()
 
-        with patch("ec.extractor.call_llm", return_value=EMPTY_PAYLOAD), \
-             patch("ec.diffuser.call_llm",
+        with patch("reverie.extractor.call_llm", return_value=EMPTY_PAYLOAD), \
+             patch("reverie.diffuser.call_llm",
                   return_value=json.dumps({"classifications": []})):
-            payload, _ = call_tool(server, "ec_observe", {
+            payload, _ = call_tool(server, "reverie_observe", {
                 "user_prompt": "p", "reasoning_trace": "r"})
 
         assert payload["status"] == "ok"
@@ -194,7 +194,7 @@ class TestPendingReviewCount:
 
 
 # ---------------------------------------------------------------------------
-# §10 — brain_summary carries it (ec_get_summary + /ec-status payload)
+# §10 — brain_summary carries it (reverie_summary + /ec-status payload)
 # ---------------------------------------------------------------------------
 
 class TestSummaryIntegration:
@@ -207,7 +207,7 @@ class TestSummaryIntegration:
         summary = brain_summary(brain, row)
 
         assert summary["canonical_brain"]["pending_review_count"] == 3
-        assert "3 ECU(s) awaiting review" in summary["message"]
+        assert "3 conclusion(s) awaiting review" in summary["message"]
 
     def test_zero_pending_adds_no_sentence(self, brain):
         brain.create_session(REPO_A, BRANCH)
@@ -228,16 +228,16 @@ class TestSummaryIntegration:
         summary = brain_summary(brain, None)      # no active session
 
         assert summary["canonical_brain"]["pending_review_count"] == 3
-        assert "3 ECU(s) awaiting review" in summary["message"]
+        assert "3 conclusion(s) awaiting review" in summary["message"]
 
     def test_status_cli_prints_pending_line(self, tmp_path, monkeypatch,
                                             capsys):
         """/ec-status surfaces the count through its printed message
         (§28.10 step 3)."""
-        home = tmp_path / "ec_home"
+        home = tmp_path / "reverie_home"
         home.mkdir()
-        monkeypatch.setenv("EC_HOME", str(home))
-        b = Brain(home / "ec.db")
+        monkeypatch.setenv("REVERIE_HOME", str(home))
+        b = Brain(home / "reverie.db")
         sid = b.create_session(REPO_A, BRANCH)
         for i in range(2):
             _pending_ecu(b, sid, f"Unreviewed {i}")
@@ -247,4 +247,4 @@ class TestSummaryIntegration:
         out = capsys.readouterr().out
 
         assert code == 0
-        assert "2 ECU(s) awaiting review" in out
+        assert "2 conclusion(s) awaiting review" in out

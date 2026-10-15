@@ -15,19 +15,19 @@ Two layers live in this module:
 
 The LIVE test's flow (steps a–g):
 
-  a. fresh brain (EC_HOME=/tmp/ec_e2e_test); the repo is enabled via the
-     real `ec enable` CLI subprocess (repo /tmp/fastapi, branch main) —
+  a. fresh brain (REVERIE_HOME=/tmp/ec_e2e_test); the repo is enabled via the
+     real `reverie enable` CLI subprocess (repo /tmp/fastapi, branch main) —
      NO session is created by enabling
-  b. the first ec_observe auto-creates the session (D56)
-  c. a realistic 2-paragraph FastAPI routing investigation through ec_observe
+  b. the first reverie_observe auto-creates the session (D56)
+  c. a realistic 2-paragraph FastAPI routing investigation through reverie_observe
      (extract -> store -> lightweight diffuse, all live LLM calls)
   d. ECUs extracted + stored in the session brain
   e. edges created (session edges / pending updates during observe — reported;
       firm supports/depends_on assertion on CANONICAL edges after promotion)
-  f. ec_query "How does FastAPI routing work?" — groups contain the
+  f. reverie_query "How does FastAPI routing work?" — groups contain the
      extracted ECUs; the relevance gate filters a deliberately irrelevant
      session ECU; activation normalized; §11.8 formatted structure
-  g. review through the review queue: ec_review_list → ec_review_decide,
+  g. review through the review queue: reverie_review_list → reverie_review_decide,
      decisions applied, the agent channel recorded, tokens single-use;
      accepted ECUs promoted to the Canonical Brain (full diffuser)
   h. retrieval in a LATER conversation on the same branch: the SAME session
@@ -56,14 +56,14 @@ from pathlib import Path
 
 import pytest
 
-from ec.brain import Brain
-from ec.config import load_config
-from ec.llm import api_key
-from ec.mcp_server import ECServer
-from ec.session import SessionManager
+from reverie.brain import Brain
+from reverie.config import load_config
+from reverie.llm import api_key
+from reverie.mcp_server import ReverieServer
+from reverie.session import SessionManager
 
 ROOT = Path(__file__).resolve().parent.parent
-EC_HOME_DIR = Path("/tmp/ec_e2e_test")
+REVERIE_HOME_DIR = Path("/tmp/ec_e2e_test")
 REPO, BRANCH = "/tmp/fastapi", "main"
 # detect_repo_branch() canonicalizes via Path.resolve() (macOS /tmp is a
 # symlink to /private/tmp) — direct DB lookups must use the resolved path.
@@ -188,16 +188,16 @@ OFFTOPIC_ECU = {
 
 @pytest.fixture(scope="module")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
 def _cli_env() -> dict:
     env = dict(os.environ)
     env.update({
-        "EC_HOME": str(EC_HOME_DIR),
-        "EC_REPO_PATH": REPO,
-        "EC_BRANCH": BRANCH,
+        "REVERIE_HOME": str(REVERIE_HOME_DIR),
+        "REVERIE_REPO_PATH": REPO,
+        "REVERIE_BRANCH": BRANCH,
         "PYTHONPATH": str(ROOT),
         "HF_HUB_OFFLINE": "1",
     })
@@ -206,7 +206,7 @@ def _cli_env() -> dict:
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", "ec.session", *args],
+        [sys.executable, "-m", "reverie.session", *args],
         capture_output=True, text=True, env=_cli_env(), cwd=ROOT, timeout=300,
     )
 
@@ -214,12 +214,12 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
 def _run_ec_cli(*args: str) -> subprocess.CompletedProcess:
     """A real `ec <subcommand>` through the multi-command CLI."""
     return subprocess.run(
-        [sys.executable, "-m", "ec.cli", *args],
+        [sys.executable, "-m", "reverie.cli", *args],
         capture_output=True, text=True, env=_cli_env(), cwd=ROOT, timeout=300,
     )
 
 
-def _call_tool(server: ECServer, name: str, arguments: dict | None = None) -> dict:
+def _call_tool(server: ReverieServer, name: str, arguments: dict | None = None) -> dict:
     response = server.handle_message({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {"name": name, "arguments": arguments or {}},
@@ -243,41 +243,41 @@ def _group_ecu_ids(payload: dict) -> set[str]:
 
 @requires_live_backend
 def test_e2e_full_pipeline(model, monkeypatch, capsys):
-    # (a) fresh brain at EC_HOME=/tmp/ec_e2e_test; enable the repo via the
-    # real `ec enable` CLI subprocess --------------------------------------
-    shutil.rmtree(EC_HOME_DIR, ignore_errors=True)
-    monkeypatch.setenv("EC_HOME", str(EC_HOME_DIR))
-    monkeypatch.setenv("EC_REPO_PATH", REPO)
-    monkeypatch.setenv("EC_BRANCH", BRANCH)
+    # (a) fresh brain at REVERIE_HOME=/tmp/ec_e2e_test; enable the repo via the
+    # real `reverie enable` CLI subprocess --------------------------------------
+    shutil.rmtree(REVERIE_HOME_DIR, ignore_errors=True)
+    monkeypatch.setenv("REVERIE_HOME", str(REVERIE_HOME_DIR))
+    monkeypatch.setenv("REVERIE_REPO_PATH", REPO)
+    monkeypatch.setenv("REVERIE_BRANCH", BRANCH)
 
     # the LLM backend: hosted when a key is set, else the local Ollama
-    # fallback via a test config written into EC_HOME (picked up by every
+    # fallback via a test config written into REVERIE_HOME (picked up by every
     # component through load_config; passed explicitly to dodge the
     # process-wide config cache)
     if OLLAMA:
         import yaml
-        from ec.install import OLLAMA_LLM_BLOCK
-        EC_HOME_DIR.mkdir(parents=True, exist_ok=True)
-        (EC_HOME_DIR / "config.yaml").write_text(
+        from reverie.install import OLLAMA_LLM_BLOCK
+        REVERIE_HOME_DIR.mkdir(parents=True, exist_ok=True)
+        (REVERIE_HOME_DIR / "config.yaml").write_text(
             yaml.safe_dump({"llm": {**OLLAMA_LLM_BLOCK, "timeout": 300}}))
         print("[cfg] LLM backend: local Ollama "
               f"({OLLAMA_MODEL}) — no API key")
-        cfg = load_config(EC_HOME_DIR / "config.yaml")
+        cfg = load_config(REVERIE_HOME_DIR / "config.yaml")
     else:
         cfg = load_config()
         print(f"[cfg] LLM backend: hosted provider '{cfg.llm.provider}' "
               f"({cfg.llm.model})")
 
-    brain = Brain()  # $EC_HOME/ec.db
+    brain = Brain()  # $REVERIE_HOME/reverie.db
     assert brain.count_ecus() == 0
     # one prior reviewed ECU so edge creation has a canonical target
     seed_id = brain.insert_ecu(
         SEED_ECU, embedding=model.encode_one(SEED_ECU["cognition"]))
 
     manager = SessionManager(brain, config=cfg, embedding_model=model)
-    server = ECServer(brain=brain, manager=manager, config=cfg,
+    server = ReverieServer(brain=brain, manager=manager, config=cfg,
                       embedding_model=model)
-    print("\n[a] fresh brain at", EC_HOME_DIR, "| seed ECU:", seed_id)
+    print("\n[a] fresh brain at", REVERIE_HOME_DIR, "| seed ECU:", seed_id)
 
     proc = _run_ec_cli("enable")
     assert proc.returncode == 0, proc.stderr
@@ -286,23 +286,23 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
     # Enabling no longer creates a session — sessions are automatic per
     # branch and appear on the first tool call (D56).
     assert brain.get_active_session(RESOLVED_REPO, BRANCH) is None
-    print("[a] repo enabled via `ec enable`; no session yet (automatic)")
+    print("[a] repo enabled via `reverie enable`; no session yet (automatic)")
 
-    # (b) the FIRST ec_observe auto-creates the session (D56) ----------------
+    # (b) the FIRST reverie_observe auto-creates the session (D56) ----------------
     # Ollama sampling variance (temperature 0.3): a 14B local model
     # sometimes returns an empty extraction for one trace. The product's
-    # answer is to observe again (ec_observe is cumulative by design), so
+    # answer is to observe again (reverie_observe is cumulative by design), so
     # the test retries while nothing has been extracted. The ">= 1"
     # assertion itself is NOT relaxed.
     extracted_total = 0
     for attempt in range(3):
-        observe = _call_tool(server, "ec_observe", {
+        observe = _call_tool(server, "reverie_observe", {
             "user_prompt": USER_PROMPT,
             "reasoning_trace": REASONING_TRACE,
             "final_output": FINAL_OUTPUT,
         })
         assert observe["status"] == "ok", observe
-        print("[c] ec_observe payload:", json.dumps(observe, indent=None))
+        print("[c] reverie_observe payload:", json.dumps(observe, indent=None))
         if attempt == 0:
             session_row = brain.get_active_session(RESOLVED_REPO, BRANCH)
             assert session_row is not None, \
@@ -342,9 +342,9 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         model.encode_one(QUERY) @ model.encode_one(OFFTOPIC_ECU["cognition"]))
     assert off_sim < 0.3, f"off-topic fixture too similar to the query: {off_sim}"
 
-    # (f) ec_query — relevant query via the MCP tool --------------------------
-    result = _call_tool(server, "ec_query", {"query": QUERY})
-    print("[f] ec_query: mode=%s groups=%d filtered_out=%d fallback=%s"
+    # (f) reverie_query — relevant query via the MCP tool --------------------------
+    result = _call_tool(server, "reverie_query", {"query": QUERY})
+    print("[f] reverie_query: mode=%s groups=%d filtered_out=%d fallback=%s"
           % (result.get("mode"), result.get("groups_retrieved"),
              result.get("filtered_out"), result.get("fallback")))
     assert result["status"] == "ok", result
@@ -387,7 +387,7 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
           "SOURCE/GROUNDING + framing note)")
 
     # (g) review through the review queue (agent channel, D57) ----------------
-    listing = _call_tool(server, "ec_review_list", {"all": True})
+    listing = _call_tool(server, "reverie_review_list", {"all": True})
     assert listing["status"] == "ok"
     candidates = [c["id"] for c in listing["candidates"]]
     assert set(candidates) == extracted_ids | {offtopic_id}
@@ -400,11 +400,11 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         {"id": cid, "action": "reject" if cid == offtopic_id else "accept"}
         for cid in candidates if cid != held
     ]
-    payload = _call_tool(server, "ec_review_decide", {
+    payload = _call_tool(server, "reverie_review_decide", {
         "review_token": token, "decisions": decisions})
     assert payload["status"] == "ok", payload
     # single-use: the token is consumed even though a valid id remains
-    payload2 = _call_tool(server, "ec_review_decide", {
+    payload2 = _call_tool(server, "reverie_review_decide", {
         "review_token": token,
         "decisions": [{"id": held, "action": "accept"}]})
     assert payload2["status"] == "error"
@@ -413,9 +413,9 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         "a refused second call must not decide anything")
     # the next batch needs a FRESH listing — and it holds exactly the
     # held-back candidate
-    listing2 = _call_tool(server, "ec_review_list", {"all": True})
+    listing2 = _call_tool(server, "reverie_review_list", {"all": True})
     assert [c["id"] for c in listing2["candidates"]] == [held]
-    payload3 = _call_tool(server, "ec_review_decide", {
+    payload3 = _call_tool(server, "reverie_review_decide", {
         "review_token": listing2["review_token"],
         "decisions": [{"id": held, "action": "accept"}]})
     assert payload3["status"] == "ok", payload3
@@ -463,8 +463,8 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
     # (h) retrieval in a LATER conversation on the same branch: the SAME
     # session resumes — nothing is closed (D56) -------------------------------
     manager2 = SessionManager(brain)  # fresh activation state
-    server2 = ECServer(brain=brain, manager=manager2)
-    result2 = _call_tool(server2, "ec_query", {"query": QUERY})
+    server2 = ReverieServer(brain=brain, manager=manager2)
+    result2 = _call_tool(server2, "reverie_query", {"query": QUERY})
     assert result2["status"] == "ok" and result2["groups_retrieved"] >= 1
     row = brain.get_active_session(RESOLVED_REPO, BRANCH)
     assert row is not None and row["id"] == session_id, (
@@ -481,8 +481,8 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
           % (row["id"], canonical_cores & promoted_ids))
 
     # (i) a branch switch picks the OTHER branch's session ---------------------
-    monkeypatch.setenv("EC_BRANCH", "feature")
-    _call_tool(server2, "ec_query", {"query": QUERY})
+    monkeypatch.setenv("REVERIE_BRANCH", "feature")
+    _call_tool(server2, "reverie_query", {"query": QUERY})
     feature_row = brain.get_active_session(RESOLVED_REPO, "feature")
     assert feature_row is not None, "the branch switch must auto-create ITS session"
     assert feature_row["id"] != session_id
@@ -490,10 +490,10 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         "switching branches must not close the main branch's session")
     print("[i] branch switch: session %s now serves 'feature'; %s stayed "
           "active" % (feature_row["id"], session_id))
-    monkeypatch.setenv("EC_BRANCH", BRANCH)
+    monkeypatch.setenv("REVERIE_BRANCH", BRANCH)
 
     # (j) cross-session persistence --------------------------------------------
-    brain2 = Brain(EC_HOME_DIR / "ec.db")  # a brand-new connection
+    brain2 = Brain(REVERIE_HOME_DIR / "reverie.db")  # a brand-new connection
     try:
         for ecu_id in promoted_ids:
             ecu = brain2.get_ecu(ecu_id)
@@ -518,7 +518,7 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
 # reconsolidation via the MCP tool, clustering table population, controlled
 # forgetting in retrieval. All offline: no LLM (explicit modes / explicit
 # relationships), real embeddings from the HF cache, tmp_path brains,
-# hermetic DEFAULT_CONFIG (never ~/.ec).
+# hermetic DEFAULT_CONFIG (never ~/.reverie).
 # ============================================================================
 
 import copy
@@ -527,9 +527,9 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from ec import confidence as conf
-from ec import maintainer as maintainer_mod
-from ec.config import DEFAULT_CONFIG, AttrDict, _to_attrdict
+from reverie import confidence as conf
+from reverie import maintainer as maintainer_mod
+from reverie.config import DEFAULT_CONFIG, AttrDict, _to_attrdict
 
 OFFLINE_REPO, OFFLINE_BRANCH = "/repos/e2e-offline", "main"
 
@@ -540,17 +540,17 @@ def offline_config() -> AttrDict:
 
 @pytest.fixture()
 def offline_ecosystem(tmp_path, monkeypatch, model):
-    """Brain + SessionManager + ECServer + an active session — the
+    """Brain + SessionManager + ReverieServer + an active session — the
     in-process equivalent of the live pipeline's CLI subprocess wiring,
     minus every LLM call."""
-    monkeypatch.setenv("EC_REPO_PATH", OFFLINE_REPO)
-    monkeypatch.setenv("EC_BRANCH", OFFLINE_BRANCH)
+    monkeypatch.setenv("REVERIE_REPO_PATH", OFFLINE_REPO)
+    monkeypatch.setenv("REVERIE_BRANCH", OFFLINE_BRANCH)
     cfg = offline_config()
-    brain = Brain(tmp_path / "ec.db")
+    brain = Brain(tmp_path / "reverie.db")
     manager = SessionManager(brain, config=cfg, embedding_model=model)
-    from ec import repos
+    from reverie import repos
     repos.set_repo_state(brain, repos.resolve_repo(), "enabled")  # feat/flow
-    server = ECServer(brain=brain, manager=manager, config=cfg,
+    server = ReverieServer(brain=brain, manager=manager, config=cfg,
                       embedding_model=model)
     session = manager.start_session()
     eco = SimpleNamespace(
@@ -640,7 +640,7 @@ class TestE2EOffline:
         finally:
             eco.server.stop_maintenance()
 
-        payload = _call_tool(eco.server, "ec_query", {
+        payload = _call_tool(eco.server, "reverie_query", {
             "query": "How does auth token refresh work?",
             "mode": "debugging"})
         assert payload["status"] == "ok", payload.get("error")
@@ -722,7 +722,7 @@ class TestE2EOffline:
         assert brain.get_ecu(stale_id)["status"] == "deprecated"
 
         # §3.6: the review gate surfaces what maintenance deprecated
-        from ec.review_gate import grounding_deprecation_notifications
+        from reverie.review_gate import grounding_deprecation_notifications
         notifications = grounding_deprecation_notifications(brain)
         assert len(notifications) == 1
         note = notifications[0]
@@ -739,7 +739,7 @@ class TestE2EOffline:
         #    new work exists. Synthetic orthogonal-group embeddings keep the
         #    geometry deterministic (phase-9 pattern); agglomerative avoids
         #    the optional hdbscan dependency.
-        brain = Brain(tmp_path / "ec.db")
+        brain = Brain(tmp_path / "reverie.db")
         try:
             cfg = offline_config()
             cfg["clustering"].update({
@@ -855,7 +855,7 @@ class TestE2EOffline:
             metadata={"competing_since": days_ago(31)})
         brain.add_edge(p1_id, p2_id, "contradicts")
 
-        payload = _call_tool(eco.server, "ec_query", {
+        payload = _call_tool(eco.server, "reverie_query", {
             "query": "How does auth token refresh work?",
             "mode": "debugging"})
         assert payload["status"] == "ok"
@@ -900,7 +900,7 @@ class TestE2EOffline:
                 == pytest.approx(parked["confidence"])
 
         # …and still retrievable, flagged as open questions (§17.5).
-        oq_payload = _call_tool(eco.server, "ec_query", {
+        oq_payload = _call_tool(eco.server, "reverie_query", {
             "query": "How does the API rate limiting work per user?",
             "mode": "debugging"})
         assert oq_payload["status"] == "ok"
@@ -909,8 +909,8 @@ class TestE2EOffline:
 
     def test_e2e_offline_reconsolidation_via_mcp(self, offline_ecosystem):
         # 3. The full D37/D39 loop through the MCP tool surface:
-        #    ec_query surfaces a canonical ECU → it becomes labile AND gets
-        #    the reinforcement bump → ec_reconsolidate with contradicting
+        #    reverie_query surfaces a canonical ECU → it becomes labile AND gets
+        #    the reinforcement bump → reverie_reconsolidate with contradicting
         #    evidence challenges it in the Canonical Brain immediately;
         #    a never-retrieved ECU is refused by the labile gate.
         eco = offline_ecosystem
@@ -924,7 +924,7 @@ class TestE2EOffline:
             "PostgreSQL autovacuum scale factors must be tuned per table "
             "based on churn rate", confidence=0.6)
 
-        payload = _call_tool(eco.server, "ec_query", {
+        payload = _call_tool(eco.server, "reverie_query", {
             "query": "How does the auth token refresh work?",
             "mode": "debugging"})
         assert payload["status"] == "ok"
@@ -944,7 +944,7 @@ class TestE2EOffline:
         assert target["metadata"]["last_reinforced"]
 
         # labile gate refuses what was never retrieved this session
-        refusal = _call_tool(eco.server, "ec_reconsolidate", {
+        refusal = _call_tool(eco.server, "reverie_reconsolidate", {
             "ecu_id": unretrieved_id, "relationship": "contradicts",
             "evidence": "autovacuum tuning was verified differently"})
         assert refusal["status"] == "error"
@@ -954,7 +954,7 @@ class TestE2EOffline:
 
         # contradicting evidence lands in the Canonical Brain immediately
         count_before = brain.count_ecus()
-        result = _call_tool(eco.server, "ec_reconsolidate", {
+        result = _call_tool(eco.server, "reverie_reconsolidate", {
             "ecu_id": target_id, "relationship": "contradicts",
             "evidence": "auth/token.py now refreshes lazily only after a "
                         "401 — optimistic refresh no longer holds"})
@@ -966,7 +966,7 @@ class TestE2EOffline:
         assert updated["confidence"] < expected_bump
         notes = updated["metadata"]["reconsolidations"]
         assert len(notes) == 1 and notes[0]["relationship"] == "contradicts"
-        assert notes[0]["via"] == "ec_reconsolidate"
+        assert notes[0]["via"] == "reverie_reconsolidate"
         assert brain.count_ecus() == count_before, \
             "the pseudo-ECU must never be stored"
         assert brain.edge_count(target_id) == 0, \

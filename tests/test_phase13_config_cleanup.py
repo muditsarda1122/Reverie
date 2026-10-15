@@ -8,7 +8,7 @@ review_gate.py) gates its notifications on it — silencing the notice while
 say so inline in DEFAULT_CONFIG.
 
 Run: .venv/bin/python -m pytest tests/test_phase13_config_cleanup.py -v
-Offline: real embeddings; LLM calls mocked at ec.diffuser.call_llm.
+Offline: real embeddings; LLM calls mocked at reverie.diffuser.call_llm.
 """
 
 import os
@@ -21,9 +21,9 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.brain import Brain
-from ec.config import DEFAULT_CONFIG, _deep_merge, _to_attrdict, get_config
-from ec.review_gate import ReviewResult, _notify_propagation, apply_review_decisions
+from reverie.brain import Brain
+from reverie.config import DEFAULT_CONFIG, _deep_merge, _to_attrdict, get_config
+from reverie.review_gate import ReviewResult, _notify_propagation, apply_review_decisions
 
 T0 = datetime(2026, 8, 1, 9, 0, 0, tzinfo=timezone.utc)
 
@@ -62,13 +62,13 @@ GENUINE = json.dumps({"verdict": "genuine_contradiction",
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -150,7 +150,7 @@ class TestNotifyGateIntegration:
         weak, dependent, s = self._setup_chain(brain, model)
         cfg = cfg_with(contradiction={"notify_on_dependent": False})
 
-        with patch("ec.diffuser.call_llm", side_effect=[
+        with patch("reverie.diffuser.call_llm", side_effect=[
             classifications_response("contradicts"), GENUINE,
         ]):
             result = apply_review_decisions(
@@ -166,7 +166,7 @@ class TestNotifyGateIntegration:
         weak, dependent, s = self._setup_chain(brain, model)
         cfg = cfg_with()      # defaults: notify_on_dependent True
 
-        with patch("ec.diffuser.call_llm", side_effect=[
+        with patch("reverie.diffuser.call_llm", side_effect=[
             classifications_response("contradicts"), GENUINE,
         ]):
             result = apply_review_decisions(

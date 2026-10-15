@@ -1,136 +1,117 @@
 # Reverie
 
-**Memory for coding agents.** Reverie keeps the engineering conclusions your agent reaches, reviewed by you, grounded in your code and revised as evidence changes, in one local SQLite file. An MCP server: works with [OpenCode](https://opencode.ai) today; Claude Code, Cursor and Codex coming soon.
+**Reverie is engineering memory for coding agents.** While you and your agent work, it captures the engineering conclusions you reach — invariants, root causes, decisions, corrected assumptions — and brings them back in a later conversation, after they've been reviewed by you and grounded in your code.
 
-## What it does
+Everything lives in one SQLite file on your machine. Reverie is an MCP server: it plugs into Claude Code, Codex CLI, Cursor, OpenCode and Gemini CLI (see [Supported harnesses](#supported-harnesses) for honest status per harness).
 
-- **Extracts conclusions, not logs.** While your agent works, Reverie distills its reasoning into ECUs — Engineering Cognition Units: "authentication correctness depends on optimistic token refresh", not "TokenManager.refresh() was called".
-- **Confidence that evolves.** Every conclusion carries a Bayesian confidence (computed in log-odds space), starts stronger for debugging insights than for planning guesses, and is re-evaluated when new evidence contradicts it.
-- **Grounded in your code.** Each ECU references files, symbols and a commit hash. A background maintainer verifies that grounding against the live repository and deprecates conclusions whose code has disappeared.
-- **Reviewed by you, independently of sessions.** Observations wait as candidates in one review queue across every branch and repo. Review them with `ec review` in a terminal, or ask your agent to show them and decide in the chat. Nothing reaches the durable canonical brain without your decision.
-- **Demand-driven retrieval.** Cognition is never auto-injected. The agent consults it through `ec_query` when it recognizes a gap; a 4-factor ranker (relevance, confidence, scope proximity, recency) returns what fits the current task.
+## Install
 
-## Status and honest limits
-
-- Developed and tested on **macOS**. Other platforms may work but are untested.
-- The terminal review UI is one candidate at a time, plain text — there is no GUI.
-- **Review through your agent relies on the agent relaying your choices.** Reverie records which channel applied each decision (terminal, agent, or cli) but cannot verify who actually made it.
-- Enabling/disabling is per repo and remembered; you can flip it any time (`ec enable` / `ec disable`). Disabled means fully off for that repo.
-- EC-Bench, the built-in benchmark, has **not** shown a clear advantage yet — see [Research](#research).
-
-## Supported agents
-
-| Agent | Status |
-|---|---|
-| OpenCode | ✅ Works today |
-| Claude Code | 🔜 Coming soon |
-| Cursor | 🔜 Coming soon |
-| Codex | 🔜 Coming soon |
-
-The installer can already write config scaffolding for all four (`ec --only claude_code,codex,cursor,opencode`); OpenCode is the integration exercised end-to-end.
-
-## Install and quick start
-
-Requirements: Python 3.12 (pinned dependencies ship wheels for 3.12), pip, git.
+Requires Python 3.12, pip, and git.
 
 ```bash
-# 1. Install
-pip install git+https://github.com/muditsarda1122/Reverie.git
-# (published package name: engineering-cognition)
-
-# 2. Provide an LLM key — any major provider works (see Configuration below),
-#    or skip via Ollama. `ec install` detects keys already in your
-#    environment and asks at most one question.
-export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY, GEMINI_API_KEY,
-                               # OPENROUTER_API_KEY, OPENCODE_ZEN_API_KEY
-
-# 3. Configure your agent and bootstrap ~/.ec
-#    (interactive; --all for non-interactive, --dry-run to preview)
-ec install
-
-# 4. Just code. Sessions are automatic per branch; the first time your agent
-#    uses Reverie in a repo it asks you once whether to turn it on.
-cd your-project
-# ... work with your agent; it calls ec_observe / ec_query / ec_reconsolidate
-# ... whenever you like, review what it learned:
-ec review       # terminal UI, one candidate at a time
-#    or just say "show my Reverie candidates" and decide in the chat
+pip install reverie          # from PyPI
+reverie install              # configure your agents + ~/.reverie
 ```
 
-Handy extras: `ec enable` / `ec disable` / `ec repos` (per-repo control), `ec review` (terminal review UI), `ec status` (session + brain report), `ec export` / `ec import` / `ec reset` (backup, migrate, wipe), `ec uninstall` (clean removal — see below), `ec-retry` (recover failed extractions / re-diffuse), `ec-repair` (ops recovery). Full details, including per-agent config files the installer touches, are in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+`reverie install` detects which harnesses you have, wires the MCP server into each, writes the agent instructions and the `/reverie-review` / `/reverie-status` commands, creates `~/.reverie`, detects an LLM API key in your environment (or offers Ollama for local-only), and prints a per-harness summary of exactly what it wrote. Non-interactive: `reverie install --all` (every detected harness) or `--only claude_code,codex`; `--dry-run` previews everything without writing.
 
-After `ec install`, your agent config points at the MCP server (`ec-mcp`). Restart your agent and the tools below appear.
+Provide a key for one of the supported providers before the step 2 prompt, or choose "Local via Ollama" — see [Model providers](#model-providers).
 
-> Deprecated shims, kept for compatibility: `ec-start` now enables the repo and shows status (nothing to "start"), `ec-stop` is an alias for `ec review`, `ec-status` unchanged.
+## Quick start
 
-## Upgrading
-
-**If you installed Reverie before the `ec` subcommands existed** (`ec enable`, `ec review`, `ec export`, …): pull this version, then re-run the install command from step 1 — `pip install -e .` (or `pip install -U reverie` for a published wheel). **Console scripts only update on reinstall**: an `ec` command bound to an older entry point runs the installer instead of the multi-command CLI, and the new subcommands simply don't exist for it. `ec install` detects a stale binding and tells you; re-running the pip command fixes it.
-
-## Uninstall
-
-`ec uninstall` undoes exactly what `ec install` did, and nothing more:
-
-- For every supported harness it removes **only Reverie's own entries** — the `ec` MCP server entry, the `@~/.ec/AGENTS.md` import, the AGENTS.md reference blocks, `~/.cursor/rules/ec.md` — leaving every other key, line and file byte-identical. A file that is invalid JSON/TOML, or was edited so Reverie's entry can't be found unambiguously, is skipped and reported, never guessed at.
-- **Your memory (`~/.ec`) is kept by default**, so a reinstall picks up where you left off.
-- `--delete-data` removes it too: a final export is written outside `~/.ec` first (its path is printed; `--no-export` skips it), you must type `delete` to confirm, and only then is `~/.ec` removed. `--yes` skips the confirmation for scripts.
-- `--dry-run` prints every planned removal with the exact before/after and changes nothing.
-- The last step is yours: the running package can't remove itself — run the printed `pip uninstall engineering-cognition` command (or the pipx/uv equivalent).
+1. Open your agent in any project.
+2. **The first time, the agent asks once:** "Reverie isn't on for this repo. Turn it on? (yes / not now / never)". Your answer is remembered; `reverie enable` / `reverie disable` flip it any time.
+3. **Just code.** Sessions are automatic per branch. As your agent works it calls `reverie_observe` when it reaches a real engineering conclusion — not for every edit.
+4. **Review when you like.** Conclusions wait as candidates in one review queue across every branch and repo. Run `reverie review` in a terminal (a calm one-candidate-at-a-time UI), say *"show my Reverie candidates"* in the chat, or type `/reverie-review`. Nothing reaches long-term memory without your decision.
+5. That's it. In a future conversation, after your agent reads the relevant code it calls `reverie_query` and past conclusions come back with their confidence, grounding and current status — framed as *past understanding to verify*, never as authoritative context.
 
 ## How it works
 
-The short version: observe → extract → review → ground → retrieve. The long version — pipeline, ECU schema, confidence math, edge types, scope hierarchy — is at [ems-gold-seven.vercel.app/how-it-works](https://ems-gold-seven.vercel.app/how-it-works). The complete design spec lives in [`docs/SPEC.md`](docs/SPEC.md).
+Observe → extract → review → ground → retrieve. Your agent's reasoning is distilled by a prompted extractor into **conclusions** (not logs), stored with Bayesian confidence in log-odds space, typed relationships to other conclusions, and grounding references (files, symbols, commit). A background maintainer verifies that grounding against your live repository and lets stale conclusions fade. The long version — pipeline, confidence math, edge types — is at [ems-gold-seven.vercel.app/how-it-works](https://ems-gold-seven.vercel.app/how-it-works); the complete design spec is [`docs/SPEC.md`](docs/SPEC.md).
 
-## MCP tools
+## Supported harnesses
 
-Every tool takes an optional `repo_path` (the agent's workspace path — pass it explicitly; global MCP servers may start in the home folder). In an undecided repo, tools return a short "ask the user" prompt instead of acting; in a disabled repo they do nothing.
+| Harness | Install writes | Smoke-tested | Known limits |
+|---|---|---|---|
+| **OpenCode** | `~/.config/opencode/opencode.json` (`mcp.reverie`), `AGENTS.md` block, `commands/*.md` | ✅ exercised end-to-end (offline tests + live E2E + EC-Bench) | Marker detection misses `opencode.jsonc` configs |
+| **Claude Code** | `~/.claude.json` (`mcpServers.reverie`, user scope), `@import` in `~/.claude/CLAUDE.md`, `commands/*.md` | ❌ offline install tests only | Reads server `instructions`; `~/.claude.json` is also Claude Code's state file (the merge only ever touches its own key) |
+| **Codex CLI** | `~/.codex/config.toml` (`[mcp_servers.reverie]`), `AGENTS.md` block, `prompts/*.md` | ❌ offline install tests only | Reads server `instructions`; custom prompts are deprecated upstream (still the user-level command mechanism) |
+| **Cursor** | `~/.cursor/mcp.json` (`mcpServers.reverie`), `commands/*.md` (beta) | ❌ offline install tests only | No global rules file is written (Cursor documents no global rules file; use Settings → Rules to paste the guidance if you want it always on). Server `instructions` support is not documented by Cursor |
+| **Gemini CLI** | `~/.gemini/settings.json` (`mcpServers.reverie`), `GEMINI.md` block, `commands/*.toml` | ❌ offline install tests only | Reads server `instructions`; Gemini CLI was replaced by Antigravity CLI for unpaid/Google One users in June 2026 (config format unchanged) |
 
-| Tool | What it does | Parameters |
-|---|---|---|
-| `ec_observe` | Feeds the agent's reasoning to the extractor; new ECUs land in the **session** brain | `user_prompt`, `reasoning_trace` (required), `final_output` (optional) |
-| `ec_query` | Retrieves relevant engineering cognition, demand-driven | `query` (required), `scope` (optional), `mode` (optional — e.g. `debugging`, `architecture`) |
-| `ec_get_summary` | Brain stats for awareness without anchoring; adds one counts-only line when the review backlog is piling up | — |
-| `ec_reconsolidate` | Re-evaluates a retrieved ECU against new evidence | `ecu_id`, `evidence` (required), `relationship` (optional) |
-| `ec_set_repo_state` | Records the user's enablement answer (`enabled` / `disabled` / `not_now`) or flips a repo on/off | `state` (required) |
-| `ec_review_list` | The review queue page for the agent to relay (returns a short-lived `review_token`) | `all`, `by_topic`, `page` (optional) |
-| `ec_review_decide` | Applies decisions the **user stated**; refuses a bulk accept-all | `review_token`, `decisions` (required) |
+"Smoke-tested" means what it says: for Claude Code, Codex, Cursor and Gemini CLI the written shapes are verified against each vendor's current docs and the server is tested over real stdio, but nobody has driven a live session — check [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md) if you want the checklist. Any other MCP client works with the manual snippet in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
-## Configuration
+## Model providers
 
-Everything lives in one YAML file, `~/.ec/config.yaml`, deep-merged over the defaults in [`ec/config.py`](ec/config.py). Useful blocks:
+One provider serves every LLM call (extraction, relationship classification, mode detection). Configure with `reverie install` or the `llm:` block of `~/.reverie/config.yaml`:
 
-- `llm` — `provider` selects from a registry (`opencode_zen`, `anthropic`, `openai`, `google`, `openrouter`, `ollama`, `custom`); fields you don't set (`model`, `base_url`, `api_key_env`, `wire_format`) are filled from the registry, and anything you set explicitly wins. Extras: `wire_format` (`anthropic`/`openai`) overrides the model-name request shape (use it for `claude-*` models on OpenAI-compatible gateways); `openai_reasoning: true` forces the reasoning-model parameter shape (`max_completion_tokens`, no temperature — auto-detected otherwise); `retry_attempts` / `retry_backoff` / `retry_backoff_cap` tune retry-with-backoff on 429/5xx/timeouts; `models.extraction` / `models.classification` / `models.mode_detection` optionally give each task its own model. Default: OpenCode Zen (`https://opencode.ai/zen/v1`) with `claude-haiku-4-5`. Temperature 0.0 for classification, 0.3 for extraction.
-- `review` — the queue's behaviour: `expire_after_days` (candidates unreviewed this long become `expired`; 0 disables), `nudge_threshold` / `nudge_age_days` (when `ec_get_summary` mentions the backlog — counts only), `page_size` (candidates shown per page in `ec review` and `ec_review_list`).
-- `confidence` — base priors per source type, scope multipliers, decay, thresholds.
-- `ranking` / `retrieval` / `activation` — retrieval weights and budgets.
-- `maintainer` / `clustering` — background maintenance intervals and HDBSCAN settings.
+| Provider | Default model | Key env var | Notes |
+|---|---|---|---|
+| OpenCode Zen *(default)* | `claude-haiku-4-5` | `OPENCODE_ZEN_API_KEY` | Multi-family endpoint |
+| Anthropic | `claude-haiku-5-5` | `ANTHROPIC_API_KEY` | 5.5-family models: sampling parameters omitted automatically (they reject non-default `temperature`) |
+| OpenAI | `gpt-5-mini` | `OPENAI_API_KEY` | Reasoning models: `max_completion_tokens` shape auto-applied |
+| Google Gemini | `gemini-3.8-flash` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | OpenAI-compatible endpoint |
+| OpenRouter | `anthropic/claude-haiku-5.5` | `OPENROUTER_API_KEY` | Vendor-prefixed model names |
+| Ollama (local) | `qwen2.5-coder:14b` | none | Nothing leaves your machine |
 
-Set the `EC_HOME` environment variable to relocate the whole `~/.ec` directory (useful for tests and sandboxes).
+Switching: `reverie install --provider anthropic`, or edit `llm:` in `~/.reverie/config.yaml` (`provider:`, and optionally `model:`, `base_url:`, `api_key_env:`, `wire_format:`). Everything unset is filled from the registry; anything you set explicitly wins. Per-task models: `llm.models.extraction` / `models.classification` / `models.mode_detection`.
 
-**Offline / local model:** `provider: ollama` with any locally pulled model (the installer's default is `qwen2.5-coder:14b`). If the `ollama` binary is present, `ec install` offers to configure it automatically and pull that model — no hosted API involved.
+## Commands
 
-## Data and privacy
+| Command | What it does |
+|---|---|
+| `reverie install` | Configure agents + `~/.reverie` |
+| `reverie enable` / `reverie disable` | Turn Reverie on/off for a repo |
+| `reverie repos` | Every known repo with state and counts |
+| `reverie review` | Review pending candidates (terminal UI) |
+| `reverie status` | Session + brain report |
+| `reverie export` / `reverie import` | Backup / restore (one ZIP) |
+| `reverie reset` | Wipe the brain (or one repo), auto-backup first |
+| `reverie retry` | Recover failed extractions / re-diffuse |
+| `reverie repair` | Brain integrity check + safe recovery |
+| `reverie uninstall` | Remove Reverie's harness entries (memory kept unless `--delete-data`) |
 
-- Your memory is **one SQLite file**: `~/.ec/ec.db`. No account, no cloud storage, no telemetry.
-- What leaves your machine is exactly what the LLM features need: the extraction prompt, your agent's reasoning and final output, and candidate pairs of conclusions (for diffusion and review). That goes to the LLM endpoint **you** configure — any major hosted provider, or a local model through Ollama if you prefer nothing leaving your machine.
-- API keys are read from environment variables only — including by `ec install` and its live ping; Reverie never writes them anywhere.
-- Benchmark run outputs (`runs/`), databases and logs are gitignored — nothing from your `~/.ec` is committed.
+Full reference with flags, examples and exit behaviour: [`docs/CLI.md`](docs/CLI.md).
 
-## Research
+## Glossary
 
-Reverie ships with EC-Bench (`bench/`), a harness that runs a real agent through sequential sessions on a target repository in two conditions — with and without memory — and judges the transcripts. Honest status: **EC-Bench has not shown a clear advantage yet.** The harness is published as a research instrument, not as proof. Current results and method: [ems-gold-seven.vercel.app/research](https://ems-gold-seven.vercel.app/research).
+- **Conclusion** — one engineering belief Reverie stores, e.g. "authentication correctness depends on optimistic token refresh". Stored internally as an *Engineering Cognition Unit (ECU)* — the schema-level name you'll see in code, exports and the spec.
+- **Session memory** — conclusions captured in the current (repo, branch) context. Automatic, per branch, never closed by you.
+- **Long-term memory** — the Canonical Brain: conclusions you accepted in review, promoted with their relationship edges, shared across branches and repos.
+- **Review** — the human gate. Captured conclusions wait as *candidates*; only your accept promotes one into long-term memory. Review in the terminal, in the chat, or with `/reverie-review`.
+- **Confidence** — a 0–1 Bayesian belief strength (computed in log-odds space), set by the conclusion's source type and scope, strengthened by corroboration and retrieval.
+- **Decay** — confidence fades slowly over time (faster for narrow scopes); retrieval reinforcement resets the clock. Narrow, unused conclusions fade first.
+- **Grounding** — every conclusion references files, symbols and the commit it was made on; a background maintainer verifies those against your live repository and deprecates conclusions whose grounding vanished.
+- **Repo enablement** — per-repo on/off state (`undecided` / `enabled` / `disabled`), remembered globally, asked once.
+- **Engineering Cognition** — the research programme this work is part of; the benchmark is **EC-Bench**.
 
-## Contributing
+## Privacy and data
 
-Bug reports, benchmarks on other repos, and spec-grounded PRs are welcome — start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup, ground rules and style. Please follow the [code of conduct](CODE_OF_CONDUCT.md).
+- **What stays local:** everything. The brain is one SQLite file, `~/.reverie/reverie.db` (config, agent instructions and slash commands live beside it). No account, no cloud, no telemetry.
+- **What leaves your machine:** only what the LLM features need — the extraction prompt, your agent's reasoning and output, and candidate conclusion pairs for classification — sent to the endpoint **you** configure. Pick Ollama and nothing leaves your machine at all.
+- **API keys** are read from environment variables only; Reverie never writes them anywhere.
+- **Export / import:** `reverie export` writes one ZIP (consistent snapshot + manifest); `reverie import` restores it (`--replace` takes an automatic backup first). Benchmark outputs, DBs and logs are gitignored — nothing from `~/.reverie` is committed.
+
+## Uninstall
+
+```bash
+reverie uninstall                 # removes the harness entries; keeps ~/.reverie
+reverie uninstall --delete-data   # also removes ~/.reverie (final export first)
+```
+
+Uninstall shows the full plan — every harness entry it will remove, and whether data will be exported and deleted — and asks **one** confirmation before touching anything (`--yes` skips it; the export-before-delete rule always holds). It removes only Reverie's own entries, byte-reverses its merges, and never guesses at edited files. The last step prints the `pip uninstall reverie` command to run by hand (the running package can't remove itself).
+
+## Research and contributing
+
+Reverie ships with EC-Bench (`bench/`), a harness that runs a real agent through sequential sessions on a target repository with and without memory and judges the transcripts. Honest status: **EC-Bench has not shown a clear advantage yet** — it is published as a research instrument, not as proof. Method and results: [ems-gold-seven.vercel.app/research](https://ems-gold-seven.vercel.app/research).
+
+Contributions are welcome — start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup and ground rules, and the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-[Apache-2.0](LICENSE) © 2026 Mudit Sarda. The extraction prompt ([`ec/prompts/extractor_prompt.md`](ec/prompts/extractor_prompt.md)) is separately MIT-licensed.
+[Apache-2.0](LICENSE) © 2026 Mudit Sarda. The extraction prompt ([`reverie/prompts/extractor_prompt.md`](reverie/prompts/extractor_prompt.md)) is separately MIT-licensed.
 
 ## Citation
-
-If you use Reverie in your work, please cite it:
 
 ```bibtex
 @software{reverie2026,
@@ -138,7 +119,7 @@ If you use Reverie in your work, please cite it:
   title   = {Reverie},
   year    = {2026},
   url     = {https://ems-gold-seven.vercel.app/},
-  version = {0.1.0}
+  version = {0.2.0}
 }
 ```
 

@@ -1,4 +1,4 @@
-"""feat/flow tests — the `ec review` TUI (D57): rendering snapshots kept
+"""feat/flow tests — the `reverie review` TUI (D57): rendering snapshots kept
 separate from decision logic; single-keypress loop via scripted keys;
 undo semantics; non-interactive flags.
 
@@ -16,9 +16,9 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.brain import Brain
-from ec.diffuser import DiffuserError
-from ec.review_cli import (
+from reverie.brain import Brain
+from reverie.diffuser import DiffuserError
+from reverie.review_cli import (
     Quit,
     ReviewRun,
     build_queue,
@@ -29,14 +29,14 @@ from ec.review_cli import (
     render_screen,
     run_tui,
 )
-from ec.review_cli import main as cli_main
+from reverie.review_cli import main as cli_main
 
 T0 = datetime.now(timezone.utc).replace(microsecond=0)
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -140,7 +140,7 @@ def test_render_screen_snapshot_expired(brain):
 def test_decide_candidate_accept_promotes_and_diffuses(brain):
     sid = make_session(brain)
     cid = make_candidate(brain, sid, "accept me", confidence=0.8)
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         outcome = decide_candidate(brain, candidate(brain, cid), "accept")
     assert outcome == {"id": cid, "action": "accept", "diffused": True,
                        "warning": None}
@@ -152,7 +152,7 @@ def test_decide_candidate_accept_promotes_and_diffuses(brain):
 def test_decide_candidate_diffusion_failure_reports(brain):
     sid = make_session(brain)
     cid = make_candidate(brain, sid, "undiffused", confidence=0.8)
-    with patch("ec.diffuser.diffuse_ecu",
+    with patch("reverie.diffuser.diffuse_ecu",
                side_effect=DiffuserError("classification failed")):
         outcome = decide_candidate(brain, candidate(brain, cid), "accept")
     assert outcome["diffused"] is False
@@ -201,7 +201,7 @@ def test_run_undo_accept_refused_plainly(brain):
     sid = make_session(brain)
     cid = make_candidate(brain, sid, "accepted", confidence=0.8)
     run = ReviewRun(brain)
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         run.apply(candidate(brain, cid), "accept")
     message = run.undo()
     assert "already diffused" in message
@@ -261,7 +261,7 @@ def test_run_tui_page_flow_shows_more(brain):
 def test_run_tui_accept_flow(brain):
     sid = make_session(brain)
     cid = make_candidate(brain, sid, "take it", confidence=0.9)
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         outcome = run_tui(brain, build_queue(brain),
                           key_reader=scripted_reader(["a"]))
     assert outcome["progress"]["accepted"] == 1
@@ -271,7 +271,7 @@ def test_run_tui_accept_flow(brain):
 def test_run_tui_edit_via_injected_editor(brain):
     sid = make_session(brain)
     cid = make_candidate(brain, sid, "rough", confidence=0.8)
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         outcome = run_tui(
             brain, build_queue(brain), key_reader=scripted_reader(["e"]),
             edit_fn=lambda text: "polished")
@@ -300,7 +300,7 @@ def test_run_tui_group_accept(brain):
     db1 = make_candidate(brain, sid, "db1", confidence=0.7,
                          scope_path="repo:a > db")
     printed: list[str] = []
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         # 'g' accepts the whole topic group (including the candidate on
         # screen); already-accepted screens are skipped silently
         outcome = run_tui(brain, build_queue(brain),
@@ -352,7 +352,7 @@ def test_run_tui_expired_accept_revives_and_applies(brain):
     sid = make_session(brain)
     cid = make_candidate(brain, sid, "stale but good", confidence=0.6,
                          review_status="expired")
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         outcome = run_tui(brain, build_queue(brain, include_expired=True),
                           key_reader=scripted_reader(["a"]))
     assert outcome["progress"]["accepted"] == 1
@@ -385,17 +385,17 @@ def test_key_reader_line_fallback_eof_quits():
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def ec_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("EC_HOME", str(tmp_path / "ec_home"))
-    monkeypatch.setenv("EC_REPO_PATH", "/repos/a")
-    monkeypatch.setenv("EC_BRANCH", "main")
-    return tmp_path / "ec_home"
+def reverie_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "reverie_home"))
+    monkeypatch.setenv("REVERIE_REPO_PATH", "/repos/a")
+    monkeypatch.setenv("REVERIE_BRANCH", "main")
+    return tmp_path / "reverie_home"
 
 
 @pytest.fixture()
-def home_brain(ec_home):
-    """The brain the CLI actually opens (EC_HOME/ec.db)."""
-    b = Brain(ec_home / "ec.db")
+def home_brain(reverie_home):
+    """The brain the CLI actually opens (REVERIE_HOME/reverie.db)."""
+    b = Brain(reverie_home / "reverie.db")
     yield b
     b.close()
 
@@ -415,7 +415,7 @@ def test_cli_decide_flag(home_brain, capsys):
     sid = make_session(home_brain)
     c1 = make_candidate(home_brain, sid, "first", confidence=0.9)
     c2 = make_candidate(home_brain, sid, "second", confidence=0.4)
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         assert cli_main(["--decide", f"{c1}=accept", f"{c2}=reject"]) == 0
     out = capsys.readouterr().out
     assert "Applied 2 decision(s)." in out
@@ -469,15 +469,15 @@ def test_topic_ordering_helper(brain):
 
 def test_python_dash_m_review_cli_produces_output(tmp_path, monkeypatch,
                                                   capsys):
-    """Regression: `python -m ec.review_cli` must actually run main() —
+    """Regression: `python -m reverie.review_cli` must actually run main() —
     the missing __main__ guard once exited silently."""
     import subprocess
     import sys
     from pathlib import Path
     env = dict(os.environ)
-    env["EC_HOME"] = str(tmp_path / "ec_home")
+    env["REVERIE_HOME"] = str(tmp_path / "reverie_home")
     env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
-    proc = subprocess.run([sys.executable, "-m", "ec.review_cli", "--list"],
+    proc = subprocess.run([sys.executable, "-m", "reverie.review_cli", "--list"],
                           capture_output=True, text=True, env=env)
     assert proc.returncode == 0
     assert proc.stdout.strip(), proc.stderr

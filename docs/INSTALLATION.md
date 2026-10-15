@@ -1,388 +1,159 @@
-# Reverie (Engineering Cognition) — Installation & Harness Integration Audit
+# Installation & Harness Integration
 
-**Date of audit:** 2026-10-04
-**Updated:** 2026-10-14 for the bring-your-own-provider step (`feat/providers`): the LLM dependency check became a full provider-selection flow (registry in `ec/providers.py`, `--provider`, `--no-verify`, live ping). Line citations refer to the audit date and may have shifted.
-**Updated:** 2026-10-14 for the product flow (`feat/flow`) — see the addendum below; §7/§10's `ec-start`/`ec-stop` instructions are superseded by it.
-**Scope:** read-only archaeology of how Reverie is currently installed and wired into coding-agent harnesses. Every claim cites repository code (`ec/install.py` unless noted). No source, config, or environment was modified. Read together with `PRODUCT.md` (same directory) for the product-level map.
+**Last verified against vendor docs: 2026-10-15.** Each harness section cites
+the exact documentation pages the install shapes were checked against.
 
----
+Reverie is installed once per machine and configured once per harness. It is
+a stdio MCP server (one subprocess of the agent) plus a global data
+directory (`~/.reverie/`). No daemons, no background services beyond a
+maintenance thread inside that subprocess.
 
-## 0. Addendum (2026-10-14, `feat/flow`): the product flow
+## Requirements
 
-This addendum is current; the sections below are the pre-flow audit and are kept for history. Everything here is implementation-backed by `ec/repos.py`, `ec/review_queue.py`, `ec/review_cli.py`, `ec/transport.py`, `ec/cli.py`, and the updated `ec/mcp_server.py`/`ec/session.py`/`ec/install.py`.
+- Python ≥ 3.12 (pinned heavy dependencies ship 3.12 wheels)
+- pip, git
+- An LLM provider key (any registry provider) **or** Ollama for local-only
 
-**There is no more `ec-start` / `ec-stop` flow.** The lifecycle is:
+## The `~/.reverie` directory
 
-1. **Install once, globally** — unchanged (`ec install`, §4).
-2. **Per-repo enablement.** The first time a Reverie tool call happens in a repo, the repo is `undecided`: every tool returns a short, structured ask-the-user response — "Reverie isn't on for this repo. Turn it on? (yes / not now / never)". The agent asks once per conversation and records the answer with `ec_set_repo_state` (`yes` → enabled, `not now` → asked-but-off, `never` → disabled). States live in the global brain (`repos` table), never inside the repo. `ec enable` / `ec disable` switch it directly; `ec repos` lists every known repo with its state and counts.
-3. **Automatic sessions.** In an enabled repo, any tool call resolves or creates the session for (repo, branch). Branch switches switch session memory mid-conversation; long-term memory is shared. Sessions are never closed by the user. Worktrees share the repo's enablement (identity = git common directory) but get their own sessions per worktree.
-4. **Review, independent of sessions.** One queue across every session, branch and repo. `ec review` is a calm terminal UI (one candidate at a time, single keypresses, `--list --json` / `--decide <id>=<action>` for scripts, `--expired` to revive). Or the agent relays: `ec_review_list` returns the ordered page plus a short-lived `review_token`; `ec_review_decide` applies only decisions stated by the user, refuses a bulk accept-all, and records the channel as `agent`. Non-reviewable-by-default: candidates unreviewed for `review.expire_after_days` (21) become `expired` — kept, still usable in session memory, revived only via `ec review --expired`.
-5. **Transport.** `ec export [file]` (ZIP: consistent `VACUUM INTO` snapshot + manifest), `ec import <file>` (direct when empty; `--replace` otherwise, automatic backup first; merging is not supported), `ec install --import <file>` for new-machine setup, `ec reset [--repo P] [--yes]` (always backs up first; `--repo` resolves the repo's git common dir and wipes every worktree's sessions).
-6. **Compatibility shims (deprecated):** `ec-start` enables the repo and shows status; `ec-stop` is an alias for `ec review` (old flags are refused with a deprecation note, `--resolve-open-questions` still works and belongs to `ec review`); `ec-status` unchanged (`ec status` is the same report as a subcommand). Harness-specific slash-command registration is the next phase.
+| File | What it is |
+|---|---|
+| `reverie.db` | the brain — one SQLite file for all projects |
+| `config.yaml` | config (created with defaults; your edits are kept) |
+| `AGENTS.md` | the agent instructions (written verbatim; safe to re-run install) |
 
-### Upgrading from a pre-subcommand install
+`REVERIE_HOME` relocates the whole directory. `REVERIE_REPO_PATH` +
+`REVERIE_BRANCH` override repo/branch detection for MCP launches outside a
+work tree.
 
-Console scripts only update on reinstall. If `ec` was installed when it still pointed at `ec.install:main`, the new subcommands (`ec enable`, `ec review`, `ec status`, `ec export`, …) don't exist for that binding and bare/mistyped invocations run the installer. Fix: re-run the install command — `pip install -e .` (repo checkout) or `pip install -U reverie` (published wheel) — after pulling. `ec install` detects the stale binding and prints the fix.
+## `reverie install`
 
-### Uninstalling
-
-`ec uninstall` removes exactly what `ec install` did, and nothing more (§1's "Uninstall / removal: does not exist" gap is closed as of `feat/flow`):
-
-- **Harness integrations (all four agents, no detection needed):** removes only Reverie's own entries — the `ec` MCP server entry in `~/.claude.json`, `~/.cursor/mcp.json`, `~/.config/opencode/opencode.json` (`mcp.ec`) and `~/.codex/config.toml` (`[mcp_servers.ec]`); the `@~/.ec/AGENTS.md` line in `~/.claude/CLAUDE.md`; the reference blocks in the OpenCode and Codex `AGENTS.md` files; `~/.cursor/rules/ec.md` (only while its content is still Reverie's verbatim text). The same merge logic as install, in reverse: every other key, line and file stays byte-identical. Invalid JSON/TOML, or a file edited so the entry can't be found unambiguously, is skipped and reported — never guessed at. A file that only ever held Reverie's entry is removed entirely (that's what install created).
-- **Your memory (`~/.ec`)** is KEPT by default so a reinstall resumes. `--delete-data` removes it: a final export is written outside `~/.ec` first (default: the current directory; its path is printed; `--no-export` skips it), you must type `delete` to confirm, and only then is `~/.ec` removed. `--yes` skips the confirmation for scripts — but never the export unless `--no-export` is also given. A failed export aborts the whole uninstall with nothing removed.
-- **`--dry-run`** prints every planned removal with the exact before/after for each file and changes nothing.
-- **The package** can't remove itself while running: the last step prints the exact command to run by hand — `pip uninstall engineering-cognition`, or the pipx/uv equivalent when the tool detects that install method.
-- Exit report: what was removed, what was kept, where the final export is (if any), and what still has to run.
-
-**Repo identity, worktrees, moves/re-clones (documented choices):**
-
-- Identity = the resolved absolute **git common directory** (`git rev-parse --path-format=absolute --git-common-dir`), so a worktree is the same repo as its main checkout for enablement. Sessions stay keyed to the **worktree toplevel** + branch (§28.5) because grounding verification and commit provenance must run against the actual working tree.
-- A repo **moved or re-cloned** on the same machine is a new identity; on first use Reverie re-matches it by the recorded **origin remote URL** — exactly one match adopts the old state (and re-keys onto the new path). Ambiguous (several known repos share the URL) or URL-less remotes start fresh as `undecided`; a plain `ec enable` resolves it.
-- On **export/import to another machine**, absolute repo paths don't carry over: repo *states* re-match by remote URL on first use (same rule); sessions tied to paths that don't exist on the new machine stay inert.
-
----
-
-## 1. The installer — implementation inventory
-
-Everything installation-related lives in **one module: `ec/install.py`** (985 lines), exposed as the `ec` console script (`pyproject.toml:26` → `ec = "ec.install:main"`) and as `python -m ec.install`.
-
-| Concern | Exists? | Implementation | Evidence |
-|---|---|---|---|
-| Installer entry point | ✅ | `run()` (pure-compute plan → apply) + `main()` (argparse CLI) | `install.py:802-934, 956-981` |
-| Harness detection | ✅ | `AgentSpec.detected()` — binary on PATH **or** marker file exists | `install.py:590-599` |
-| Per-harness config planning | ✅ | One `plan()` per agent → list of `PlannedWrite` (path, action, full content, note) | `install.py:414-419, 609-698` |
-| JSON merge | ✅ | `_json_merge` — upserts `data[section]["ec"]` only, never siblings | `install.py:430-463` |
-| TOML merge | ✅ | `_codex_toml` — upserts the `[mcp_servers.ec]` table, re-validates the merged file | `install.py:526-572` |
-| Idempotent line/block append | ✅ | `_line_once` (CLAUDE.md import), `_block_once` (OpenCode/Codex AGENTS.md) | `install.py:466-494` |
-| Spec-owned files | ✅ | `_verbatim_file` — AGENTS.md + command templates always rewritten verbatim when changed ("update" action) | `install.py:738-747` |
-| `~/.ec` bootstrap | ✅ | `_ec_home_plans` — ec.db, config.yaml, AGENTS.md, commands/ | `install.py:706-735` |
-| DB creation | ✅ | `Brain(write.path).close()` — auto-applies full schema | `install.py:753-755`, `ec/brain.py:71-105` |
-| LLM key check | ✅ | presence check only; prints guidance; never writes the key | `install.py:872-887` |
-| Ollama offline fallback (D42) | ✅ | detect `ollama` binary → offer → merge config.yaml → `ollama pull qwen2.5-coder:14b` (never fatal) | `install.py:286-310, 888-916` |
-| Dry-run | ✅ | `--dry-run` prints every planned write incl. full resulting content; writes nothing | `install.py:937-947` |
-| Interactive selection | ✅ | `_select_interactive` — "Add EC to all detected agents? (y/n)" → numbered picker | `install.py:765-795` |
-| **Uninstall / removal** | ❌ | **does not exist anywhere in the repo** (grep-verified; the only "remove" hits are review-gate docstrings) | — |
-| **Upgrade / version tracking** | ⚠️ | No version state, no migration. Re-running `ec install` is the upgrade path: agent entries upserted idempotently; spec-owned files (`AGENTS.md`, command templates) are force-refreshed verbatim when they changed; user's `config.yaml` is **kept** if it exists | `install.py:716-720, 738-747` |
-| **First-run wizard beyond agent selection** | ❌ | No post-install verification, no key prompt-entry (only prints instructions), no test call | — |
-| Venv/pip setup performed by installer | ❌ | The installer assumes `ec` is already importable; it does not create venvs or install packages | `install.py:378-403` |
-
-Helper modules the installer calls into:
-
-- `ec.brain.Brain` — to create the database file with the full schema (`install.py:753-755`).
-- `ec.config.DEFAULT_CONFIG` / `ec.config.ec_home` — default config contents and `$EC_HOME` resolution (`install.py:38, 317-357`).
-- `ec.install.server_command()` — decides how harness configs launch the MCP server (§5 below; D45/D28 — `install.py:366-403`).
-- `importlib.metadata` — pip-installed detection (`_is_pip_installed`, `install.py:366-375`).
-
-Related but distinct entry points (not part of install, but referenced by it): `python -m ec.session` (slash-command templates invoke it), `python -m ec.mcp_server` / `ec-mcp` (the server the harness configs launch), `ec-repair` (ops recovery).
-
----
-
-## 2. Supported harnesses — exact table
-
-The registry is a hard-coded list of exactly four agents (`AGENTS = [_ClaudeCode(), _Cursor(), _OpenCode(), _Codex()]`, `install.py:698`). **No other harness is implemented anywhere in the code.**
-
-| Harness | Detected automatically? | Supported? | Configuration written? | MCP configured? | User interaction? | Evidence |
-|---|---|---|---|---|---|---|
-| **Claude Code** | ✅ binary `claude` on PATH **or** `~/.claude.json` exists | ✅ | `~/.claude.json` (`mcpServers.ec`) + `@~/.ec/AGENTS.md` import line appended to `~/.claude/CLAUDE.md` | ✅ stdio, user scope | Prompted in interactive mode; auto with `--all`/`--only` | `_ClaudeCode.plan` (`install.py:609-628`) |
-| **Cursor** | ✅ binary `cursor` on PATH **or** `~/.cursor/mcp.json` exists | ✅ | `~/.cursor/mcp.json` (`mcpServers.ec`) + new file `~/.cursor/rules/ec.md` (reference block) | ✅ stdio | Same as above | `_Cursor.plan` (`install.py:631-650`) |
-| **OpenCode** | ✅ binary `opencode` on PATH **or** `~/.config/opencode/opencode.json` exists | ✅ | `~/.config/opencode/opencode.json` (`mcp.ec`, with `$schema` added when creating) + block appended to `~/.config/opencode/AGENTS.md` | ✅ local (argv-list command, `environment` key — OpenCode's own naming) | Same as above | `_OpenCode.plan` (`install.py:653-677`) |
-| **Codex** | ✅ binary `codex` on PATH **or** `~/.codex/config.toml` exists | ✅ | `~/.codex/config.toml` (`[mcp_servers.ec]` TOML table) + block appended to `~/.codex/AGENTS.md` | ✅ stdio via TOML table | Same as above | `_Codex.plan` (`install.py:680-695`) |
-| Anything else (Windsurf, Aider, Cline, Zed, Gemini CLI, …) | ❌ | ❌ not implemented | ❌ | ❌ | Printed guidance only: "Configure one anyway with --only" | `install.py:849-851`; registry list is exhaustive |
-| OpenCode **headless** (benchmark harness) | n/a | ⚠️ harness-specific, not user-facing | per-run `opencode_config.json` injected via `OPENCODE_CONFIG`; baseline condition disables EC explicitly | ✅ (per-run) | none | `ec/run_ecbench.py:127-165` |
-
----
-
-## 3. Harness detection behavior (exact)
-
-**Signal:** `AgentSpec.detected(home, which)` returns true if **either**
-
-1. `shutil.which(binary)` finds the harness binary on `PATH` (`claude`, `cursor`, `opencode`, `codex`), **or**
-2. the marker path exists under the user's home (`~/.claude.json`, `~/.cursor/mcp.json`, `~/.config/opencode/opencode.json`, `~/.codex/config.toml`).
-
-(`install.py:590-599`)
-
-**"Installed" vs "configured":** detection does **not** distinguish them. A harness with the EC entry already present reports exactly the same "found" as one never touched. The distinction surfaces only at plan/apply time: a planned write whose target already contains the identical `ec` entry becomes action `"unchanged"` and prints `· <path> already has the ec MCP server — unchanged` (`_json_merge:458-460`, `_codex_toml:562-564`).
-
-**False positives:** yes, by construction —
-
-- A leftover marker file (e.g., `~/.claude.json` remaining after Claude Code was uninstalled) marks the agent as installed.
-- Any other tool that created the marker (e.g., Cursor users get `~/.cursor/mcp.json` created by Cursor itself — that one is the real config; but `~/.claude.json` is Claude Code's *state* file, not an install proof).
-- A binary on PATH that the user never uses.
-
-**False negatives:** yes — a harness installed without its binary on PATH and without the exact marker file (e.g., an OpenCode user whose only config is `opencode.jsonc`; the marker is specifically `opencode.json`). `docs/ASSESSMENT.md` §3c documents this exact machine having `opencode.jsonc` alongside.
-
-**User selection:**
-
-- Interactive (default when harnesses are detected): the installer prints a ✓/✗ detection table, then asks **"Add EC to all detected agents? (y/n)"** — answering `y` configures all detected; anything else shows a numbered **"Select agents to configure:"** picker (comma-separated numbers). EOF is treated as an empty/no answer; invalid selections are ignored with a message (`install.py:765-795, 820-851`).
-- Non-interactive: `--all` (configure every detected agent) or `--only claude_code,cursor,opencode,codex` (by key; the two flags are mutually exclusive; unknown keys raise `InstallError`).
-- **`--only` can configure a harness that was NOT detected** — it prints `(note: <name> was not detected — configuring anyway)` and proceeds (`install.py:831-842`).
-- If **no** agents are detected and no `--only` was given: nothing agent-side is configured, but the `~/.ec` bootstrap and LLM check still run, with the message "No supported agents detected. Configure one anyway with `--only`…" (`install.py:843-851, 866-869`).
-
-**All detected harnesses are automatically configured only with `--all` (or by answering `y` to the first prompt).** There is no unattended-by-default behavior.
-
----
-
-## 4. The actual installation flow (as coded)
-
-```text
-User
- ↓
-`ec`  (or: python -m ec.install)   [--all | --only KEY[,KEY…]] [--dry-run]
- ↓
-Banner: "Engineering Cognition — Installation"  (+ dry-run notice)
- ↓
-1. DETECT harnesses — for each of the 4: shutil.which(binary) OR marker exists
-      → print "✓/✗ <name> found/not found"
- ↓
-2. SELECT — branch:
-   ├── --only given        → validate keys (unknown → InstallError, exit 1);
-   │                         configure even if undetected (prints note)
-   ├── --all given         → all detected, no prompt
-   ├── detected non-empty  → "Add EC to all detected agents? (y/n)"
-   │     ├── y             → all detected
-   │     └── else          → numbered picker (EOF = nothing)
-   └── none detected       → selected = []  (+ guidance message)
- ↓
-3. PER-HARNESS PLAN+APPLY — for each selected agent, plan() → PlannedWrite list;
-   each write is emitted (dry-run: printed with full content; else applied):
-   JSON merges / TOML upsert / idempotent line & block appends
-      └── malformed JSON/TOML in any target file → InstallError, ABORT, no changes
- ↓
-4. ~/.ec BOOTSTRAP (always, even with zero agents):
-   • ~/.ec/ec.db            → create via Brain() if missing (full schema); else "unchanged"
-   • ~/.ec/config.yaml      → write DEFAULT_CONFIG if missing; else KEEP user's file
-   • ~/.ec/AGENTS.md        → write verbatim (163 lines) if different
-   • ~/.ec/commands/ec-start.md | ec-stop.md | ec-status.md → write verbatim
- ↓
-5. LLM PROVIDER STEP (feat/providers; replaces the old Zen-only check):
-    ├── --provider given    → validate registry key (unknown → InstallError);
-    │                         merge the resolved llm block (non-interactive)
-    ├── keys detected       → each reported ("✓ VAR detected (Name)");
-    │     ├── exactly one   → offered as default ("(Y/n)"; default = yes)
-    │     └── several       → menu of all providers (detected marked "✓ key set")
-    ├── no keys + interactive → provider menu (cloud providers, "Local via
-    │                         Ollama", "Skip for now")
-    ├── no keys + EOF/--all → "Skip" + provider guidance + Ollama instructions
-    └── chosen              → merge llm block into ~/.ec/config.yaml (registry
-                              fills base_url/model/api_key_env/wire_format; the
-                              KEY IS NEVER WRITTEN) → print the exact
-                              `export VAR=...` line → one cheap live ping
-                              (skipped by --no-verify; failures reported, never fatal)
- ↓
-6. FINAL TRANSCRIPT ("EC is ready!") — lists /ec-start, /ec-stop, /ec-status and
-   the 4-step usage story (open agent → /ec-start → work → /ec-stop)
+```bash
+reverie install                    # interactive
+reverie install --all              # every detected harness, non-interactive
+reverie install --only claude_code,codex --provider anthropic --no-verify
+reverie install --dry-run          # print every planned write, change nothing
+reverie install --import memory.zip  # new machine: restore an export
 ```
 
-What the flow **does not** contain: no pip/venv creation, no Python-version check, no key entry prompt, no connectivity test, no session start, no post-install verification, no uninstall.
+What it does, in order:
 
----
+1. **Detects harnesses** — binary on PATH or the harness's config file exists.
+2. **Selects** — interactive picker, `--all`, or `--only` (keys:
+   `claude_code`, `codex`, `cursor`, `opencode`, `gemini_cli`).
+3. **Per-harness writes** — see the table below. All merges are idempotent:
+   only Reverie's own entry is added or replaced, every other key/line/byte
+   is preserved, and a malformed file aborts with no changes to it.
+4. **Bootstraps `~/.reverie`** (DB with the full schema, default config,
+   agent instructions).
+5. **LLM provider step** — detects registry provider keys in the
+   environment, offers the detected one as the default, merges the resolved
+   `llm` block into `~/.reverie/config.yaml`, prints the exact `export`
+   line, and pings the provider once (`--no-verify` skips; a failed ping is
+   reported, never fatal). Keys are never written to disk.
+6. **Per-harness summary** — exactly what was written and the next step in
+   that harness.
 
-## 5. Exactly what gets written
+Re-running `reverie install` is safe and is the upgrade path: entries
+upsert idempotently, owned files refresh verbatim, your `config.yaml` is kept.
 
-### 5.1 Common server-command resolution (`server_command()`, `install.py:378-403`)
+## What gets written per harness
 
-| Condition | Command written into agent configs |
-|---|---|
-| Package pip-installed (importlib.metadata sees `engineering-cognition`) | bare console script **`ec-mcp`**, no args, no env (D45) |
-| Not pip-installed (dev checkout) | **absolute venv python** — first of `<repo-root>/.venv/bin/python` (POSIX) or `<repo-root>/.venv/Scripts/python.exe` (Windows) — with `args: ["-m", "ec.mcp_server"]` and `env: {PYTHONPATH: <repo-root>}` (D28/B2); falls back to `sys.executable` if no venv |
-
-Known deviation (documented in-code): the design doc's literal `"ec"` command would launch the *installer*, hence the dedicated `ec-mcp` script name.
-
-### 5.2 Per-harness artifacts
-
-| Harness | File | Resulting structure (dev checkout shown; pip-installed collapses `command` to `"ec-mcp"`, drops `args`/`env`) | Merge semantics |
+| Harness | MCP server (user scope) | Instructions | Slash commands |
 |---|---|---|---|
-| Claude Code | `~/.claude.json` | `"mcpServers": { "ec": { "type": "stdio", "command": "<abs venv python>", "args": ["-m","ec.mcp_server"], "env": {"PYTHONPATH": "<repo-root>"} } }` | JSON merge; only the `ec` key inside `mcpServers` is added/replaced; all siblings and all other top-level keys preserved; `mcpServers` created if absent |
-| Claude Code | `~/.claude/CLAUDE.md` | appends import line `@~/.ec/AGENTS.md` (exact `~`-form when default home) | idempotent line append (skipped if an identical stripped line exists); file created if missing |
-| Cursor | `~/.cursor/mcp.json` | `"mcpServers": { "ec": { "command": "<abs venv python>", "args": [...], "env": {...} } }` | same JSON merge |
-| Cursor | `~/.cursor/rules/ec.md` | full file: `## Engineering Cognition (EC)` block referencing `~/.ec/AGENTS.md`, naming the 4 MCP tools and the user-controlled session lifecycle | created/overwritten as one unit (idempotent: "unchanged" if byte-equal) |
-| OpenCode | `~/.config/opencode/opencode.json` | `"mcp": { "ec": { "type": "local", "enabled": true, "command": ["<abs venv python>", "-m", "ec.mcp_server"], "environment": {"PYTHONPATH": "<repo-root>"} } }` — note **argv-list** `command` and the `environment` (not `env`) key, renamed in code because "OpenCode names the key differently"; `$schema` key added only when the file is created fresh | JSON merge of the `ec` key under `mcp` |
-| OpenCode | `~/.config/opencode/AGENTS.md` | appended block: `## Engineering Cognition (EC)` + reference to `~/.ec/AGENTS.md` | idempotent block append (marker = the AGENTS.md reference string) |
-| Codex | `~/.codex/config.toml` | `[mcp_servers.ec]` + `command = "<abs venv python>"` + `args = ["-m", "ec.mcp_server"]` + `env = { PYTHONPATH = "<repo-root>" }` (TOML inline table) | table upsert between `[mcp_servers.ec]` and the next `[`-header; existing table replaced wholesale; everything else byte-preserved; merged result re-validated with `tomllib` (refuses to write an unparseable merge) |
-| Codex | `~/.codex/AGENTS.md` | appended block (same reference text) | idempotent block append |
-| EC home | `~/.ec/ec.db` | empty SQLite brain with the full 11-table schema | created only if missing |
-| EC home | `~/.ec/config.yaml` | full `DEFAULT_CONFIG` YAML dump | created only if missing — an existing user config is never touched (except the explicit Ollama offer, which deep-merges just the `llm` block) |
-| EC home | `~/.ec/AGENTS.md` | 163-line agent instructions (verbatim spec text; tests assert equality with SPEC) | always rewritten verbatim if content differs (this is the update mechanism) |
-| EC home | `~/.ec/commands/ec-start.md`, `ec-stop.md`, `ec-status.md` | step-list templates + the exact CLI line each invokes (`python -m ec.session start/stop/status`) | always rewritten verbatim if different |
+| **Claude Code** | `~/.claude.json` → top-level `mcpServers.reverie` (`type: stdio`) | `@~/.reverie/AGENTS.md` import appended to `~/.claude/CLAUDE.md` | `~/.claude/commands/reverie-review.md`, `reverie-status.md` |
+| **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | block appended to `~/.codex/AGENTS.md` | `~/.codex/prompts/reverie-review.md`, `reverie-status.md` (invoked `/prompts:reverie-review`) |
+| **Cursor** | `~/.cursor/mcp.json` → `mcpServers.reverie` | **none written** — Cursor documents no global rules file; guidance arrives via the server `instructions` + tool descriptions (paste into Settings → Rules if you want it always on) | `~/.cursor/commands/reverie-review.md`, `reverie-status.md` (beta) |
+| **OpenCode** | `~/.config/opencode/opencode.json` → `mcp.reverie` (`type: local`, argv-list `command`, `environment` key) | block appended to `~/.config/opencode/AGENTS.md` | `~/.config/opencode/commands/reverie-review.md`, `reverie-status.md` |
+| **Gemini CLI** | `~/.gemini/settings.json` → `mcpServers.reverie` | block appended to `~/.gemini/GEMINI.md` | `~/.gemini/commands/reverie-review.toml`, `reverie-status.toml` (TOML `prompt`) |
 
-**Transport:** all four harnesses are configured for **stdio** transport (Claude Code explicitly `"type": "stdio"`; OpenCode `"type": "local"`; Codex implicit stdio MCP table; Cursor default stdio). No HTTP/SSE transport exists in the product.
+The server entry itself (pip-installed):
 
-**Duplicate prevention & idempotency:** every write computes its full resulting content first and returns `unchanged` when the target already matches — repeated installs produce only `· … unchanged` lines and are safe to run any number of times (covered by `tests/test_phase5_install.py`).
+```json
+{"command": "reverie-mcp"}
+```
 
-**Secrets:** none are written by the installer — the API key is only *read* from the environment for a presence check; it is never placed into any file. (Agent configs receive `PYTHONPATH` and, in the bench harness only, `EC_HOME`/`EC_REPO_PATH`/`EC_BRANCH`.)
+Dev checkout (not pip-installed): the absolute venv-python form with
+`args: ["-m", "reverie.mcp_server"]` and `env.PYTHONPATH: <repo root>`.
 
----
+### Slash commands
 
-## 6. Installation prerequisites
+Two commands are installed in every harness that has a user-level command
+mechanism: **`/reverie-review`** (asks the agent to list review candidates,
+show every candidate's full text, and relay only the decisions you state)
+and **`/reverie-status`** (the session + brain report through
+`reverie_summary`). Formats: plain markdown for Claude Code and Cursor;
+markdown + YAML frontmatter for OpenCode; frontmatter markdown under
+`~/.codex/prompts/` for Codex (custom prompts are deprecated upstream —
+still the user-level mechanism); TOML (`prompt` string) for Gemini CLI.
+All are removed by `reverie uninstall` (verbatim content only — edited
+files are reported, not deleted).
 
-### Required
+### The MCP `instructions` field
 
-| Prerequisite | Detail | Enforced? |
-|---|---|---|
-| Python ≥ 3.12 | `requires-python = ">=3.12"` (`pyproject.toml:9`); venv on this machine is 3.12.9 | By pip at install time; the installer itself performs no check |
-| The package importable | `pip install -e .` from the repo root (or any install of `engineering-cognition`); pulls torch 2.2.2, numpy<2, scipy<1.13, scikit-learn<1.5, transformers<5, sentence-transformers==3.0.1, hdbscan, requests, pyyaml | Installer assumes it; if not pip-installed it hardwires the repo venv path + PYTHONPATH (which then must exist) |
-| git | Sessions are keyed to `(repo, branch)` via `git rev-parse` / `git branch --show-current`; non-git dir → `ec-start` fails | Enforced at `ec-start` time, not install time |
-| A git working repo | required to start a session (`ec/session.py:69-107`) | Enforced at `ec-start` |
-| ~ 500 MB+ disk for the embedding model | `all-MiniLM-L6-v2` via sentence-transformers, downloaded on first use | Not checked |
+The initialize response carries the core usage contract in a few lines:
+query only after reading the code; treat results as past understanding to
+verify; never decide reviews for the user; ask once per repo before turning
+Reverie on. Client support, per each vendor's docs (2026-10-15):
 
-### Optional
+- **Claude Code** — surfaces server instructions at session start
+  (documented).
+- **Codex CLI** — "Codex reads the MCP `instructions` field returned during
+  initialization and uses it as server-wide guidance" (documented).
+- **Gemini CLI** — instructions are "appended to the system instructions"
+  (documented).
+- **OpenCode** — captured in recent versions (visible in the v1.18+ source;
+  not clearly documented).
+- **Cursor** — not documented; rely on tool descriptions there.
 
-| Prerequisite | Behavior when absent |
-|---|---|
-| Any registry provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_ZEN_API_KEY`) | Install completes; the provider menu runs. At runtime extraction fails with a provider-aware, actionable `LLMError` naming the configured provider's key env var and key URL, the interaction is persisted to `pending_extractions` (retried at the next successful `ec_observe` or via `ec-retry`), mode detection falls back to keywords, and `ec_reconsolidate` works only with an explicit relationship |
-| `ollama` binary + `qwen2.5-coder:14b` | Offline fallback; installer prints `curl -fsSL https://ollama.com/install.sh | sh` instructions if absent |
-| `pytest` (dev extra) | only for the test suite |
+## Sources (checked 2026-10-15)
 
-### Automatically configured
+- Claude Code: MCP configuration (`~/.claude.json` user scope), memory
+  (`~/.claude/CLAUDE.md`, `@import`), slash commands/skills
+  (`~/.claude/commands/`), server instructions —
+  <https://code.claude.com/docs/en/mcp>, <https://code.claude.com/docs/en/memory>,
+  <https://code.claude.com/docs/en/slash-commands>
+- Codex CLI: MCP config (`~/.codex/config.toml`, `[mcp_servers.*]`), global
+  `AGENTS.md`, custom prompts (`~/.codex/prompts/`, deprecated), server
+  instructions — <https://developers.openai.com/codex/mcp>,
+  <https://developers.openai.com/codex/guides/agents-md>,
+  <https://developers.openai.com/codex/custom-prompts>
+- Cursor: global MCP (`~/.cursor/mcp.json`), rules (User Rules in settings;
+  no documented global rules **file**), commands (`~/.cursor/commands/`,
+  beta) — <https://www.cursor.com/docs/mcp>,
+  <https://cursor.com/docs/context/rules>, <https://cursor.com/docs/agent/chat/commands>
+- OpenCode: global config (`~/.config/opencode/opencode.json`, `mcp.<name>`
+  with `type: local`/`command` argv/`environment`), global rules
+  (`~/.config/opencode/AGENTS.md`), commands
+  (`~/.config/opencode/commands/`) — <https://opencode.ai/docs/mcp-servers/>,
+  <https://opencode.ai/docs/rules/>, <https://opencode.ai/docs/commands/>
+- Gemini CLI: `~/.gemini/settings.json` (`mcpServers`), `~/.gemini/GEMINI.md`,
+  TOML commands (`~/.gemini/commands/`), server instructions —
+  <https://geminicli.com/docs/tools/mcp-server/>,
+  <https://geminicli.com/docs/cli/gemini-md/>,
+  <https://geminicli.com/docs/cli/custom-commands>
 
-`~/.ec/` (db + config.yaml + AGENTS.md + command templates) and the four harness MCP entries (§5).
+## Other MCP clients
 
-### User must configure manually
+Any client that launches a stdio MCP server works:
 
-- **Exporting the API key** in their shell profile (the installer checks presence; it never writes it).
-- **MCP entry for any non-supported harness** — the server command is documented above; there is no generated snippet for other clients (a user could hand-write the same JSON/TOML shape).
-- **Running `ec-start` per repo/branch** (nothing auto-starts).
-- If no agent was detected and they skip `--only`: wiring any harness at all.
+- command: `reverie-mcp` (pip-installed) or `<venv>/bin/python -m
+  reverie.mcp_server` with `PYTHONPATH=<repo root>`
+- transport: stdio, NDJSON JSON-RPC 2.0, protocol `2024-11-05`
+- 7 tools (see the README's glossary + `docs/CLI.md`)
 
-### Filesystem / OS assumptions
+## Uninstall
 
-- Writable home directory; installer creates missing parents for every target (`_apply`: `mkdir(parents=True, exist_ok=True)`).
-- Paths use `Path.home()` / `~` expansion; display is `~`-relative when possible.
-- Windows: the venv-python candidate list handles `.venv/Scripts/python.exe`, but everything else (tests, evidence, CI absence) is macOS/POSIX-flavored; Windows support is untested, not claimed.
-- No systemd/launchd service, no daemon install — the only long-lived process is the MCP server, spawned by the harness itself.
+```bash
+reverie uninstall [--delete-data] [--no-export] [--yes] [--dry-run]
+```
 
----
+Shows the full plan first (harness entries + data plan) and asks ONE
+confirmation. Removes only Reverie's own entries (merge logic in reverse),
+keeps `~/.reverie` unless `--delete-data` (a final export is written
+outside it first), and prints the `pip uninstall reverie` command for the
+last step. See `docs/CLI.md` for every flag.
 
-## 7. First-run behavior (exact sequence after `ec install`)
+## Smoke test
 
-1. **Nothing starts automatically.** No background process, no service, no launch agent. The MCP server starts only when the harness spawns it per the written config; the DB-creating installer step already happened during install.
-2. **What already exists after install:** `~/.ec/ec.db` (empty, schema applied), `~/.ec/config.yaml` (defaults), `~/.ec/AGENTS.md`, `~/.ec/commands/*.md`, and the harness MCP entries + AGENTS references (§5).
-3. **User opens their agent.** The harness launches `ec-mcp` (or venv-python `-m ec.mcp_server`) as a subprocess. On startup the server: runs overdue maintenance synchronously if triggers are met, starts the `MaintainerThread`, and logs to stderr (`ec/mcp_server.py:366-391, 773-786`). Repo resolution for grounding: `EC_REPO_PATH`(+`EC_BRANCH`) → git toplevel of cwd → most recent active session's repo (`resolve_maintainer_repo_path`).
-4. **Sessions require the user:** the agent is told (via `~/.ec/AGENTS.md` and tool descriptions) to never start sessions itself; without an active session `ec_observe`/`ec_query` return the verbatim error "No active EC session. Suggest the user run /ec-start to begin a session."
-5. **`/ec-start`** — the slash-command *templates* live in `~/.ec/commands/` and are referenced from `AGENTS.md`; the installer does **not** natively register slash commands in any harness. The command's actual body is `python -m ec.session start` (`ec-start` console script equivalent), which: detects `(repo, branch)` (git, or `EC_REPO_PATH`+`EC_BRANCH`), resumes the matching active session (loading decayed activation state) or creates one (carrying over unreviewed pending/skipped ECUs from closed sessions of the same context), prints the session id + brain summary, and best-effort runs the throttled (72 h) grounding check for the repo (`ec/session.py:242-330`).
-6. **Agent behavior during work** is instructed by `~/.ec/AGENTS.md` (verbatim): when to call `ec_observe`, when to call `ec_query` (only after reading code — anti-anchoring), how to read confidence/status/grounding, and to never suggest lifecycle commands.
-7. **`/ec-stop`** → `python -m ec.session stop` → interactive review gate in the terminal (open questions first, then a/r/i per group, y/n/s/d per ECU); non-interactive variants `--all-accept` / `--all-skip` / `--resolve-open-questions skip|archive` (`ec/session.py:378-459`).
-8. **First tool calls**: `ec_get_summary` works session-less; `ec_observe`/`ec_query` require the session; the first `ec_observe` additionally stamps the repo's git HEAD into grounding (D49).
-
----
-
-## 8. The actual MCP interface
-
-Server: hand-rolled stdio NDJSON JSON-RPC 2.0 (`PROTOCOL_VERSION = "2024-11-05"`, server name `ec`, `ec/mcp_server.py:79-80`). Methods: `initialize`, `ping`, `tools/list`, `tools/call`. **Tools only — no resources, no prompts** are exposed. All four tools are defined in `TOOLS` (`mcp_server.py:207-324`) and are automatically available as soon as the harness spawns the server; session-gating is per-tool.
-
-| Tool | Purpose | When the agent is told to call it | Key arguments | Key return values | Session required? |
-|---|---|---|---|---|---|
-| `ec_observe` | Extract conclusions from the agent's reasoning → Session Brain → lightweight diffusion | After discovering an invariant / root cause / decision / wrong assumption; never for simple code changes | `user_prompt`* , `reasoning_trace`* , `final_output` (opt) | `status, ecus_extracted, ecus_rejected, rejection_summary, session_brain_count, skipped_invalid, diffusion_failures, message` | ✅ |
-| `ec_query` | Demand-driven retrieval of past cognition (both brains) | After reading relevant code, before decisions / debugging / architecture | `query`* , `scope` (6-level enum, opt), `mode` (5-mode enum, opt) | `status, mode, mode_detected, groups_retrieved, groups[] (core_ecu + supporting_evidence/contradictions/dependencies/superseded_by), warnings, brain_source, formatted, fallback, filtered_out` | ✅ |
-| `ec_get_summary` | Brain statistics (awareness without anchoring) | Once at session start; also usable anytime | none | `canonical_brain{total_ecus, by_scope, by_status, last_maintenance_run, last_ecu_added, pending_review_count}, session{active, session_brain_count, repo, branch}, message` | ❌ (works without) |
-| `ec_reconsolidate` | Re-evaluate a *previously retrieved* canonical ECU with new evidence; writes Canonical immediately | When verified evidence shows a retrieved ECU is wrong/outdated/needs strengthening | `ecu_id`* , `evidence`* , `relationship` (supports/contradicts/supersedes, opt) | `status, ecu_id, action_taken (confidence_updated\|challenged\|superseded\|no_change), old_confidence, new_confidence, edges_created, message` | ✅ (+ labile gate: must have been surfaced by `ec_query` in this server process — `mcp_server.py:685-696`) |
-
-`isError` on the tool-result envelope mirrors `payload.status == "error"`. After every successful `ec_query` the server stamps retrieval metadata, applies the confidence reinforcement bump, and marks surfaced canonical ECUs labile (`mcp_server.py:481-526`).
-
----
-
-## 9. Failure behavior (what the user actually sees)
-
-| Situation | Actual behavior | Evidence |
-|---|---|---|
-| Unsupported harness installed (e.g., Windsurf) | Not detected, silently unconfigured; if nothing detected: "No supported agents detected. Configure one anyway with `--only` (e.g. `python -m ec.install --only claude_code`)." | `install.py:849-851` |
-| `--only windsurf` (unknown key) | `InstallError`: "unknown agent(s): windsurf. Known agents: claude_code, codex, cursor, opencode" → stderr, exit 1 | `install.py:831-837, 979-981` |
-| Harness not installed but forced via `--only` | Proceeds, printing "(note: <name> was not detected — configuring anyway)" | `install.py:837-842` |
-| Malformed agent config (invalid JSON/TOML/YAML) | `InstallError` naming the file, the parse error, and "Fix or remove it, then re-run `python -m ec.install`. **No changes were made to it.**" Exit 1 | `install.py:438-457, 535-540, 330-348` |
-| Existing Reverie config in a harness file | Idempotent merge — only the `ec` entry upserted; identical state → `· <path> already has the ec MCP server — unchanged` | `_json_merge`/`_codex_toml` |
-| Repeated installation | Everything re-planned; already-correct targets → `unchanged` lines; spec-owned files rewritten only if content differs; safe | `_verbatim_file`, tests |
-| No provider key at install | Install still succeeds; the provider menu runs (or, non-interactively, guidance lists every registry provider's `export` line); Ollama remains available as "Local via Ollama" | `install.py` LLM-provider section (feat/providers) |
-| Missing Ollama binary (no key) | Prints curl install instructions + the manual yaml snippet | `install.py` skip-path of the provider step |
-| `--provider vllm` (unknown key) | `InstallError`: "unknown provider 'vllm'. Known providers: …" → stderr, exit 1 | `install.py` provider validation (feat/providers) |
-| Provider ping fails at install | Reported clearly ("✗ Ping failed: …") and never fatal; the config stands | `install.py::_verify_provider` (feat/providers) |
-| Ollama present, user accepts, `ollama pull` fails | "! Could not run `ollama pull` (<exc>). Run it manually, then EC works offline." — **never fatal** | `install.py:903-910` |
-| Not a git repo at `ec-start` | `SessionError`: "Could not detect a git repository from <cwd> … run /ec-start from inside a git repository." exit 1 | `ec/session.py:76-87, 405-409` |
-| No active session on `ec_observe`/`ec_query`/`ec_reconsolidate` | Structured error payload: "No active EC session. Suggest the user run /ec-start to begin a session." (`isError: true`) — the server keeps running | `mcp_server.py:83-85, 473-479` |
-| MCP startup with locked/corrupt DB | **Uncaught `BrainError`** — "EC brain could not be opened at <path>: <exc>. If it is locked by another process, close other EC instances and try again." — the process dies with a traceback (`_ensure_brain()` sits outside the guarded region of `start_maintenance`) | `ec/brain.py:80-85`, `ec/mcp_server.py:346-349, 773-786` |
-| DB file missing at any entry point | Auto-created with full schema (`Brain.__init__`) — never an error | `ec/brain.py:71-79` |
-| Extraction LLM failure at runtime | Non-fatal tool error: "Extraction failed: <reason>. The reasoning trace may be too short or contain no engineering conclusions. This is not an error…" | `mcp_server.py:86-90, 567-569` |
-| Mode detection LLM failure | Falls back to keyword classifier; retrieval proceeds (logs a warning) | `ec/mode_detection.py:107-115` |
-| Reconsolidation offline without explicit relationship | Tool error telling the agent to retry with an explicit relationship ("Nothing was changed") | `mcp_server.py:710-721` |
-| Diffusion failure at review-gate accept | Promotion stands; ECU listed as un-diffused; prominent CLI warning `⚠️ WARNING: N ECU(s) promoted without diffusion…` | `ec/review_gate.py:900-908, 974-988` |
-| DB integrity issues post-install | `ec-repair [--dry-run]` — 6 checks, safe additive fixes only | `ec/repair.py` |
-| Config file invalid YAML at load (`~/.ec/config.yaml`) | The installer guards against writing into malformed YAML, but `config.load_config` at runtime would raise `ValueError`/yaml errors | `ec/config.py:342-352` |
-
----
-
-## 10. Correct eventual README onboarding (strictly implementation-backed)
-
-### What the README can truthfully say today
-
-1. **What Reverie is** — a local MCP server + Python package that stores engineering *conclusions* (ECUs) with confidence, scope, grounding, and typed relationships in one SQLite file, and serves them to coding agents on demand.
-2. **Prerequisites** — Python ≥ 3.12; git; a clone of this repository; `pip install -e .` (heavy pinned ML deps); a key for any registry provider (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_ZEN_API_KEY`) *or* Ollama for offline mode.
-3. **Install** — `pip install -e .` then `ec` (interactive) / `ec --all` / `ec --only …` / `ec --dry-run`.
-4. **Harness selection/configuration** — auto-detects Claude Code, Cursor, OpenCode, Codex (binary-on-PATH or marker file); prompts "Add EC to all detected agents? (y/n)" with a numbered picker; `--only` can force-configure undetected agents.
-5. **MCP setup** — automatic for the four supported agents (exact files/keys in §5). For other MCP clients: launch `ec-mcp` (pip-installed) or `<venv python> -m ec.mcp_server` with `PYTHONPATH=<repo root>` over stdio.
-6. **Starting a session** — from inside a git repo: `ec-start` (resumes or creates the session for `(repo, branch)`, prints brain summary). The agent never starts sessions itself.
-7. **Observing cognition** — the agent calls `ec_observe` with `user_prompt` + `reasoning_trace` (per the instructions in `~/.ec/AGENTS.md`); rejections are reported back.
-8. **Querying cognition** — the agent calls `ec_query` (optionally `scope`/`mode`) after reading code; results include confidence labels, status flags, grounding references, and the "verify against current code" framing note.
-9. **Ending/reviewing a session** — `ec-stop` for the interactive review gate (open questions a/b/c/d; groups a/r/i; per-ECU y/n/s/d), or `ec-stop --all-accept` / `--all-skip`; accepted ECUs are diffused into the Canonical Brain.
-10. **Where memory is stored** — `~/.ec/ec.db` (override dir with `EC_HOME`); config `~/.ec/config.yaml`; agent instructions `~/.ec/AGENTS.md`; integrity tool `ec-repair`.
-
-Also truthful today: idempotent re-install (running `ec` again refreshes `AGENTS.md`/command templates and leaves everything else untouched); `~/.ec/commands/*.md` contain the exact CLI lines the slash commands run.
-
-### What would require additional implementation (honest gap list)
-
-- **Uninstall/removal** — nothing exists; README cannot claim "remove with one command."
-- **Slash-command registration** — templates are written to `~/.ec/commands/` but not registered natively in any harness; whether `/ec-start` actually appears in the agent's command palette depends on the harness. README must say "run the template's CLI or type the command your agent recognizes" until native registration exists.
-- **PyPI availability** — the package is not published (no publish workflow in repo); "pip install engineering-cognition" cannot be claimed; onboarding must be clone + `pip install -e .`.
-- **API key setup** — the installer detects registry provider keys, offers/asks, merges the resolved `llm` block, and prints the `export` line; a "paste your key" flow still does not exist (keys are never written to disk).
-- **Non-tty install** — interactive selection needs a TTY (EOF-safe but effectively requires interactivity unless `--all`/`--only`).
-- **Broader harness support** — only 4 agents; any "works with your favorite agent" copy needs the manual-MCP-instructions paragraph instead.
-- **Windows** — path handling has partial support; nothing tested; cannot claim.
-- **Post-install verification** — the provider step now includes a one-call live ping (`--no-verify` skips it), covering LLM connectivity; harness wiring and the DB have no dedicated check (closest is `ec-repair`, which checks DB integrity).
-
----
-
-## 11. Website implications
-
-### Website-safe installation messaging (implementation-backed)
-
-1. **"MCP-native."** Hand-rolled stdio JSON-RPC 2.0 MCP server, zero SDK dependencies (`ec/mcp_server.py`).
-2. **"One command configures Claude Code, Cursor, OpenCode, and Codex."** `ec install` detects and writes per-agent MCP config + agent instructions, merge-only and idempotent (`ec/install.py`).
-3. **"Local-first: your engineering memory stays in one SQLite file on your machine."** `~/.ec/ec.db`; no cloud, no vector DB, embeddings as local BLOBs (`ec/config.py`, `ec/schema.sql`).
-4. **"Runs with local models."** Ollama fallback auto-configuration (`qwen2.5-coder:14b`) offered when no API key is set (`ec/install.py:286-310, 888-916`).
-5. **"Nothing enters long-term memory without your review."** The review gate is the only write path into the Canonical Brain (`ec/review_gate.py`).
-
-### What NOT to say (unsupported by implementation)
-
-- ❌ "One-line install" / "pip install engineering-cognition" — not on PyPI; requires repo clone + editable install.
-- ❌ "Works with any agent" / "works with Windsurf/Aider/Cline…" — only 4 installers; others need a hand-written MCP entry.
-- ❌ "Installs /ec-start slash commands into your agent" — templates are written to `~/.ec/commands/` but not natively registered anywhere.
-- ❌ "Zero configuration" — an API key (or Ollama setup) is required for the core extraction loop; sessions require a git repo.
-- ❌ "Windows/macOS/Linux" — only macOS is evidenced; Windows is partial and untested.
-- ❌ Any dashboard/GUI/cloud-sync/removal claims — none exist.
-- ❌ Any "uninstall anytime" claim — no uninstall path exists.
-
----
-
-## 12. Final verdict
-
-### Current installation status: **usable but onboarding needs documentation**
-
-Why:
-
-- The installer itself is genuinely solid for its scope: four-agent registry, dual-signal detection, computed planned writes, merge-only idempotency, TOML re-validation, dry-run with full content preview, `~/.ec` bootstrap, and an Ollama fallback — all covered by `tests/test_phase5_install.py` (26 tests) and exercised by the live E2E/benchmark pipeline.
-- What blocks *public* onboarding is everything around it: the package is not on PyPI (install = clone + `pip install -e .`), there is **no README, no LICENSE, no uninstall**, slash-command templates are written but not natively registered in any harness, the API key has a check-but-don't-set flow, and only the interactive TTY path is friendly. None of these are installer bugs — they are missing product surfaces that a README cannot paper over.
-- The MCP wiring itself works and was verified live (initialize/tools/list/tools/call against the real server; OpenCode config format validated on a machine with a pre-existing `opencode.jsonc` — `docs/ASSESSMENT.md` §3).
-
-Classification boundary notes: not "ready for public onboarding" (no distribution channel, no license, no README); clearly beyond "experimental" (idempotent, tested, live-verified); not "incomplete" in the sense of broken — the happy path works end-to-end.
-
-### Minimum work required before publishing a polished README (actual gaps only)
-
-1. **LICENSE file + `license` field in `pyproject.toml`** — the repo ships neither; any public distribution is blocked on this. (The extraction prompt self-declares MIT for itself only.)
-2. **A distribution story** — publish to PyPI (name `engineering-cognition` is already the distribution name) or document the exact clone + `pip install -e .` flow as the supported install.
-3. **`README.md` itself** — none exists; the ten-step onboarding in §10 is fully implementable from current behavior.
-4. **Document (or implement) slash-command reality** — state that `/ec-start` etc. are defined by `~/.ec/commands/*.md` + `~/.ec/AGENTS.md`, and either register them natively per harness or tell users to run the console scripts (`ec-start`/`ec-stop`/`ec-status`) directly.
-5. **API-key onboarding copy** — document the registry providers and their `export` lines (any one works; Ollama is the offline alternative); the post-install connectivity check now exists as the provider ping (`--no-verify` skips it).
-6. **(Optional, small) uninstall guidance** — since no uninstaller exists, the README should at minimum list the files created (§5) so users can remove them manually — or an `ec uninstall` would close the loop.
-7. **(Optional) `--only`-style non-interactive default note** — document that headless/CI setup must use `--all`/`--only` because the default path prompts.
-
----
-
-*End of INSTALLATION.md — audit only; no repository files were modified. Installer evidence verified against `ec/install.py` at commit `4e0d312` (HEAD of the audit date) and cross-checked against `tests/test_phase5_install.py`, `docs/ASSESSMENT.md` §3, and the MCP server/session modules.*
+After installing in a real harness, run [`docs/SMOKE_TEST.md`](SMOKE_TEST.md).

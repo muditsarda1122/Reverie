@@ -20,11 +20,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ec import retrieval
-from ec.activation import ActivationState
-from ec.brain import Brain
-from ec.config import get_config, load_config
-from ec.llm import api_key
+from reverie import retrieval
+from reverie.activation import ActivationState
+from reverie.brain import Brain
+from reverie.config import get_config, load_config
+from reverie.llm import api_key
 
 T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -46,14 +46,14 @@ def make_ecu(cognition: str, **overrides) -> dict:
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
