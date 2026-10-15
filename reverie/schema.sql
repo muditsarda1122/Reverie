@@ -1,4 +1,4 @@
--- EC brain schema — one global SQLite database for all projects (§28.1).
+-- Reverie brain schema — one global SQLite database for all projects (§28.1).
 --
 -- Two brains, one database:
 --   Canonical Brain  -> ecus + edges              (durable, human-reviewed)

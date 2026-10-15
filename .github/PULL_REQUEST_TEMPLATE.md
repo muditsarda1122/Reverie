@@ -9,6 +9,6 @@
 ## Verification
 
 - [ ] `pytest tests/` passes locally with the same result as `main`
-- [ ] `ruff check ec tests bench conftest.py` passes
+- [ ] `ruff check reverie tests bench conftest.py` passes
 - [ ] No behaviour change unless the PR is explicitly about one
 - [ ] No secrets, personal data, or generated data (`runs/`, `*.db`, transcripts) are committed
