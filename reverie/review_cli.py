@@ -603,9 +603,11 @@ def _resolve_open_questions(brain: Brain, policy: str) -> None:
         resolve_open_questions(brain)
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The `reverie review` parser (introspectable — docs/CLI.md's
+    completeness test walks it)."""
     parser = argparse.ArgumentParser(
-        prog="ec review",
+        prog="reverie review",
         description="Review pending Reverie candidates — one queue across "
                     "all branches and repos, independent of sessions.",
     )
@@ -634,6 +636,11 @@ def main(argv: list[str] | None = None) -> int:
                              "parked; archive = archive all without "
                              "prompting (they are review concerns, not "
                              "session concerns)")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     try:
