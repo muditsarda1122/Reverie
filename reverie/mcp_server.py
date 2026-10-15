@@ -137,10 +137,10 @@ NO_REPO_ERROR = (
 EXTRACTION_FAILED = (
     "Extraction failed: {reason}. The reasoning trace may be too short or "
     "contain no engineering conclusions. This is not an error — not every "
-    "response produces ECUs."
+    "response produces conclusions."
 )
 NO_ECUS_FOUND = (
-    "No ECUs found for query '{query}'. Try broadening the scope or "
+    "No conclusions found for query '{query}'. Try broadening the scope or "
     "rephrasing. The brain may not have relevant cognition for this topic yet."
 )
 
@@ -198,13 +198,14 @@ in the Session Brain for immediate use. Call this AFTER you:
 
 Do NOT call reverie_observe for:
 - Simple code changes with no insight
-- Things already captured in existing ECUs
+- Things already captured in existing conclusions
 - Pure factual observations (the Extractor handles the lifting to conclusions)
 
-reverie_observe runs the Extractor on your reasoning, produces candidate ECUs,
-and stores them in the Session Brain. They are immediately available for
-retrieval via reverie_query. The USER reviews these candidates (via `reverie review`
-or by asking you to show them) — never promote or judge them yourself.
+reverie_observe runs the Extractor on your reasoning, produces candidate
+conclusions, and stores them in the Session Brain. They are immediately
+available for retrieval via reverie_query. The USER reviews these candidates
+(via `reverie review` or by asking you to show them) — never promote or judge
+them yourself.
 
 Sessions are automatic: in an enabled repo the session for the current
 branch resolves or is created by this call. If the response asks you to
@@ -220,22 +221,23 @@ cognition might fill:
 - When debugging and the cause isn't obvious from the code alone
 - Before an architectural change (query for existing architectural decisions)
 
-Returns ECUs from both the Session Brain (current branch's working memory)
-and the Canonical Brain (accumulated understanding from past sessions).
-Each ECU includes confidence, scope, grounding references, and status.
+Returns conclusions from both the Session Brain (current branch's working
+memory) and the Canonical Brain (accumulated understanding from past
+sessions). Each includes confidence, scope, grounding references, and status.
 
 Memory is framed as "past beliefs to verify against current code," not
 authoritative context. Always verify grounding references against the
-live codebase before acting on an ECU.
+live codebase before acting on a conclusion.
 
 Sessions are automatic: in an enabled repo the session for the current
 branch resolves or is created by this call. Pass the workspace path as
 'repo_path' on every call."""
 
 _SUMMARY_DESCRIPTION = """\
-Get a summary of what the EC brain knows. Call this ONCE at session start
-to understand what engineering cognition is already stored before you begin
-work. Returns brain statistics and scope distribution — not individual ECUs.
+Get a summary of what the Reverie brain knows. Call this ONCE at session
+start to understand what engineering memory is already stored before you
+begin work. Returns brain statistics and scope distribution — not
+individual conclusions.
 
 If the response contains a pending-review nudge, mention it to the user at
 most once per conversation (counts only, never contents)."""
@@ -270,28 +272,29 @@ in that listing can be decided. Bulk-accepting every candidate is refused
 explicit instruction. Pass the workspace path as 'repo_path'."""
 
 _RECONSOLIDATE_DESCRIPTION = """\
-Re-evaluate a previously retrieved ECU in light of new evidence you discovered
+Re-evaluate a previously retrieved conclusion in light of new evidence you discovered
 during this session. Call this when you find that a past engineering conclusion
 is wrong, outdated, or needs refinement based on what you've learned from the
 current codebase.
 
-This makes the ECU "labile" (revisable) and feeds the new evidence through the
-Diffuser, which may update the ECU's confidence, create new edges, or trigger
-supersession. The change is written to the Canonical Brain immediately (the ECU
-was already human-reviewed when it entered the Canonical Brain — reconsolidation
-is a confidence/evidence update, not a new ECU entering the brain).
+This makes the conclusion "labile" (revisable) and feeds the new evidence
+through the Diffuser, which may update its confidence, create new edges, or
+trigger supersession. The change is written to the Canonical Brain
+immediately (the conclusion was already human-reviewed when it entered the
+Canonical Brain — reconsolidation is a confidence/evidence update, not a new
+conclusion entering the brain).
 
 Call reverie_reconsolidate when:
-- You verified a retrieved ECU against the code and found it's no longer accurate
-- You discovered new evidence that strengthens a retrieved ECU (it should be
+- You verified a retrieved conclusion against the code and found it's no longer accurate
+- You discovered new evidence that strengthens a retrieved conclusion (it should be
   more confident)
-- You discovered new evidence that contradicts a retrieved ECU (it should be
+- You discovered new evidence that contradicts a retrieved conclusion (it should be
   less confident or superseded)
-- The code an ECU is grounded in has changed, and the conclusion needs updating
+- The code a conclusion is grounded in has changed, and the conclusion needs updating
 
 Do NOT call reverie_reconsolidate for:
-- New insights that aren't related to a previously retrieved ECU (use reverie_observe)
-- ECUs you haven't retrieved in this session (reconsolidation requires prior
+- New insights that aren't related to a previously retrieved conclusion (use reverie_observe)
+- Conclusions you haven't retrieved in this session (reconsolidation requires prior
   retrieval — you can't reconsolidate something you haven't looked at)
 - Simple code changes with no impact on engineering conclusions"""
 
@@ -381,8 +384,8 @@ def _reconsolidate_schema() -> dict:
         "ecu_id": {
             "type": "string",
             "description": (
-                "The ID of the ECU to reconsolidate. Must be a "
-                "canonical ECU that was retrieved in this session."
+                "The ID of the conclusion to reconsolidate. Must be a "
+                "canonical conclusion that was retrieved in this session."
             ),
         },
         "evidence": {
@@ -390,8 +393,8 @@ def _reconsolidate_schema() -> dict:
             "description": (
                 "The new evidence you discovered. This should be "
                 "your reasoning trace explaining what you found and "
-                "why it affects the ECU. The Diffuser will use this "
-                "to re-evaluate the ECU's confidence and edges."
+                "why it affects the conclusion. The Diffuser will use this "
+                "to re-evaluate its confidence and edges."
             ),
         },
         "relationship": {
@@ -885,9 +888,9 @@ class ReverieServer:
         count = brain.count_session_ecus(row["id"])
         if ids:
             message = (
-                f"Extracted {len(ids)} ECU{'s' if len(ids) != 1 else ''} into "
-                f"the Session Brain ({result.rejected_count} rejected by the "
-                f"Lifting Test). Session brain now holds {count} ECUs."
+                f"Extracted {len(ids)} conclusion{'s' if len(ids) != 1 else ''} into "
+                f"session memory ({result.rejected_count} rejected by the "
+                f"Lifting Test). Session memory now holds {count}."
             )
         else:
             message = (
@@ -1019,10 +1022,10 @@ class ReverieServer:
                 "status": "error",
                 "session_active": True,
                 "ecu_id": ecu_id,
-                "error": f"ECU {ecu_id} was not retrieved in this session, so "
+                "error": f"Conclusion {ecu_id} was not retrieved in this session, so "
                          "it cannot be reconsolidated — you can't "
                          "reconsolidate something you haven't looked at. Call "
-                         "reverie_query first; if the ECU appears in the result, "
+                         "reverie_query first; if it appears in the result, "
                          "call reverie_reconsolidate with its id.",
             }
 

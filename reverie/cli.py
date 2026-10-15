@@ -12,7 +12,7 @@ One entry point, subcommands:
     reverie export           export the whole brain to a ZIP
     reverie import           import a brain export (--replace for non-empty)
     reverie reset            wipe the brain (or one repo), with auto-backup
-    reverie retry            retry failed extractions / re-diffuse ECUs
+    reverie retry            retry failed extractions / re-diffuse conclusions
     reverie repair           brain integrity check + safe recovery
     reverie uninstall        remove Reverie's harness entries (+ data with
                              --delete-data)
@@ -211,10 +211,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--drop", metavar="ITEM_ID", default=None,
                    help="discard this pending extraction without retrying")
     p.add_argument("--rediffuse", action="store_true",
-                   help="re-run diffusion for undiffused ECUs instead of "
+                   help="re-run diffusion for undiffused conclusions instead of "
                         "retrying pending extractions")
     p.add_argument("--ecu-id", metavar="ECU_ID", default=None,
-                   help="with --rediffuse: only this ECU id")
+                   help="with --rediffuse: only this conclusion id (ECU id)")
     p.add_argument("--repo", default=None,
                    help="only items for this repo path (default: all)")
     p.add_argument("--branch", default=None,

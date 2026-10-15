@@ -180,7 +180,7 @@ def import_brain(
             if not replace:
                 raise TransportError(
                     "The local brain is not empty ("
-                    f"{brain.count_ecus()} ECUs). Import would replace it — "
+                    f"{brain.count_ecus()} conclusions). Import would replace it — "
                     "merging two brains is not supported. Re-run with "
                     "`--replace` (an automatic backup is taken first), or "
                     "import into an empty brain.")
@@ -220,7 +220,7 @@ def import_brain(
         print_fn("Skipped — these tables are absent from the export: "
                  + ", ".join(skipped))
     print_fn(
-        "Imported: {ecus} ECUs, {sessions} sessions, {repos} repo "
+        "Imported: {ecus} conclusions, {sessions} sessions, {repos} repo "
         "state(s).".format(ecus=counts["ecus"],
                            sessions=counts["sessions"],
                            repos=counts["repos"]))
@@ -291,7 +291,7 @@ def main_export(argv: list[str] | None = None) -> int:
     try:
         manifest = export_brain(brain, args.file)
         target = args.file or default_export_path()
-        print(f"Exported {manifest['counts']['ecus']} ECUs to {target}")
+        print(f"Exported {manifest['counts']['ecus']} conclusions to {target}")
         return 0
     except TransportError as exc:
         print(str(exc), file=sys.stderr)

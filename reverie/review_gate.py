@@ -585,7 +585,7 @@ def _print_open_question(pair: dict, index: int, print_fn) -> None:
     print_fn(f"    Scope: {a['scope']['path']}")
     print_fn("    Options:")
     print_fn("    (a) Investigate further — reset the timer, keep as challenged")
-    print_fn("    (b) Mark one preferred — choose the ECU you believe is correct")
+    print_fn("    (b) Mark one preferred — choose the conclusion you believe is correct")
     print_fn("    (c) Reclassify as orthogonal — both are true in different contexts")
     print_fn("    (d) Archive — no longer relevant")
 
@@ -1105,7 +1105,7 @@ def interactive_review(
     for gi, group in enumerate(plan.groups, start=1):
         if halted:
             break
-        print_fn(f"\nGroup {gi}: {group.label} ({len(group.ecus)} ECUs)")
+        print_fn(f"\nGroup {gi}: {group.label} ({len(group.ecus)} conclusions)")
         for i, ecu in enumerate(group.ecus, start=1):
             _print_ecu_brief(ecu, i, print_fn)
         while True:
@@ -1152,18 +1152,18 @@ def interactive_review(
         print_fn(warning)
     print_fn("Cleaning up Session Brain...")
     if result.accepted:
-        print_fn("  ✓ Accepted ECUs: promoted to Canonical Brain, removed "
+        print_fn("  ✓ Accepted conclusions: promoted to the Canonical Brain, removed "
                  "from session_ecus")
     if result.rejected:
-        print_fn("  ✓ Rejected ECUs: removed from session_ecus")
+        print_fn("  ✓ Rejected conclusions: removed from session memory")
     if result.accepted or result.rejected:
-        print_fn("  ✓ Session edges for accepted/rejected ECUs: removed")
+        print_fn("  ✓ Session edges for accepted/rejected conclusions: removed")
     if result.pending_applied:
         print_fn(f"  ✓ Pending updates applied: {result.pending_applied}")
     if result.pending_discarded:
         print_fn(f"  ✓ Pending updates discarded: {result.pending_discarded}")
     if result.skipped:
-        print_fn(f"  ({len(result.skipped)} skipped ECUs remain in "
+        print_fn(f"  ({len(result.skipped)} skipped candidates remain in "
                  "session_ecus for next review.)")
     for flag in result.flags + result.notifications:
         print_fn(f"  ⚠️ {flag['message']}")

@@ -167,7 +167,7 @@ def repair(brain_path=None, dry_run: bool = False) -> dict:
             checks["orphan_edges"] = f"removed {len(orphan_edges)}"
             report["fixes"].append(
                 f"removed {len(orphan_edges)} orphan edge(s) referencing "
-                "deleted ECUs")
+                "deleted conclusions")
 
         # -- check 5: orphan session ECUs (report only — data rows) -----------
         orphan_sessions = [

@@ -144,23 +144,23 @@ def brain_summary(brain: Brain, session_row: dict | None = None,
     }
 
     nonzero = [f"{level}: {n}" for level, n in by_scope.items() if n]
-    message = f"The brain has {total} ECUs"
+    message = f"The brain holds {total} conclusions"
     if nonzero:
         message += f" ({', '.join(nonzero)})"
     message += (
         f". Last maintenance run: {last_maintenance or 'never'}; "
-        f"last ECU added: {last_added or 'never'}."
+        f"last conclusion added: {last_added or 'never'}."
     )
     if active:
         message += (
             f" Active session on branch '{session_row['branch']}' "
-            f"({session_row['repo_path']}) — {session_brain_count} ECUs "
-            "in the session brain."
+            f"({session_row['repo_path']}) — {session_brain_count} "
+            "conclusions in session memory."
         )
     else:
         message += " No active session."
     if pending:
-        message += f" {pending} ECU(s) awaiting review."
+        message += f" {pending} conclusion(s) awaiting review."
 
     return {
         "canonical_brain": {

@@ -99,7 +99,7 @@ def retry_pending(
         summary["recovered"] += 1
         summary["details"].append({
             "id": item["id"], "outcome": "recovered",
-            "reason": f"{len(ids)} ECU(s) extracted into session "
+            "reason": f"{len(ids)} conclusion(s) extracted into session "
                       f"{active['id'][:8]}",
         })
     return summary
@@ -163,7 +163,7 @@ def _print_retry_summary(summary: dict, print_fn) -> None:
 
 def _print_rediffuse_summary(summary: dict, print_fn) -> None:
     print_fn(
-        f"Undiffused ECUs: {summary['targets']} "
+        f"Undiffused conclusions: {summary['targets']} "
         f"({summary['rediffused']} rediffused, {summary['failed']} failed)."
     )
     for d in summary["details"]:
@@ -176,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="reverie retry",
         description="Retry pending extractions and re-diffuse promoted-but-"
-                    "undiffused ECUs.",
+                    "undiffused conclusions.",
     )
     parser.add_argument("--list", action="store_true",
                         help="list pending extractions and exit")
@@ -185,10 +185,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--drop", metavar="ITEM_ID", default=None,
                         help="discard this pending extraction without retrying")
     parser.add_argument("--rediffuse", action="store_true",
-                        help="re-run diffusion for undiffused ECUs instead of "
+                        help="re-run diffusion for undiffused conclusions instead of "
                              "retrying pending extractions")
     parser.add_argument("--ecu-id", metavar="ECU_ID", default=None,
-                        help="with --rediffuse: only this ECU id")
+                        help="with --rediffuse: only this conclusion id (ECU id)")
     parser.add_argument("--repo", default=None,
                         help="only items for this repo path (default: all)")
     parser.add_argument("--branch", default=None,

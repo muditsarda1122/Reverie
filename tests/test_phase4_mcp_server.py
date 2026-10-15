@@ -377,7 +377,7 @@ def test_observe_extracts_into_session_brain(server, brain, active_session, mode
     assert payload["ecus_extracted"] == 2
     assert payload["ecus_rejected"] == 1
     assert payload["session_brain_count"] == 2
-    assert "2 ECUs" in payload["message"]
+    assert "2 conclusions" in payload["message"]
     assert len(brain.list_session_ecus(active_session)) == 2
 
 
@@ -389,7 +389,7 @@ def test_observe_extraction_failure_guidance(server, active_session):
     assert result["isError"] is True
     assert payload["error"].startswith("Extraction failed:")
     assert "no key" in payload["error"]
-    assert "not every response produces ECUs" in payload["error"]
+    assert "not every response produces conclusions" in payload["error"]
 
 
 def test_observe_lightweight_diffusion_failure_is_soft(server, brain,
@@ -449,7 +449,7 @@ def test_query_no_results_message(server, active_session):
         "query": "obscure topic with no cognition", "mode": "investigation"})
     assert payload["status"] == "ok"
     assert payload["groups_retrieved"] == 0
-    assert "No ECUs found for query" in payload["message"]
+    assert "No conclusions found for query" in payload["message"]
     assert "broadening the scope" in payload["message"]
 
 
