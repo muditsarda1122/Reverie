@@ -51,8 +51,8 @@ class EmbeddingModel:
         except ImportError as exc:
             raise EmbeddingError(
                 "sentence-transformers is not installed in this environment. "
-                "Install EC's dependencies (pip install -e . — see "
-                "pyproject.toml) — embeddings are required for all EC operations."
+                "Install Reverie's dependencies (pip install reverie — see "
+                "pyproject.toml) — embeddings are required for all operations."
             ) from exc
         try:
             self._model = SentenceTransformer(self.model_name)

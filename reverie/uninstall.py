@@ -47,8 +47,7 @@ from pathlib import Path
 from . import transport
 from .brain import Brain
 from .config import reverie_home as _default_reverie_home
-from .install import (AGENTS, DIST_NAME, REFERENCE_BLOCK_MARKER,
-                      _agents_ref, _reference_block)
+from .install import AGENTS, DIST_NAME, REFERENCE_BLOCK_MARKER, _agents_ref, _reference_block
 
 
 @dataclass
@@ -249,9 +248,13 @@ def _plan_harnesses(home: Path, reverie_home: Path) -> list[tuple[str,
     """Every planned harness removal, for ALL supported agents — uninstall
     does not depend on detection: it cleans wherever Reverie may have
     written. Returns [(agent_name, removal), ...]."""
-    from .install import (CLAUDE_CODE_COMMANDS, CODEX_PROMPTS,
-                          CURSOR_COMMANDS, GEMINI_COMMANDS,
-                          OPENCODE_COMMANDS)
+    from .install import (
+        CLAUDE_CODE_COMMANDS,
+        CODEX_PROMPTS,
+        CURSOR_COMMANDS,
+        GEMINI_COMMANDS,
+        OPENCODE_COMMANDS,
+    )
     ref = _agents_ref(home, reverie_home)
     block = _reference_block(ref)
     marker = REFERENCE_BLOCK_MARKER

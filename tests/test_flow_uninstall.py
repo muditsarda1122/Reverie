@@ -264,7 +264,6 @@ def test_confirmation_covers_whole_plan(home, reverie_home, tmp_path):
     code = uninstall.run(home=home, reverie_home=reverie_home,
                          delete_data=True, export_dir=tmp_path,
                          print_fn=out.append, input_fn=scripted)
-    transcript = "\n".join(out)
     assert code == 0
     assert len(plan_at) == 1                     # exactly one question
     # the plan preceded the prompt and named the harnesses + the data step

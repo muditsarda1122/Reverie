@@ -1,4 +1,4 @@
-"""EC MCP server (Spec §28.3) — stdio transport, newline-delimited JSON-RPC 2.0.
+"""Reverie MCP server (Spec §28.3) — stdio transport, newline-delimited JSON-RPC 2.0.
 
 Runs as a local subprocess of the coding agent: reads JSON-RPC messages from
 stdin (one per line, NDJSON per the MCP stdio transport), writes responses to
@@ -185,7 +185,7 @@ INTERNAL_ERROR = -32603
 
 # ---------------------------------------------------------------------------
 # Tool definitions — descriptions verbatim from §28.3 (§28.12: they are the
-# primary way the agent learns how to use EC).
+# primary way the agent learns how to use Reverie).
 # ---------------------------------------------------------------------------
 
 _OBSERVE_DESCRIPTION = """\
@@ -568,17 +568,17 @@ class ReverieServer:
         must not prevent the server from serving."""
         mcfg = self.config.maintainer
         if not mcfg.enabled:
-            log.info("EC Maintainer: disabled by config, skipping")
+            log.info("Reverie Maintainer: disabled by config, skipping")
             return None
         brain = self._ensure_brain()
         ran = None
         try:
             if maintainer.is_maintenance_overdue(brain, self.config):
-                log.info("EC Maintainer: overdue at startup, running now")
+                log.info("Reverie Maintainer: overdue at startup, running now")
                 ran = maintainer.run_maintenance(brain, self.config,
                                                  repo_path=repo_path)
         except Exception:
-            log.exception("EC Maintainer: startup run failed; continuing")
+            log.exception("Reverie Maintainer: startup run failed; continuing")
         # The daemon thread gets its OWN connection over the same DB file
         # (sqlite3 connections are thread-bound; WAL keeps reads concurrent).
         self._maintainer_thread = maintainer.MaintainerThread(
@@ -1291,7 +1291,7 @@ def resolve_maintainer_repo_path(brain: Brain | None = None) -> str | None:
         try:
             return brain.most_recent_active_session_repo()
         except Exception:
-            log.exception("EC Maintainer: session-repo lookup failed")
+            log.exception("Reverie Maintainer: session-repo lookup failed")
     return None
 
 
@@ -1312,7 +1312,7 @@ def main() -> int:
         stream=sys.stderr, level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
-    log.info("EC MCP server starting (protocol %s)", PROTOCOL_VERSION)
+    log.info("Reverie MCP server starting (protocol %s)", PROTOCOL_VERSION)
     server = ReverieServer()
     server.start_maintenance(
         repo_path=resolve_maintainer_repo_path(server._ensure_brain()))

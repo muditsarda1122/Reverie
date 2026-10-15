@@ -559,7 +559,7 @@ MCP_CONSOLE_SCRIPT = "reverie-mcp"
 #: The `reverie` console script binding this build expects (pyproject.toml).
 #: feat/flow moved `reverie` from the installer to the multi-command CLI
 #: (reverie.cli:main); an older install still binds `ec = reverie.install:main`.
-EC_CONSOLE_SCRIPT_ENTRY = "reverie.cli:main"
+REVERIE_CLI_ENTRY = "reverie.cli:main"
 
 
 def _is_pip_installed() -> bool:
@@ -584,7 +584,7 @@ def stale_entry_point_note() -> str | None:
     try:
         from importlib import metadata
         for ep in metadata.entry_points(group="console_scripts"):
-            if ep.name == "reverie" and ep.value != EC_CONSOLE_SCRIPT_ENTRY:
+            if ep.name == "reverie" and ep.value != REVERIE_CLI_ENTRY:
                 return (
                     "Note: your `reverie` command is bound to the OLD entry "
                     f"point ({ep.value}) — the new subcommands (enable, "

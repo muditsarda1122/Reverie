@@ -720,7 +720,7 @@ def grounding_deprecation_notifications(brain: Brain,
     if not deprecated:
         return []
     lines = [
-        "During the last maintenance cycle, EC deprecated "
+        "During the last maintenance cycle, Reverie deprecated "
         f"{len(deprecated)} ECU(s) whose grounding references are no longer "
         "present in the repository:"
     ]

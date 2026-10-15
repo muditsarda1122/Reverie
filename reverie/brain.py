@@ -82,9 +82,9 @@ class Brain:
             self._apply_schema()
         except sqlite3.OperationalError as exc:
             raise BrainError(
-                f"EC brain could not be opened at {self.db_path}: {exc}. "
-                "If it is locked by another process, close other EC instances "
-                "and try again."
+                f"Reverie brain could not be opened at {self.db_path}: {exc}. "
+                "If it is locked by another process, close other Reverie "
+                "instances and try again."
             ) from exc
 
     # ------------------------------------------------------------------

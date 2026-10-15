@@ -172,7 +172,7 @@ def run_clustering(brain, config, repo_path=None, now=None):
             algorithm_used = "hdbscan"
         except ImportError:
             log.warning(
-                "EC Clustering: hdbscan unavailable, falling back to scipy "
+                "Reverie clustering: hdbscan unavailable, falling back to scipy "
                 "agglomerative (design doc §4.7)")
     if algorithm_used is None:
         labels, persistence = agglomerative_labels(

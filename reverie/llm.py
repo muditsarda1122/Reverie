@@ -225,13 +225,13 @@ def missing_key_message(cfg) -> str:
     entry = providers.get(cfg.llm.provider)
     if entry is not None and entry.key_url:
         return (
-            f"{env} is not set. EC is configured to use {entry.name} "
+            f"{env} is not set. Reverie is configured to use {entry.name} "
             f"({cfg.llm.model}) for extraction, relationship classification, "
             f"and mode detection. Get a key at {entry.key_url} — then: "
             f"export {env}='your-key'"
         )
     return (
-        f"{env} is not set. EC needs an API key for extraction, relationship "
+        f"{env} is not set. Reverie needs an API key for extraction, relationship "
         f"classification, and mode detection. Then: export {env}='your-key'"
     )
 

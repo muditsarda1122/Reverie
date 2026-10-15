@@ -22,7 +22,7 @@ Machine-specific data (D58): repo paths are absolute and differ between
 machines. Strategy: repo *states* travel by remote URL — the repos table
 records each repo's origin URL, and ``reverie/repos.resolve_repo_state``
 re-matches a never-seen path against exactly one known URL on first use
-(ambiguous or URL-less repos start fresh and are resolved by ``ec
+(ambiguous or URL-less repos start fresh and are resolved by ``reverie
 enable``). Sessions are tied to worktree paths on purpose (§28.5): rows
 pointing at paths that don't exist on this machine stay inert and are
 archived/ignored; the canonical memory is what meaningfully migrates.
@@ -45,7 +45,7 @@ from pathlib import Path
 
 from . import __version__, repos
 from .brain import Brain, BrainError
-from .config import SCHEMA_VERSION, reverie_home, get_config
+from .config import SCHEMA_VERSION, get_config, reverie_home
 
 #: Export format revision (manifest["format"]); bump on breaking changes.
 EXPORT_FORMAT = 1
@@ -275,7 +275,7 @@ def reset_brain(brain: Brain, *, repo: str | None = None, config=None,
 
 def main_export(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="ec export",
+        prog="reverie export",
         description="Export the whole Reverie brain (consistent snapshot + "
                     "manifest) as one ZIP file.",
     )
@@ -302,7 +302,7 @@ def main_export(argv: list[str] | None = None) -> int:
 
 def main_import(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="ec import",
+        prog="reverie import",
         description="Import a Reverie export. Allowed directly when the "
                     "local brain is empty; otherwise pass --replace (an "
                     "automatic backup is taken first). Merging two brains "

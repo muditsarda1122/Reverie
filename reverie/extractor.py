@@ -35,7 +35,7 @@ from .llm import LLMError, call_llm, extract_json, model_for
 log = logging.getLogger("reverie.extractor")
 
 _PROMPT_FILENAME = "extractor_prompt.md"
-_PROMPT_ENV_VAR = "EC_EXTRACTOR_PROMPT"
+_PROMPT_ENV_VAR = "REVERIE_EXTRACTOR_PROMPT"
 
 
 class ExtractorError(RuntimeError):
@@ -76,7 +76,7 @@ def _prompt_candidates() -> list[Path]:
 def load_extractor_prompt(refresh: bool = False) -> str:
     """Load ``extractor_prompt.md`` at runtime (never paraphrased into code).
 
-    Resolution order: ``EC_EXTRACTOR_PROMPT`` env var, package-relative
+    Resolution order: ``REVERIE_EXTRACTOR_PROMPT`` env var, package-relative
     ``reverie/prompts/`` (always works), cwd. Cached process-wide.
     """
     global _prompt_cache

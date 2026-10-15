@@ -12,7 +12,8 @@ Primary use case: baseline interactive condition
   - JSONL transcripts captured per prompt
   - Each transcript judged immediately after capture
 
-Can also run EC headless condition (with --condition ec, needs ec package).
+Can also run the Reverie headless condition (with --condition ec, needs
+the reverie package).
 
 To compare against existing EC results, use the same --run-dir:
   python run_and_judge.py \\
@@ -85,7 +86,7 @@ from pathlib import Path
 import requests
 
 # ============================================================
-# Optional EC imports (only needed for --condition ec)
+# Optional Reverie imports (only needed for --condition ec)
 # ============================================================
 
 try:
@@ -496,7 +497,7 @@ def build_agent_config(
     """Build the OpenCode config overlay for one condition.
 
     baseline: EC MCP server explicitly disabled (overrides global config).
-    ec: EC MCP server enabled with full environment.
+    ec: the Reverie MCP server enabled with full environment.
     """
     config: dict = {
         "$schema": "https://opencode.ai/config.json",
@@ -509,12 +510,13 @@ def build_agent_config(
     if condition == "ec":
         if not EC_AVAILABLE:
             raise BenchError(
-                "EC condition requires the ec package. Run from the EMS-v2 "
-                "directory where 'ec' is installed, or use --condition baseline."
+                "EC condition requires the reverie package. Run from the "
+                "EMS-v2 directory where 'reverie' is installed, or use "
+                "--condition baseline."
             )
         python, args, env = server_command()
         config["mcp"] = {
-            "ec": {
+            "reverie": {
                 "type": "local",
                 "command": [python, *args],
                 "environment": {
@@ -528,9 +530,9 @@ def build_agent_config(
         }
         config["instructions"] = [str(reverie_home / "AGENTS.md")]
     else:
-        # Baseline: disable EC to neutralise any global install
+        # Baseline: disable the reverie server to neutralise any global install
         config["mcp"] = {
-            "ec": {
+            "reverie": {
                 "type": "local",
                 "command": ["true"],  # dummy — never runs since disabled
                 "enabled": False,
@@ -653,13 +655,13 @@ def format_tool_input(name: str, input_data: dict) -> str:
         stype = input_data.get("subagent_type", "?")
         return f"desc: {desc}, type: {stype}"
 
-    if name == "ec_reverie_summary":
+    if name == "reverie_summary":
         return "(none)"
 
-    if name == "ec_reverie_query":
+    if name == "reverie_query":
         return f"query: {input_data.get('query', '?')}, mode: {input_data.get('mode', '?')}"
 
-    if name == "ec_reverie_observe":
+    if name == "reverie_observe":
         prompt = input_data.get("user_prompt", "?")
         trace_len = len(input_data.get("reasoning_trace", ""))
         output_len = len(input_data.get("final_output", ""))
@@ -766,7 +768,7 @@ def format_transcript(transcript_path: Path) -> tuple[str | None, dict]:
             input_data = state.get("input", {})
             output = state.get("output", "")
 
-            is_ec = name.startswith("ec_")
+            is_ec = name.startswith("reverie_")
             limit = EC_TOOL_OUTPUT_LIMIT if is_ec else TOOL_OUTPUT_LIMIT
 
             input_summary = format_tool_input(name, input_data)

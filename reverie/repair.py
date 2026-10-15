@@ -144,7 +144,7 @@ def repair(brain_path=None, dry_run: bool = False) -> dict:
             else:
                 checks["wal_checkpoint"] = (
                     "busy — another process holds the database; try again "
-                    "after closing other EC instances")
+                    "after closing other Reverie instances")
         if not dry_run:
             conn.execute("PRAGMA journal_mode=WAL")   # keep Brain's default
             conn.commit()

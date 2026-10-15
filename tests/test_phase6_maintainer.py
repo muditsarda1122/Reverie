@@ -292,7 +292,7 @@ class TestMaintainerThread:
             t = MaintainerThread(brain, fast, check_interval=0.05)
             t.start()
             assert t.daemon is True
-            assert t.name == "ec-maintainer"
+            assert t.name == "reverie-maintainer"
             deadline = time.monotonic() + 5.0
             while mock_run.call_count == 0 and time.monotonic() < deadline:
                 time.sleep(0.01)

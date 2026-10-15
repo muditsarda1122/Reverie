@@ -64,7 +64,7 @@ class DiffuserError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 CLASSIFICATION_SYSTEM = """\
-You are the relationship classifier for the Engineering Cognition (EC) system.
+You are the relationship classifier for Reverie, an engineering-memory system.
 Given pairs of engineering conclusions (ECU_A is a NEW conclusion, ECU_B is an
 EXISTING belief), classify each pair's relationship as exactly one of:
 
@@ -148,7 +148,7 @@ Respond with ONLY the JSON object described in your instructions."""
 
 _LIGHTWEIGHT_SYSTEM = """\
 You are the lightweight relationship classifier for the Engineering
-Cognition (EC) system's Session Brain. Given pairs of engineering
+memory system's Session Brain. Given pairs of engineering
 conclusions (ECU_A is NEW, ECU_B is EXISTING), classify each pair as
 exactly one of:
 
@@ -167,7 +167,7 @@ Respond with ONLY a JSON object:
 Include every pair number from the input. No prose."""
 
 _CONTRADICTION_SYSTEM = """\
-You are the contradiction adjudicator for the Engineering Cognition (EC)
+You are the contradiction adjudicator for Reverie, an engineering-memory
 system. Given two engineering conclusions that may contradict, decide whether
 they are:
 

@@ -101,7 +101,7 @@ def test_start_creates_session(manager, brain):
     assert report["status"] == "ok"
     assert report["resumed"] is False
     assert report["carried_over"] == 0
-    assert "Started EC session on branch main in project-a." == report["message"]
+    assert "Started a session on branch main in project-a." == report["message"]
     row = brain.get_active_session(REPO_A, "main")
     assert row is not None and row["id"] == report["session_id"]
     # Summary rides the start report ONCE (awareness without anchoring, §11.3)
@@ -119,7 +119,7 @@ def test_start_twice_resumes(manager):
     assert second["resumed"] is True
     assert second["session_id"] == first["session_id"]
     assert second["message"] == (
-        "Resuming EC session on branch main (0 ECUs in session brain)."
+        "Resuming the session on branch main (0 conclusions in session memory)."
     )
 
 
@@ -299,7 +299,6 @@ def test_cli_review_decide_surfaces_diffusion_failure(tmp_path):
     env["PYTHONPATH"] = str(ROOT)
     env["HF_HUB_OFFLINE"] = "1"
     env.pop("OPENCODE_ZEN_API_KEY", None)  # the diffuser's LLM call will fail
-    base = [sys.executable, "-m", "reverie.session"]
 
     # seed the shared DB (WAL: the CLI subprocess sees these rows): one
     # canonical ECU + one similar session ECU (verified sim >= 0.6 forces

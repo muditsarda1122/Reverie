@@ -1,4 +1,4 @@
-"""EC configuration — every tunable constant in one place (Spec Section 15).
+"""Reverie configuration — every tunable constant in one place (Spec Section 15).
 
 Defaults live here in code. If ``~/.reverie/config.yaml`` (or ``$REVERIE_HOME/config.yaml``)
 exists it is deep-merged over the defaults, so users can override any value
@@ -29,7 +29,7 @@ from . import providers as _providers
 # ---------------------------------------------------------------------------
 
 def reverie_home() -> Path:
-    """Root directory for the global EC brain. One DB for all projects (§28.1)."""
+    """Root directory for the global Reverie brain. One DB for all projects (§28.1)."""
     return Path(os.environ.get("REVERIE_HOME", "~/.reverie")).expanduser()
 
 

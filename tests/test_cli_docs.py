@@ -11,8 +11,6 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 import argparse
 from pathlib import Path
 
-import pytest
-
 from reverie import cli
 from reverie.review_cli import build_parser as review_parser
 

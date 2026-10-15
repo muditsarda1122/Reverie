@@ -1,13 +1,13 @@
 # Engineering Cognition (EC) — Implementation Specification
 
-**Document Status:** Implementation spec for EC v2 system build
+**Document Status:** Implementation spec for Reverie (EC v2 system build)
 **Date:** 12 August 2026
-**Based on:** EC Design Spec v2.17
+**Based on:** the EC Design Spec v2.17 (Engineering Cognition)
 **Scope:** All components needed for EC-Bench v2 + demo video. HDBSCAN clustering, Cognition Maintainer, Controlled Forgetting, Reconsolidation Loop, and Grounding Verification are explicitly deferred and NOT in this document.
 
 ## What This Spec Covers
 
-This spec contains everything needed to implement the EC system end-to-end:
+This spec contains everything needed to implement the Reverie system end-to-end:
 - **ECU data model** (Section 1)
 - **System architecture** (Section 2)
 - **Extractor** — prompt-based, Claude Haiku 4.5 via OpenCode Zen (Section 3)
@@ -614,7 +614,7 @@ The brain has two memory systems operating simultaneously:
 - **Hippocampus (episodic, fast, uncurated):** Experiences are stored immediately, loosely, available for immediate use. No quality gate. This is how you can use something you just learned within the same conversation.
 - **Neocortex (semantic, slow, curated):** Through consolidation, hippocampal traces are reviewed, refined, and integrated into long-term schemas. Quality control happens here.
 
-EC mirrors this with two brains:
+Reverie mirrors this with two brains:
 
 ### 6.2 Session Brain (Hippocampal)
 
@@ -1184,7 +1184,7 @@ If no ECU scores above the relevance threshold, don't return empty context. Retu
 
 **Retrieval restraint — the asymmetry principle:**
 
-An under-injected agent can query for more via `query_ec`. An over-injected agent is anchored and doesn't know to un-ask. This asymmetry means the default token budgets are deliberately conservative (2000-6000 tokens depending on mode). EC errs on the side of injecting less, not more.
+An under-injected agent can query for more via `reverie_query`. An over-injected agent is anchored and doesn't know to un-ask. This asymmetry means the default token budgets are deliberately conservative (2000-6000 tokens depending on mode). Reverie errs on the side of injecting less, not more.
 
 ### 11.6 Anti-Anchoring Defences
 
@@ -1374,7 +1374,7 @@ An ECU is scoped to one of these levels. "Always use parameterised queries" migh
 
 **Retrieval searches UP the hierarchy, never down:**
 
-When retrieving, EC searches from the current scope UP the hierarchy:
+When retrieving, Reverie searches from the current scope UP the hierarchy:
 
 ```
 Search: subsystem (token refresh) → module (auth) → repo (api-server) → project (my SaaS app) → organization (company conventions) → domain (web backend) → engineering
@@ -1754,7 +1754,7 @@ The principle: **flag when the resolution has consequences the user should know 
 
 1. **When one side has low confidence (< θ_contradiction_flag, default: 0.7).** The system is already handling this — the low-confidence ECU will decay further and eventually be superseded. The user doesn't need to know that a weak belief was contradicted. This is the normal Bayesian resolution path.
 
-2. **When the contradiction is Case 3 (competing hypotheses) during an active investigation.** Competing hypotheses are expected during debugging. They'll resolve when evidence arrives. Flagging them mid-investigation would be noise — the user is actively working on the problem and doesn't need EC to tell them "you have two hypotheses."
+2. **When the contradiction is Case 3 (competing hypotheses) during an active investigation.** Competing hypotheses are expected during debugging. They'll resolve when evidence arrives. Flagging them mid-investigation would be noise — the user is actively working on the problem and doesn't need Reverie to tell them "you have two hypotheses."
 
 3. **When the contradiction is between a session-brain ECU and a canonical-brain ECU.** The Pending Update mechanism (Section [RECONSOLIDATION - DEFERRED]5) already handles this. The user will see it at review time. No separate notification needed.
 
@@ -1773,7 +1773,7 @@ The principle: **flag when the resolution has consequences the user should know 
 **The notification mechanism:**
 
 - **Not blocking.** The agent continues to work. Notifications are for the human, not the agent.
-- **Accumulated at review gate.** Contradictions are surfaced during the Human Review Gate, grouped by topic: "During recent sessions, EC detected 2 contradictions worth your attention."
+- **Accumulated at review gate.** Contradictions are surfaced during the Human Review Gate, grouped by topic: "During recent sessions, Reverie detected 2 contradictions worth your attention."
 - **Retrieval flagging.** When a `challenged` ECU is retrieved during a session, it comes with a flag: "⚠️ This cognition is challenged — there is contradicting evidence. See: [ECU_X]." The agent knows to be cautious but isn't blocked.
 
 ### 17.5 Competing Hypothesis Persistence Limits
@@ -1824,9 +1824,9 @@ Returned by retrieval but with lower ranking weight (they're uncertain). Flagged
 
 ### 17.6 Biological Basis
 
-Cognitive dissonance theory (Festinger): humans hold contradictory beliefs simultaneously. The brain tolerates them, and resolution happens slowly through consolidation (especially during sleep, per Walker's research on sleep-dependent memory processing). EC mirrors this: contradictions are tolerated, tracked, and resolved through evidence accumulation, not immediate forced resolution.
+Cognitive dissonance theory (Festinger): humans hold contradictory beliefs simultaneously. The brain tolerates them, and resolution happens slowly through consolidation (especially during sleep, per Walker's research on sleep-dependent memory processing). Reverie mirrors this: contradictions are tolerated, tracked, and resolved through evidence accumulation, not immediate forced resolution.
 
-The `open_question` status mirrors the Zeigarnik effect — uncompleted tasks (or unresolved questions) are remembered better than completed ones. The brain doesn't forget open questions; it parks them and brings them up when relevant. EC's `open_question` is the brain's way of saying "I haven't forgotten about this, but I'm not actively working on it."
+The `open_question` status mirrors the Zeigarnik effect — uncompleted tasks (or unresolved questions) are remembered better than completed ones. The brain doesn't forget open questions; it parks them and brings them up when relevant. Reverie's `open_question` is the brain's way of saying "I haven't forgotten about this, but I'm not actively working on it."
 
 ### 17.7 Physics Parallel — Quantum Decoherence
 
@@ -1987,7 +1987,7 @@ lightweight_diffusion:
 
 # LLM Configuration
 #
-# EC needs an LLM for extraction, relationship classification (lightweight diffuser),
+# Reverie needs an LLM for extraction, relationship classification (lightweight diffuser),
 # and mode detection. These are classification/extraction tasks that require strong
 # instruction following and engineering comprehension.
 #
@@ -2125,7 +2125,7 @@ All files live in the user's home directory. Nothing is stored inside project re
 
 ### 28.3 MCP Server Specification
 
-EC runs as a **local MCP server using stdio transport**. No HTTP, no WebSocket. The agent starts EC as a subprocess and communicates over stdin/stdout. This is the standard for local MCP servers and is supported by all four target agents.
+Reverie runs as a **local MCP server using stdio transport**. No HTTP, no WebSocket. The agent starts Reverie as a subprocess and communicates over stdin/stdout. This is the standard for local MCP servers and is supported by all four target agents.
 
 The MCP server is a Python module (`reverie.mcp_server`) that:
 1. Starts when the agent launches it as a subprocess.
@@ -2298,7 +2298,7 @@ Error example (no session):
 ```
 Tool: reverie_summary
 Description: >
-  Get a summary of what the EC brain knows. Call this ONCE at session start
+  Get a summary of what the Reverie brain knows. Call this ONCE at session start
   to understand what engineering cognition is already stored before you begin
   work. Returns brain statistics and scope distribution — not individual ECUs.
 
@@ -2342,7 +2342,7 @@ Returns:
 
 ### 28.4 Error Message Design — Guide the Agent
 
-Every error message returned by EC MCP tools includes actionable guidance for the agent. Errors never say just "Error: X" — they say what to do about it.
+Every error message returned by the Reverie MCP tools includes actionable guidance for the agent. Errors never say just "Error: X" — they say what to do about it.
 
 | Error | Message |
 |-------|---------|
@@ -2409,7 +2409,7 @@ pending_updates table:
 1. Detect current `repo_path` and `branch` (via `git rev-parse --show-toplevel` and `git branch --show-current`).
 2. Query `sessions` table for active session matching `(repo_path, branch)`.
 3. If found → **resume**: load its `session_ecus` back into the Session Brain. Print: "Resuming EC session on branch {branch} ({count} ECUs in session brain)."
-4. If not found → **create new session**: insert into `sessions` table. Print: "Started EC session on branch {branch} in {repo_name}."
+4. If not found → **create new session**: insert into `sessions` table. Print: "Started a session on branch {branch} in {repo_name}."
 5. If a closed session exists for this `(repo_path, branch)` → check if any ECUs from the old session remain in `session_ecus` with `review_status = skipped`. If so, these carry over to the new session (they were never reviewed). If the old session's ECUs were all accepted or rejected (no skipped), create a new empty session. The old session's `session_ecus` and `session_edges` records for accepted/rejected ECUs were already cleaned up during `/ec-stop`.
 
 #### Multiple Concurrent Sessions
@@ -2614,7 +2614,7 @@ The install script detects agents by checking for their config files or binaries
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "ec": {
+    "reverie": {
       "type": "local",
       "command": ["python", "-m", "reverie.mcp_server"],
       "enabled": true
@@ -2904,7 +2904,7 @@ The agent reads `status` first. If `"error"`, it reads `error` for guidance (e.g
 
 ### 28.12 MCP Tool Descriptions — Written for the Agent
 
-The `description` field in each MCP tool definition is the primary way the agent learns how to use EC. These descriptions are written for the agent, not the human. They must be:
+The `description` field in each MCP tool definition is the primary way the agent learns how to use Reverie. These descriptions are written for the agent, not the human. They must be:
 
 1. **Actionable**: Tell the agent exactly when to call the tool and what to pass.
 2. **Constrained**: Tell the agent when NOT to call the tool.

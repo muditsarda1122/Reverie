@@ -310,8 +310,8 @@ class TestOpenQuestionResolution:
         archive resolves every open question before the review flow; skip
         leaves them parked. Sessions are never closed any more (D56) — the
         review is independent."""
-        from reverie.session import SessionManager
         from reverie import review_cli
+        from reverie.session import SessionManager
 
         for policy, expected_status in (("archive", "archived"),
                                         ("skip", "open_question")):

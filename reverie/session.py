@@ -76,7 +76,7 @@ def _git(args: list[str], cwd: Path) -> str:
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         raise SessionError(
-            f"Could not run git from {cwd}: {exc}. EC sessions are tied to "
+            f"Could not run git from {cwd}: {exc}. Reverie sessions are tied to "
             "(repo, branch) — git must be installed and this must be a "
             "repository."
         ) from exc
@@ -289,8 +289,8 @@ class SessionManager:
             self._run_startup_grounding(repo_path, now=now)   # D35
             count = self.brain.count_session_ecus(session_id)
             message = (
-                f"Resuming EC session on branch {branch} "
-                f"({count} ECUs in session brain)."
+                f"Resuming the session on branch {branch} "
+                f"({count} conclusions in session memory)."
             )
             return {
                 "status": "ok",
@@ -318,7 +318,7 @@ class SessionManager:
         )
         count = self.brain.count_session_ecus(session_id)
         repo_name = Path(repo_path).name or repo_path
-        message = f"Started EC session on branch {branch} in {repo_name}."
+        message = f"Started a session on branch {branch} in {repo_name}."
         if moved:
             message += (
                 f" ({len(moved)} unreviewed ECU{'s' if len(moved) != 1 else ''} "
@@ -361,7 +361,7 @@ class SessionManager:
                     "EC grounding: %d ECU(s) affected on %s",
                     result.ecus_affected, repo_path)
         except Exception:
-            log.exception("EC: post-start grounding check failed (ignored)")
+            log.exception("Reverie: post-start grounding check failed (ignored)")
 
     # -- session close (review-gate close path, used by the bench hook) ----
 

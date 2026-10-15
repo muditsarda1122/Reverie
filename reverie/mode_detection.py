@@ -2,7 +2,7 @@
 
 Five modes: debugging, architecture, implementation, investigation, planning.
 
-The agent may pass `mode` explicitly to reverie_query; when omitted, EC classifies
+The agent may pass `mode` explicitly to reverie_query; when omitted, Reverie classifies
 the query with a lightweight LLM call (temperature 0.0). Per §11.9, v2 may
 fall back to keyword heuristics — used when no API key is set or the LLM
 call fails, so mode detection never blocks retrieval.

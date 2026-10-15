@@ -1,4 +1,4 @@
-"""EC Cognition Maintainer — background hygiene for the Canonical Brain.
+"""The Cognition Maintainer — background hygiene for the Canonical Brain.
 
 The Maintainer keeps the Canonical Brain healthy over time (design doc
 Section 1, D33). It runs INSIDE the MCP server process — never as a
@@ -433,7 +433,7 @@ def run_maintenance(
             task_result = _TASKS[action](brain, config, repo_path=repo_path,
                                          now=now_dt)
         except Exception as exc:            # noqa: BLE001 — resilience over purity
-            log.exception("EC Maintainer: task %s failed", action)
+            log.exception("Reverie Maintainer: task %s failed", action)
             task_result = TaskResult(action, 0, {"error": str(exc)})
         result.tasks.append(task_result)
         brain.log_maintenance(action, json.dumps(task_result.details),
@@ -509,7 +509,7 @@ class MaintainerThread(threading.Thread):
 
     def __init__(self, brain, config, check_interval: float | None = None,
                  repo_path: str | None = None, db_path=None):
-        super().__init__(daemon=True, name="ec-maintainer")
+        super().__init__(daemon=True, name="reverie-maintainer")
         self._brain = brain
         self._config = config
         self._repo_path = repo_path
@@ -530,7 +530,7 @@ class MaintainerThread(threading.Thread):
             brain = Brain(self._db_path)    # thread-private connection
             owned = True
         if brain is None:
-            log.error("EC Maintainer: no brain or db_path, thread exiting")
+            log.error("Reverie Maintainer: no brain or db_path, thread exiting")
             return
         try:
             while not self._stop_event.wait(self._interval):
@@ -538,13 +538,13 @@ class MaintainerThread(threading.Thread):
                     if not self._config.maintainer.enabled:
                         continue
                     if is_maintenance_overdue(brain, self._config):
-                        log.info("EC Maintainer: triggers met, running maintenance")
+                        log.info("Reverie Maintainer: triggers met, running maintenance")
                         run_maintenance(brain, self._config,
                                         repo_path=self._repo_path)
                 except Exception:
                     # Never crash the thread — a crashed daemon thread
                     # silently stops maintenance forever.
-                    log.exception("EC Maintainer: maintenance run failed")
+                    log.exception("Reverie Maintainer: maintenance run failed")
         finally:
             if owned:
                 brain.close()
