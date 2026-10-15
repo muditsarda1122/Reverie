@@ -102,6 +102,32 @@ log = logging.getLogger("reverie.mcp_server")
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "reverie"
 
+#: Sent as the initialize response's ``instructions`` field (Phase 3) — the
+#: core usage contract in a few lines. Read by clients that surface server
+#: instructions to the model (Claude Code, Codex and Gemini CLI document it;
+#: OpenCode captures it in recent versions; Cursor does not document it).
+#: Where an instruction file is loaded this is a redundant summary; where it
+#: is not (e.g. Cursor) this is the fallback. Keep the first ~512 characters
+#: self-contained (Codex's documented guidance).
+SERVER_INSTRUCTIONS = """\
+Reverie is engineering memory for coding agents. Contract:
+- Query only AFTER reading the relevant code (reverie_query) — never anchor \
+on injected memory before grounding yourself; results are past understanding \
+to verify against the current code, not authoritative context.
+- Capture engineering conclusions when you find a non-obvious invariant, root \
+cause, decision, or wrong assumption (reverie_observe) — not for simple code \
+changes.
+- The user reviews every conclusion before it reaches long-term memory. Show \
+candidates fully and relay only decisions the user states \
+(reverie_review_list / reverie_review_decide) — never decide reviews for the \
+user.
+- The first time a tool reports this repo as undecided, ask the user once: \
+"Reverie isn't on for this repo. Turn it on? (yes / not now / never)" — and \
+record the answer with reverie_set_repo_state. Ask at most once per repo \
+per conversation.
+- Pass the workspace path as repo_path on every call.\
+"""
+
 # §28.4-style messages — verbatim, actionable (feat/flow).
 NO_REPO_ERROR = (
     "Reverie could not locate a git repository for this call. Pass the "
@@ -597,6 +623,7 @@ class ReverieServer:
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": SERVER_NAME, "version": __version__},
+                "instructions": SERVER_INSTRUCTIONS,
             })
         if method == "ping":
             return self._result(msg_id, {})

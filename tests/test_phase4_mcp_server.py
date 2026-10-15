@@ -137,6 +137,14 @@ def test_initialize_handshake(server):
     assert result["protocolVersion"] == PROTOCOL_VERSION
     assert "tools" in result["capabilities"]
     assert result["serverInfo"]["name"] == "reverie"
+
+    # Phase 3: the core usage contract rides along as server instructions —
+    # the fallback where a harness reads no instruction file.
+    instructions = result["instructions"]
+    assert "AFTER reading the relevant code" in instructions
+    assert "past understanding" in instructions
+    assert "never decide reviews for the user" in instructions
+    assert "ask the user once" in instructions
     assert r["id"] == 1
 
 
