@@ -11,7 +11,7 @@
 - `docs/SPEC_AUDIT.md` / `docs/SPEC_AUDIT_FINAL.md` — spec-compliance audits (268 then 303 requirements traced).
 - `docs/handoffs/` — 24 phase handoff documents containing design decisions D1–D57.
 
-**One-paragraph orientation.** Engineering Cognition (EC) is a persistent cognition layer for AI coding agents. It is a pip-installable Python package (`ec/`) plus a local MCP server (stdio NDJSON JSON-RPC 2.0) that extracts *engineering conclusions* (not facts) from agent reasoning, stores them as ECUs (Engineering Cognition Units) in a two-brain SQLite database (`~/.ec/ec.db`, one database for all projects), and retrieves them on demand with confidence, scope, grounding, and typed relationships. Everything is one Python process per agent session plus short-lived CLI processes; no vector DB, no HTTP, no external services.
+**One-paragraph orientation.** Engineering Cognition (EC) is a persistent cognition layer for AI coding agents. It is a pip-installable Python package (`ec/`) plus a local MCP server (stdio NDJSON JSON-RPC 2.0) that extracts *engineering conclusions* (not facts) from agent reasoning, stores them as ECUs (Engineering Cognition Units) in a two-brain SQLite database (`~/.reverie/reverie.db`, one database for all projects), and retrieves them on demand with confidence, scope, grounding, and typed relationships. Everything is one Python process per agent session plus short-lived CLI processes; no vector DB, no HTTP, no external services.
 
 **Package layout (all paths relative to repo root):**
 
@@ -19,28 +19,28 @@
 ec/
 ├── __init__.py           # version marker (0.1.0)
 ├── schema.sql            # SQLite DDL — all 11 tables (ec/schema.sql)
-├── config.py             # every tunable constant + YAML deep-merge loader (ec/config.py)
-├── brain.py              # Brain class: canonical + session CRUD, edges, similarity (ec/brain.py)
+├── config.py             # every tunable constant + YAML deep-merge loader (reverie/config.py)
+├── brain.py              # Brain class: canonical + session CRUD, edges, similarity (reverie/brain.py)
 ├── embeddings.py         # all-MiniLM-L6-v2 wrapper, float32 BLOB codec (ec/embeddings.py)
-├── llm.py                # Anthropic/OpenAI wire-format client + JSON fence stripper (ec/llm.py)
+├── llm.py                # Anthropic/OpenAI wire-format client + JSON fence stripper (reverie/llm.py)
 ├── mode_detection.py     # 5-mode classifier: LLM (temp 0.0) + keyword fallback (ec/mode_detection.py)
 ├── confidence.py         # pure log-odds Bayesian math, lazy decay, priors (ec/confidence.py)
 ├── extractor.py          # prompt-based ECU extraction plumbing (ec/extractor.py)
 ├── prompts/
 │   └── extractor_prompt.md  # the tested MIT-licensed extraction prompt (613 lines)
 ├── diffuser.py           # full 9-step + lightweight 3-way diffuser (ec/diffuser.py)
-├── retrieval.py          # demand-driven 14-step ec_query pipeline (ec/retrieval.py)
+├── retrieval.py          # demand-driven 14-step reverie_query pipeline (ec/retrieval.py)
 ├── activation.py         # session-scoped spreading activation (ec/activation.py)
-├── session.py            # SessionManager + /ec-start /ec-stop /ec-status CLI (ec/session.py)
+├── session.py            # SessionManager + /ec-start /ec-stop /ec-status CLI (reverie/session.py)
 ├── review_gate.py        # Human Review Gate + open-question resolution (ec/review_gate.py)
-├── mcp_server.py         # hand-rolled MCP server + 4 tools (ec/mcp_server.py)
+├── mcp_server.py         # hand-rolled MCP server + 4 tools (reverie/mcp_server.py)
 ├── maintainer.py         # background maintenance: 4 tasks (ec/maintainer.py)
 ├── grounding.py          # file/symbol/commit verification (ec/grounding.py)
 ├── clustering.py         # HDBSCAN (+ scipy fallback) clustering (ec/clustering.py)
-├── reconsolidation.py    # ec_reconsolidate evidence-update loop (ec/reconsolidation.py)
-├── install.py            # agent detection + ~/.ec bootstrap (ec/install.py)
-├── repair.py             # ec-repair integrity check (ec/repair.py)
-└── run_ecbench.py        # benchmark runner (ec/run_ecbench.py)
+├── reconsolidation.py    # reverie_reconsolidate evidence-update loop (ec/reconsolidation.py)
+├── install.py            # agent detection + ~/.reverie bootstrap (reverie/install.py)
+├── repair.py             # ec-repair integrity check (reverie/repair.py)
+└── run_ecbench.py        # benchmark runner (reverie/run_ecbench.py)
 bench/
 ├── ecbench_v2.json       # 30-prompt spec, 3 sessions
 ├── judge_ecbench.py      # final-answer judge (GLM-5.2)
@@ -57,7 +57,7 @@ pyproject.toml            # package + console scripts (pyproject.toml)
 
 ### 1.1 Definition and the atomicity thesis
 
-The ECU is the atomic storage unit of Engineering Cognition. Per the extraction prompt (`ec/prompts/extractor_prompt.md`, "What is an ECU?") and `docs/SPEC.md` §1:
+The ECU is the atomic storage unit of Engineering Cognition. Per the extraction prompt (`reverie/prompts/extractor_prompt.md`, "What is an ECU?") and `docs/SPEC.md` §1:
 
 > An ECU is the smallest irreducible engineering conclusion, derived through engineering reasoning or experience, that is **self-contained**, **persists independently of its originating interaction**, and has **the potential to influence future engineering decisions**.
 
@@ -65,18 +65,18 @@ There is no separate "belief" type (`docs/SPEC.md` §9.2): an ECU *functions as*
 
 **What makes an ECU atomic** (enforced at three levels):
 
-1. **The Atomization Rule** (`ec/prompts/extractor_prompt.md`, "Atomization Rule"): *"Each ECU must express exactly ONE engineering conclusion. If a candidate contains multiple independent conclusions, split it into separate ECUs. Test: 'Could a future task require one of these conclusions but not the other?' If yes, split them."* The prompt shows a three-conclusion sentence that must become 3 ECUs.
+1. **The Atomization Rule** (`reverie/prompts/extractor_prompt.md`, "Atomization Rule"): *"Each ECU must express exactly ONE engineering conclusion. If a candidate contains multiple independent conclusions, split it into separate ECUs. Test: 'Could a future task require one of these conclusions but not the other?' If yes, split them."* The prompt shows a three-conclusion sentence that must become 3 ECUs.
 2. **The Lifting Test** (same file): every candidate must pass three tests —
    - **"So What?"** — is it a conclusion, not a fact? ("If you can prefix it with 'Interestingly, ...' and it still reads as a fact, it's information.")
    - **"Future Session"** — would knowing this change how an engineer approaches a future task?
    - **"Independence"** — does it remain understandable without the original conversation?
 3. **The Self-Review Pass** (same file, execution-instruction step 9): before output, the extractor re-reads every candidate and rejects anything "an engineer could obtain by simply reading the code."
 
-`cognition` is **semantically immutable** (`docs/SPEC.md` §13/§20, implemented as a design constraint in `ec/brain.py` module docstring): any change to meaning — even cosmetic rewording — requires a new ECU with a `supersedes` edge. Confidence/status/edges/metadata are mutable in place (design decision **D2**, `docs/handoffs/HANDOFF_PHASE_1.md:99`).
+`cognition` is **semantically immutable** (`docs/SPEC.md` §13/§20, implemented as a design constraint in `reverie/brain.py` module docstring): any change to meaning — even cosmetic rewording — requires a new ECU with a `supersedes` edge. Confidence/status/edges/metadata are mutable in place (design decision **D2**, `docs/handoffs/HANDOFF_PHASE_1.md:99`).
 
 ### 1.2 The ECU data format (as built)
 
-The authoritative in-memory/JSON representation is built in `Brain.insert_ecu()` (`ec/brain.py:197-214`) and re-materialized by `_row_to_ecu()` (`ec/brain.py:251-271`). It matches `docs/SPEC.md` §3.1:
+The authoritative in-memory/JSON representation is built in `Brain.insert_ecu()` (`reverie/brain.py:197-214`) and re-materialized by `_row_to_ecu()` (`reverie/brain.py:251-271`). It matches `docs/SPEC.md` §3.1:
 
 ```json
 {
@@ -116,7 +116,7 @@ The authoritative in-memory/JSON representation is built in `Brain.insert_ecu()`
 }
 ```
 
-Note on `metadata`: the defaults are defined in `_DEFAULT_METADATA` (`ec/brain.py:42-49`):
+Note on `metadata`: the defaults are defined in `_DEFAULT_METADATA` (`reverie/brain.py:42-49`):
 
 ```python
 _DEFAULT_METADATA = {
@@ -129,7 +129,7 @@ _DEFAULT_METADATA = {
 }
 ```
 
-Controlled vocabularies live in `ec/config.py:287-307`:
+Controlled vocabularies live in `reverie/config.py:287-307`:
 
 ```python
 CONCLUSION_TYPES = (
@@ -162,7 +162,7 @@ Status semantics (`docs/SPEC.md` §3.2, implemented via `RETRIEVABLE_STATUSES` a
 
 ### 1.3 Storage: SQLite schema
 
-One global database, default `$EC_HOME/ec.db` = `~/.ec/ec.db` (`ec/config.py:29-39`, `ec/config.py::default_db_path`). WAL mode + foreign keys ON on every connect (`ec/brain.py:75-78`). Full DDL in `ec/schema.sql`:
+One global database, default `$REVERIE_HOME/reverie.db` = `~/.reverie/reverie.db` (`reverie/config.py:29-39`, `reverie/config.py::default_db_path`). WAL mode + foreign keys ON on every connect (`reverie/brain.py:75-78`). Full DDL in `ec/schema.sql`:
 
 ```sql
 -- Canonical Brain (durable, human-reviewed)
@@ -206,29 +206,29 @@ Session-side tables (`ec/schema.sql:60-147`): `sessions` (`id, repo_path, branch
 
 Maintenance/clustering tables (`ec/schema.sql:154-195`): `maintenance_log` (`run_at, action, details, ecus_affected`), `maintenance_state` (key/value; keys `last_run_at`, `last_run_ecu_count`, `grounding_last_check:<repo>`, `last_clustering_ecu_count`), `clusters` (`label INT, stability REAL`), `cluster_memberships` (PK `(ecu_id, cluster_id)`, `weight` = cluster stability).
 
-Embeddings are stored as **float32 BLOBs directly on the ECU rows** (not a separate table — documented deviation D3, `docs/handoffs/HANDOFF_PHASE_1.md:100`): 384 × 4 = 1536 bytes; serialized by `to_blob`/`from_blob` (`ec/embeddings.py:27-34`). The `document` column stores the full ECU JSON for audit fidelity and is regenerated from authoritative columns on any mutation via `_rewrite_document()` (`ec/brain.py:351-360`).
+Embeddings are stored as **float32 BLOBs directly on the ECU rows** (not a separate table — documented deviation D3, `docs/handoffs/HANDOFF_PHASE_1.md:100`): 384 × 4 = 1536 bytes; serialized by `to_blob`/`from_blob` (`ec/embeddings.py:27-34`). The `document` column stores the full ECU JSON for audit fidelity and is regenerated from authoritative columns on any mutation via `_rewrite_document()` (`reverie/brain.py:351-360`).
 
 ### 1.4 How an ECU is created
 
-There are exactly three creation paths; all validate against the vocabularies above via `Brain._validate_ecu_fields()` (`ec/brain.py:131-155`), which rejects empty cognition, unknown `conclusion_type`/`scope_level`/`status`, and confidence outside [0,1].
+There are exactly three creation paths; all validate against the vocabularies above via `Brain._validate_ecu_fields()` (`reverie/brain.py:131-155`), which rejects empty cognition, unknown `conclusion_type`/`scope_level`/`status`, and confidence outside [0,1].
 
-**Path 1 — Session Brain (the normal path).** `ec_observe` → `extractor.extract_and_store_session()` (`ec/extractor.py:295-324`):
+**Path 1 — Session Brain (the normal path).** `reverie_observe` → `extractor.extract_and_store_session()` (`ec/extractor.py:295-324`):
 
 1. `extract_ecus()` calls the LLM (see Section 3) and gets candidate JSON.
 2. Each candidate is normalized by `validate_ecu()` (`ec/extractor.py:117-165`) — enforces §1 vocabularies; the prompt's singular `evidence_pointer` string is folded into the `evidence_pointers` list convention; invalid ECUs are skipped (`skipped_invalid += 1`), never fatal to the batch.
 3. `_assign_priors()` (`ec/extractor.py:168-188`) computes the §5.9 initial confidence (Section 2.3 of this document), stamps `provenance` (source_type from the LLM, source_id = session id, origin_agent = `cfg.llm.model` unless overridden, origin_engineer = None), sets `status: "active"`.
-4. `stamp_grounding_commit_hash()` (`ec/extractor.py:275-292`) fills `grounding.commit_hash` from the session repo's git HEAD (D49 — stamped server-side; never overwrites an LLM-provided hash; any git failure degrades to None, `ec/mcp_server.py:101-123`).
-5. Each ECU is embedded (`embedding_model.encode_one(ecu["cognition"])`) and stored via `Brain.insert_session_ecu()` (`ec/brain.py:621-682`) with `review_status='pending'`; the session's `ecu_count` increments.
+4. `stamp_grounding_commit_hash()` (`ec/extractor.py:275-292`) fills `grounding.commit_hash` from the session repo's git HEAD (D49 — stamped server-side; never overwrites an LLM-provided hash; any git failure degrades to None, `reverie/mcp_server.py:101-123`).
+5. Each ECU is embedded (`embedding_model.encode_one(ecu["cognition"])`) and stored via `Brain.insert_session_ecu()` (`reverie/brain.py:621-682`) with `review_status='pending'`; the session's `ecu_count` increments.
 
-**Path 2 — Canonical Brain via the Review Gate.** `review_gate._promote()` (`ec/review_gate.py:187-208`) re-inserts the accepted session ECU into `ecus` **keeping the same id** (D21), preserving `metadata.review_edit` if the human edited the cognition (D19), then `diffuser.diffuse_ecu()` integrates it into the belief network (Section 6). `Brain.insert_ecu()` (`ec/brain.py:171-249`) applies defaults: uuid4 id, current timestamp, empty grounding/metadata, status `active`, confidence default 0.5.
+**Path 2 — Canonical Brain via the Review Gate.** `review_gate._promote()` (`ec/review_gate.py:187-208`) re-inserts the accepted session ECU into `ecus` **keeping the same id** (D21), preserving `metadata.review_edit` if the human edited the cognition (D19), then `diffuser.diffuse_ecu()` integrates it into the belief network (Section 6). `Brain.insert_ecu()` (`reverie/brain.py:171-249`) applies defaults: uuid4 id, current timestamp, empty grounding/metadata, status `active`, confidence default 0.5.
 
 **Path 3 — Canonical Brain via reconsolidation supersession.** `reconsolidation._materialize_evidence_ecu()` (`ec/reconsolidation.py:189-214`) inserts the agent's evidence as a real canonical ECU (source_type `"reconsolidation"`, confidence 0.5, `metadata.reconsolidates = <old id>`) — required because §15.5 supersession needs a stored replacement ECU. This is the only other writer of `insert_ecu` besides promotion.
 
 ### 1.5 Mutability contract (§13/§20)
 
-Implemented as the public surface of `Brain` (`ec/brain.py:349-451`):
+Implemented as the public surface of `Brain` (`reverie/brain.py:349-451`):
 
-- **Immutable:** `id`, `cognition`, `conclusion_type`, `scope`, `provenance`. `brain.py` deliberately exposes **no method** to mutate cognition (module docstring, `ec/brain.py:8-11`).
+- **Immutable:** `id`, `cognition`, `conclusion_type`, `scope`, `provenance`. `brain.py` deliberately exposes **no method** to mutate cognition (module docstring, `reverie/brain.py:8-11`).
 - **Mutable in place:** `confidence` (`update_ecu_confidence`), `status` (`update_ecu_status`), `metadata` (`update_ecu_metadata`, merge semantics), `grounding` (`update_ecu_grounding` — file paths can move; `commit_hash`/`code_snapshot` preserved unless explicitly supplied; D55), `evidence_pointers` (`add_evidence_pointer` — append-only, deduped; D55).
 
 ---
@@ -279,7 +279,7 @@ def to_probability(L: float) -> float:      # sigmoid
 
 Because updates are additive in log-odds space, N independent pieces of supporting evidence accumulate as `L_B' = L_B + Σᵢ (w × rᵢ × c_Aᵢ)`, which is multiplicative in probability space — corroborating evidence compounds naturally. Two structural notes:
 
-1. **Edge accumulation, not edge duplication** (`Brain.add_edge`, `ec/brain.py:457-512`): the `UNIQUE (source_id, target_id, type)` constraint means repeated evidence for the *same relationship* updates the existing edge — `new_weight = min(1.0, existing_weight + weight)` and `new_delta = existing_delta + confidence_delta` — rather than creating a second row. Two ECUs *can* hold edges of different types simultaneously (e.g. supports + depends_on).
+1. **Edge accumulation, not edge duplication** (`Brain.add_edge`, `reverie/brain.py:457-512`): the `UNIQUE (source_id, target_id, type)` constraint means repeated evidence for the *same relationship* updates the existing edge — `new_weight = min(1.0, existing_weight + weight)` and `new_delta = existing_delta + confidence_delta` — rather than creating a second row. Two ECUs *can* hold edges of different types simultaneously (e.g. supports + depends_on).
 2. **Opposing-edges exception** (§14.3, D53): if the same directed pair ends up with *both* a `supports` and a `contradicts` edge, `_check_opposing_edges()` (`ec/diffuser.py:532-563`) emits a flag — "This relationship may need decomposition into more atomic ECUs" — surfaced at the review gate (and re-scanned across all edges by `review_gate._opposing_edge_notifications`, `ec/review_gate.py:331-365`).
 
 At extraction time, multi-source corroboration within a single interaction is handled by the prior bump (Section 2.3).
@@ -294,7 +294,7 @@ prior = base_prior(source_type) × scope_multiplier(scope_level)
 then clamped to [prior_floor, prior_cap] = [0.05, 0.95]
 ```
 
-Base priors (`ec/config.py:62-69`; spec rationale table in `docs/SPEC.md` §5.9):
+Base priors (`reverie/config.py:62-69`; spec rationale table in `docs/SPEC.md` §5.9):
 
 | source_type | Prior | Rationale |
 |---|---|---|
@@ -305,9 +305,9 @@ Base priors (`ec/config.py:62-69`; spec rationale table in `docs/SPEC.md` §5.9)
 | `observation` | 0.45 | Single observation, needs corroboration |
 | `planning` | 0.35 | Future-oriented, untested intentions |
 
-Alias resolution (`get_base_prior`, `ec/config.py:366-377`): the extractor prompt emits `review` (→ `code_review`) and `session` (→ `observation` = 0.45); the `session` prior is a documented interpolation since the spec table lacks it.
+Alias resolution (`get_base_prior`, `reverie/config.py:366-377`): the extractor prompt emits `review` (→ `code_review`) and `session` (→ `observation` = 0.45); the `session` prior is a documented interpolation since the spec table lacks it.
 
-Scope multipliers (`ec/config.py:75-83`): `engineering 1.15, domain 1.10, organization 1.05, project 1.00, repo 0.90, module 0.80, subsystem 0.75` — universal principles are more trustworthy than module-specific details.
+Scope multipliers (`reverie/config.py:75-83`): `engineering 1.15, domain 1.10, organization 1.05, project 1.00, repo 0.90, module 0.80, subsystem 0.75` — universal principles are more trustworthy than module-specific details.
 
 Corroboration counting (`count_evidence_sources`, `ec/extractor.py:105-114`): the prompt marks multi-source evidence with `+`-separated sources in `evidence_pointer` (e.g. *"Agent reasoning step 4 (code analysis) + step 8 (test confirmation)"*); the count of non-empty `+`-separated parts is `n_sources`. Defaults: `corroboration_bump = 0.05` per independent source, `corroboration_bump_cap = 0.15` (max 3 sources counted).
 
@@ -324,7 +324,7 @@ c_eff = sigmoid(L_eff)
 
 where `elapsed_days = max(0, now − last_reinforced)` in seconds/86400 (future timestamps never boost), and the decay clock is `metadata.last_reinforced`, falling back to `provenance.created_at` for never-reinforced ECUs (`ecu_effective_confidence`, `ec/confidence.py:134-154` — §2.6: an unreinforced ECU decays from creation). The convenience wrapper raises for session ECUs — session ECUs are ephemeral and never decay.
 
-Scope-dependent decay rates (`ec/config.py:97-105`; per-day, log-odds space):
+Scope-dependent decay rates (`reverie/config.py:97-105`; per-day, log-odds space):
 
 | Scope | λ/day | Half-life ≈ ln(2)/λ |
 |---|---|---|
@@ -345,7 +345,7 @@ Why lazy (design doc §2.2): eager per-tick decay would need O(N) writes every i
 Confidence is *written* (the stored value changes) only by events:
 
 1. **Diffuser Bayesian updates** — `support_update` / `contradiction_update` applied by `_handle_support` / `_handle_contradiction` (`ec/diffuser.py:566-658`) during full diffusion, and by pending-update application at the review gate (`ec/review_gate.py:764-806`).
-2. **Retrieval reinforcement** — after every `ec_query`, the MCP server bumps the *stored* confidence of every surfaced canonical ECU (`ec/mcp_server.py:481-526`, `_record_retrieval_metadata`):
+2. **Retrieval reinforcement** — after every `reverie_query`, the MCP server bumps the *stored* confidence of every surfaced canonical ECU (`reverie/mcp_server.py:481-526`, `_record_retrieval_metadata`):
 
    ```
    c' = sigmoid(logit(c_stored) + alpha_retrieval)    # alpha_retrieval = 0.05
@@ -359,18 +359,18 @@ Confidence is *written* (the stored value changes) only by events:
 
 ### 2.6 Exact thresholds
 
-All in `ec/config.py:92-107`:
+All in `reverie/config.py:92-107`:
 
 | Key | Value | Effect | Code |
 |---|---|---|---|
 | `theta_supersede` | 0.3 | Below this, supersession can trigger (both §15.5 conditions required) | `should_supersede`, `ec/confidence.py:241-255` |
 | `theta_dep_reevaluate` | 0.4 | Below this, `depends_on` dependents are marked `challenged` | `propagate`, `ec/confidence.py:292-336` |
 | `theta_contradiction_flag` | 0.7 | Both sides above → flag to user | `ec/diffuser.py:641-652`, `ec/review_gate.py:283-292` |
-| `prior_cap` / `prior_floor` | 0.95 / 0.05 | Prior clamp; also lightweight-bump clamp (D7) | `ec/config.py:84-85` |
+| `prior_cap` / `prior_floor` | 0.95 / 0.05 | Prior clamp; also lightweight-bump clamp (D7) | `reverie/config.py:84-85` |
 | `confidence_flag_threshold` | 0.3 | "⚠️ Low confidence" flag in retrieval output | `ec/retrieval.py:440-445` |
 | `confidence_very_low_threshold` | 0.2 | "⚠️ Very low confidence" flag | same |
-| `alpha_retrieval` | 0.05 | Reinforcement bump size | `ec/config.py:106` |
-| `max_propagation_depth` | 2 | Bounded transitive propagation (§15.7) | `ec/config.py:107` |
+| `alpha_retrieval` | 0.05 | Reinforcement bump size | `reverie/config.py:106` |
+| `max_propagation_depth` | 2 | Bounded transitive propagation (§15.7) | `reverie/config.py:107` |
 
 **Supersession trigger** (`should_supersede`): BOTH conditions must hold — (1) old confidence < 0.3, (2) a replacement ECU exists. "You don't supersede a belief just because it's weakened; you need a replacement." Classification of the supersession (`supersession_type`, `ec/confidence.py:258-285`): embedding cosine of the two cognitions ≥ `COSMETIC_SIMILARITY = 0.92` → `cosmetic` (rewording), else `semantic`; embedding failure defaults to `semantic` (never guesses cosmetic).
 
@@ -382,11 +382,11 @@ All in `ec/config.py:92-107`:
 
 ### 3.1 Components and call chain
 
-Raw agent text becomes ECUs through `ec/extractor.py` (plumbing) + `ec/prompts/extractor_prompt.md` (the methodology — loaded at runtime, never paraphrased into code, per repo AGENTS.md and `ec/extractor.py:19`).
+Raw agent text becomes ECUs through `ec/extractor.py` (plumbing) + `reverie/prompts/extractor_prompt.md` (the methodology — loaded at runtime, never paraphrased into code, per repo AGENTS.md and `ec/extractor.py:19`).
 
 ```
-Agent calls MCP tool ec_observe(user_prompt, reasoning_trace, final_output?)
-  └─ mcp_server._tool_observe (ec/mcp_server.py:530-607)
+Agent calls MCP tool reverie_observe(user_prompt, reasoning_trace, final_output?)
+  └─ mcp_server._tool_observe (reverie/mcp_server.py:530-607)
        ├─ resolve current session (per-call DB lookup, D15) — else NO_SESSION_ERROR
        ├─ build interaction dict {prompt, reasoning_trace, output?, session_context}
        ├─ extractor.extract_and_store_session(brain, session_id, interaction,
@@ -406,7 +406,7 @@ Agent calls MCP tool ec_observe(user_prompt, reasoning_trace, final_output?)
 
 ### 3.2 The model and call parameters
 
-`call_llm` (`ec/llm.py:67-108`) with defaults from `ec/config.py:175-184`:
+`call_llm` (`reverie/llm.py:67-108`) with defaults from `reverie/config.py:175-184`:
 
 ```yaml
 llm:
@@ -420,11 +420,11 @@ llm:
   max_tokens: 4096
 ```
 
-Wire format is derived from the model name (`_api_format`, `ec/llm.py:58-64`): `claude*` → Anthropic Messages (`POST {base_url}/messages`, `x-api-key` header); everything else → OpenAI Chat Completions (`POST {base_url}/chat/completions`, Bearer only when a key is present — so Ollama works keyless; D48).
+Wire format is derived from the model name (`_api_format`, `reverie/llm.py:58-64`): `claude*` → Anthropic Messages (`POST {base_url}/messages`, `x-api-key` header); everything else → OpenAI Chat Completions (`POST {base_url}/chat/completions`, Bearer only when a key is present — so Ollama works keyless; D48).
 
 ### 3.3 The prompt (what is actually sent)
 
-**System prompt:** the full text of `ec/prompts/extractor_prompt.md` ("Extraction Prompt v1.0 (Open Tier)", MIT license, 613 lines). Its components:
+**System prompt:** the full text of `reverie/prompts/extractor_prompt.md` ("Extraction Prompt v1.0 (Open Tier)", MIT license, 613 lines). Its components:
 
 1. **ECU definition + IS/IS-NOT lists** — an ECU is not a summary, code description, repo fact, process step, snippet, or unjustified preference; it is a learned conclusion that would change future behavior.
 2. **The core Information-vs-Conclusion distinction** — *"Information describes what the code IS"* ("TokenManager.refresh() is called before cache.clear()") vs *"Conclusion describes what was LEARNED"* ("Authentication correctness depends on optimistic token refresh…").
@@ -473,7 +473,7 @@ Wire format is derived from the model name (`_api_format`, `ec/llm.py:58-64`): `
 
 ### 3.4 Pipeline steps (post-LLM)
 
-1. **Fence-strip + parse** — `extract_json()` (`ec/llm.py:38-49`) finds the first `{` and last `}` when fences are present (exact implementation from the spec's §15 JSON post-processing block); `json.loads` must yield a dict with an `ecus` array, else `ExtractionError` with a 200-char response prefix.
+1. **Fence-strip + parse** — `extract_json()` (`reverie/llm.py:38-49`) finds the first `{` and last `}` when fences are present (exact implementation from the spec's §15 JSON post-processing block); `json.loads` must yield a dict with an `ecus` array, else `ExtractionError` with a 200-char response prefix.
 2. **Validate each candidate** (`validate_ecu`) — vocabulary enforcement as above; `grounding` must be an object; unknown `source_type` raises (via `get_base_prior`).
 3. **Assign priors** (`_assign_priors`) — Section 2.3.
 4. **Stamp provenance** — `source_id` = session id; `origin_agent` = extractor model name.
@@ -483,13 +483,13 @@ Wire format is derived from the model name (`_api_format`, `ec/llm.py:58-64`): `
 
 ### 3.5 How associations are (not) detected during extraction
 
-**The Extractor creates no edges.** This is stated in the module docstring (`ec/extractor.py:18-19`), the spec (§5.13: "Does NOT create edges between ECUs (that's the Diffuser's job)"), and the prompt (the output schema contains no edge field; SPEC §5.3: "`edges` are **empty** — edges are the Diffuser's job"). Relationship detection happens later: the lightweight diffuser (3-way supports/contradicts/unrelated, similarity threshold 0.7) runs per `ec_observe`, and the full diffuser (5-way) runs at promotion. Scope level is likewise assigned by the LLM inside the prompt (guided by the prompt's `scope` field guidelines), then merely *validated* by `validate_ecu` against the 7 allowed levels; if the LLM omits `path`, the level name is stored as the path (`ec/extractor.py:161`).
+**The Extractor creates no edges.** This is stated in the module docstring (`ec/extractor.py:18-19`), the spec (§5.13: "Does NOT create edges between ECUs (that's the Diffuser's job)"), and the prompt (the output schema contains no edge field; SPEC §5.3: "`edges` are **empty** — edges are the Diffuser's job"). Relationship detection happens later: the lightweight diffuser (3-way supports/contradicts/unrelated, similarity threshold 0.7) runs per `reverie_observe`, and the full diffuser (5-way) runs at promotion. Scope level is likewise assigned by the LLM inside the prompt (guided by the prompt's `scope` field guidelines), then merely *validated* by `validate_ecu` against the 7 allowed levels; if the LLM omits `path`, the level name is stored as the path (`ec/extractor.py:161`).
 
 ### 3.6 Extraction quality evidence
 
 - Prompt-selection testing (spec §15 LLM comment): Haiku 4.5 "caught 4x more genuine conclusions than the 7B, valid format compliance, working Self-Review Pass" vs qwen2.5:7B / qwen2.5-coder:14B / gpt-5.4-mini.
 - Live audit (`docs/ASSESSMENT.md` §2 step c): a real FastAPI investigation yielded `ecus_extracted=2, ecus_rejected=2` via the Lifting Test; §4: "precise `constraint`/`principle` ECUs with sensible scopes/priors, and the Lifting Test rejected narrative filler."
-- `rejected_count` / `rejection_summary` are surfaced in the `ec_observe` payload (D56, `ec/mcp_server.py:601-602`) to make filtering visible and debuggable (§5.3).
+- `rejected_count` / `rejection_summary` are surfaced in the `reverie_observe` payload (D56, `reverie/mcp_server.py:601-602`) to make filtering visible and debuggable (§5.3).
 
 ---
 
@@ -511,11 +511,11 @@ The hippocampus/neocortex parallel (`docs/SPEC.md` §6.1–6.3). Both live in **
 
 The hard boundary (§6.7, D5): *"The Session Brain never writes to the Canonical Brain… No exceptions."* When session evidence relates to a canonical ECU, the lightweight diffuser records a `pending_updates` row instead (`ec/diffuser.py:796-812`) and sets `has_pending_updates=True` on the canonical ECU; the review gate later applies (exact recomputed deltas, never double-applied — D16) or discards these rows (`review_gate._resolve_pending_updates`, `ec/review_gate.py:750-813`).
 
-Sessions are keyed by `(repo_path, branch)` (`ec/session.py:91-107`, git-detect or `EC_REPO_PATH`/`EC_BRANCH` env override; detached HEAD → `detached:<short-hash>`). One active session per (repo, branch); `/ec-start` resumes it, carrying pending/skipped ECUs + their session edges + pending updates over from closed sessions (`Brain.reassign_session_rows`, `ec/brain.py:1060-1103`).
+Sessions are keyed by `(repo_path, branch)` (`reverie/session.py:91-107`, git-detect or `REVERIE_REPO_PATH`/`REVERIE_BRANCH` env override; detached HEAD → `detached:<short-hash>`). One active session per (repo, branch); `/ec-start` resumes it, carrying pending/skipped ECUs + their session edges + pending updates over from closed sessions (`Brain.reassign_session_rows`, `reverie/brain.py:1060-1103`).
 
 ### 4.2 Session → Canonical: the transition
 
-**Trigger:** session close via `/ec-stop` (`python -m ec.session stop`), or programmatic `review_gate.apply_review_decisions` on demand. The flow (`ec/review_gate.py::apply_review_decisions`, lines 846-971):
+**Trigger:** session close via `/ec-stop` (`python -m reverie.session stop`), or programmatic `review_gate.apply_review_decisions` on demand. The flow (`ec/review_gate.py::apply_review_decisions`, lines 846-971):
 
 1. **Grouping** — candidates (review_status `pending|skipped`) grouped by `scope_path` (D18) or, if `review_gate.grouping_strategy: "cluster"`, by HDBSCAN cognitive cluster with scope fallback (D36; `_cluster_groups`, `ec/review_gate.py:108-155` — a candidate joins the cluster of its most-similar canonical ECU above the diffuser relevance threshold, or keeps its own scope group).
 2. **Accept → promote** — `_promote()` copies the session ECU into `ecus` with the same id (D21), applying an optional human edit: the edited cognition replaces the text, is re-embedded, and the original is preserved under `metadata.review_edit = {"original_cognition": …, "edited_at": …}` (D19, §7.3).
@@ -528,9 +528,9 @@ Sessions are keyed by `(repo_path, branch)` (`ec/session.py:91-107`, git-detect 
 
 ### 4.3 Reconsolidation
 
-**Concept** (`ec/reconsolidation.py` docstring): retrieval makes a canonical ECU *labile*; when the agent discovers new evidence about it, `ec_reconsolidate` feeds that evidence back through the Diffuser. The change is written to the Canonical Brain **immediately** — the ECU was already human-reviewed when it entered; reconsolidation is an evidence update, not a new ECU entering (§5.5).
+**Concept** (`ec/reconsolidation.py` docstring): retrieval makes a canonical ECU *labile*; when the agent discovers new evidence about it, `reverie_reconsolidate` feeds that evidence back through the Diffuser. The change is written to the Canonical Brain **immediately** — the ECU was already human-reviewed when it entered; reconsolidation is an evidence update, not a new ECU entering (§5.5).
 
-**Gatekeeping (D39):** only ECUs retrieved in the current session are labile. `SessionManager` keeps an in-memory per-session `_labile` set (`ec/session.py:225-238`); `mcp_server._record_retrieval_metadata` marks surfaced canonical ids labile after every `ec_query`; `_tool_reconsolidate` refuses others with actionable guidance ("you can't reconsolidate something you haven't looked at", `ec/mcp_server.py:685-696`). Additional validations: ECU must exist and have a retrievable status (`active|challenged|open_question`); `relationship` if given must be in `("supports", "contradicts", "supersedes")`.
+**Gatekeeping (D39):** only ECUs retrieved in the current session are labile. `SessionManager` keeps an in-memory per-session `_labile` set (`reverie/session.py:225-238`); `mcp_server._record_retrieval_metadata` marks surfaced canonical ids labile after every `reverie_query`; `_tool_reconsolidate` refuses others with actionable guidance ("you can't reconsolidate something you haven't looked at", `reverie/mcp_server.py:685-696`). Additional validations: ECU must exist and have a retrievable status (`active|challenged|open_question`); `relationship` if given must be in `("supports", "contradicts", "supersedes")`.
 
 **Mechanics (D38, design doc §5.3):** the evidence becomes a **pseudo-ECU** (`_build_pseudo_ecu`, `ec/reconsolidation.py:109-126`):
 
@@ -562,7 +562,7 @@ If the agent passes an explicit `relationship`, classification and §17.2 adjudi
 
 **Related-ECU pass (§5.3 step 5):** the evidence may affect other beliefs — the pseudo-ECU (or the materialized replacement) is diffused against the rest of the brain (best-effort; failure recorded in `result.diffusion_error`, the target update stands).
 
-**Audit trail:** edges cannot reference the unstored pseudo-ECU, so `_append_audit_note` writes `metadata.reconsolidations` entries: `{"at", "relationship", "evidence" (≤280 chars), "confidence_delta", "via": "ec_reconsolidate"}` (`ec/reconsolidation.py:136-151`).
+**Audit trail:** edges cannot reference the unstored pseudo-ECU, so `_append_audit_note` writes `metadata.reconsolidations` entries: `{"at", "relationship", "evidence" (≤280 chars), "confidence_delta", "via": "reverie_reconsolidate"}` (`ec/reconsolidation.py:136-151`).
 
 **Confidence during reconsolidation, precisely:** the target's update magnitude is `w × r(evidence, target) × 0.5` in log-odds space (the neutral pseudo-confidence is c_A). On the supersession path the *new* ECU starts at its own 0.5; the old ECU's confidence is frozen, never transferred.
 
@@ -572,7 +572,7 @@ If the agent passes an explicit `relationship`, classification and §17.2 adjudi
 
 ### 5.1 The seven levels
 
-`SCOPE_LEVELS` (`ec/config.py:292-295`), general → specific (`docs/SPEC.md` §1.2/§11.11):
+`SCOPE_LEVELS` (`reverie/config.py:292-295`), general → specific (`docs/SPEC.md` §1.2/§11.11):
 
 ```
 engineering          (universal engineering principles)
@@ -598,7 +598,7 @@ Scope multiplies the base prior (Section 2.3): `engineering 1.15, domain 1.10, o
 
 Three independent mechanisms in `ec/retrieval.py`:
 
-1. **Explicit restriction (§16.3)** — the `scope` parameter of `ec_query` hard-filters to one level (`retrieve()` line 637-638). Distinct from the proximity multiplier.
+1. **Explicit restriction (§16.3)** — the `scope` parameter of `reverie_query` hard-filters to one level (`retrieve()` line 637-638). Distinct from the proximity multiplier.
 2. **Search-UP-the-hierarchy filter (§11.11, D50)** — `_filter_by_scope_hierarchy` (`ec/retrieval.py:169-218`) anchors at the session's repo (`_working_scope_from_session` → `("repo", session.repo_path)`; an explicit `scope=` narrows the anchor level). An ECU is kept when its level is **UP** (smaller index — `engineering`/`domain` unconditionally as universal; intermediate levels when their path is compatible), **same level with the same context** (path prefix or the basename "convention bridge" — `PurePath(working_path).name` appearing in the ECU's label path, so `repo:api-server` ECUs match an `/x/api-server` session), or has an unknown level/path (never over-filter). **DOWN and sideways are dropped.** If the filter empties the candidate list, the unfiltered set is restored ("an empty result is worse than a broad one").
 3. **Scope proximity multiplier (§11.11)** — `rank *= scope_proximity[level]` (`ec/retrieval.py:293-294`): `subsystem 1.0, module 0.85, repo 0.7, project 0.55, organization 0.4, domain 0.25, engineering 0.1`. Spec: *"a multiplier, never a filter"* — a highly relevant engineering-scope ECU can still outrank a weakly relevant module-scope one.
 
@@ -614,7 +614,7 @@ Three independent mechanisms in `ec/retrieval.py`:
 
 ### 5.6 Scope × competing-hypothesis persistence
 
-`contradiction.competing_hypothesis_persistence` (`ec/config.py:250-258`), in days: engineering `null` (indefinite), domain `null`, organization 75, project 90, repo 60, module 30, subsystem 20. These drive the `open_question` parking sweep (Sections 8.3 and 10.4).
+`contradiction.competing_hypothesis_persistence` (`reverie/config.py:250-258`), in days: engineering `null` (indefinite), domain `null`, organization 75, project 90, repo 60, module 30, subsystem 20. These drive the `open_question` parking sweep (Sections 8.3 and 10.4).
 
 ### 5.7 Scope × clustering
 
@@ -626,7 +626,7 @@ Three independent mechanisms in `ec/retrieval.py`:
 
 ### 6.1 Edge types
 
-Four canonical types (`EDGE_TYPES`, `ec/config.py:305`; table from spec §14.1):
+Four canonical types (`EDGE_TYPES`, `reverie/config.py:305`; table from spec §14.1):
 
 | Type | Direction | Semantics | Confidence effect on target |
 |---|---|---|---|
@@ -683,7 +683,7 @@ Measured quality (spec §8.6, Claude Haiku 4.5, 32 directed pairs): lightweight 
 
 - **What is clustered:** only canonical ECUs with status in `clustering.cluster_statuses` (`active|challenged|open_question`) **and** a non-null embedding. Session ECUs never; vectorless ECUs simply stay unclustered.
 - **Algorithm:** HDBSCAN (`hdbscan_labels`, `min_cluster_size = 3`, `min_samples = 2`) with per-cluster `cluster_persistence_` as stability. Fallback (design doc §4.7 / missing wheel): `agglomerative_labels` — scipy average-linkage over cosine distance, largest dendrogram cut (k = 2..12) where every cluster has ≥ `min_cluster_size` members; "stability" = mean intra-cluster pairwise cosine similarity (`_intra_coherence`).
-- **Ephemerality:** clusters are recomputed **wholesale** each run — `brain.clear_cluster_memberships()` deletes all `clusters` + `cluster_memberships` rows first (HDBSCAN labels are not stable across runs; `ec/brain.py:1224-1233`). Noise (label −1) and clusters with stability < `stability_threshold` (0.6) get no membership rows.
+- **Ephemerality:** clusters are recomputed **wholesale** each run — `brain.clear_cluster_memberships()` deletes all `clusters` + `cluster_memberships` rows first (HDBSCAN labels are not stable across runs; `reverie/brain.py:1224-1233`). Noise (label −1) and clusters with stability < `stability_threshold` (0.6) get no membership rows.
 - **Trigger:** `maintainer.task_clustering` (`ec/maintainer.py:373-401`) runs only when ≥ `clustering_threshold` (100) **new** canonical ECUs exist since the last run (baseline `maintenance_state['last_clustering_ecu_count']`); skipped as `too_few_ecus` below `min_cluster_size` eligible ECUs. At 50–100-ECU scale it rarely fires — infrastructure for scale.
 - **Consumers:** review-gate cluster grouping (D36, Section 4.2). Storage: `clusters` + `cluster_memberships` tables (Section 1.3).
 
@@ -695,16 +695,16 @@ Measured quality (spec §8.6, Claude Haiku 4.5, 32 directed pairs): lightweight 
 
 ### 7.1 Demand-driven contract
 
-`ec/retrieval.py` docstring, §11.3: *"retrieval is PURE demand-driven — this module acts only when the agent explicitly queries (the `ec_query` path). Nothing here injects cognition proactively; that structural choice is anti-anchoring Defence 1."* There is exactly one caller path: MCP `ec_query` → `ECServer._tool_query` → `retrieval.retrieve()`. The no-session case returns the §28.4 error ("No active EC session. Suggest the user run /ec-start…"). `ec_get_summary` provides "awareness without anchoring" — brain statistics only, never ECU contents.
+`ec/retrieval.py` docstring, §11.3: *"retrieval is PURE demand-driven — this module acts only when the agent explicitly queries (the `reverie_query` path). Nothing here injects cognition proactively; that structural choice is anti-anchoring Defence 1."* There is exactly one caller path: MCP `reverie_query` → `ECServer._tool_query` → `retrieval.retrieve()`. The no-session case returns the §28.4 error ("No active EC session. Suggest the user run /ec-start…"). `reverie_summary` provides "awareness without anchoring" — brain statistics only, never ECU contents.
 
-**What triggers a retrieval:** only the agent deciding to call `ec_query(query, scope?, mode?)`. `AGENTS.md` (`ec/install.py:44-207`, written verbatim to `~/.ec/AGENTS.md`) instructs: read the code FIRST; query when about to decide between approaches, when debugging and the cause isn't obvious, before architectural changes, etc. It cites the v1 evidence: "premature retrieval caused anchoring: quality dropped −0.589, groundedness −0.480."
+**What triggers a retrieval:** only the agent deciding to call `reverie_query(query, scope?, mode?)`. `AGENTS.md` (`reverie/install.py:44-207`, written verbatim to `~/.reverie/AGENTS.md`) instructs: read the code FIRST; query when about to decide between approaches, when debugging and the cause isn't obvious, before architectural changes, etc. It cites the v1 evidence: "premature retrieval caused anchoring: quality dropped −0.589, groundedness −0.480."
 
 ### 7.2 Query construction and the 14-step pipeline
 
 The query is a natural-language string supplied by the agent; it is embedded with the same all-MiniLM-L6-v2 model and matched by cosine similarity (dot product of L2-normalized vectors). The pipeline (`retrieve`, `ec/retrieval.py:574-744`; docstring lines 10-33):
 
 1. **Resolve mode** — explicit `mode` param or `detect_mode(query)`; invalid → ValueError. `mode_detected` flag returned.
-2. **Embed query → `find_similar` over BOTH brains** with `threshold=-1.0` (the full set — the gate and fallback live downstream), `include_session=True`, restricted to the caller's session when given, canonical statuses = `RETRIEVABLE_STATUSES`. `find_similar` (`ec/brain.py:1272-1327`) loads all embedding BLOBs and does numpy dot products (no vector DB — fine at 50–1000-ECU scale); returns `{"id", "similarity", "brain"}` sorted desc.
+2. **Embed query → `find_similar` over BOTH brains** with `threshold=-1.0` (the full set — the gate and fallback live downstream), `include_session=True`, restricted to the caller's session when given, canonical statuses = `RETRIEVABLE_STATUSES`. `find_similar` (`reverie/brain.py:1272-1327`) loads all embedding BLOBs and does numpy dot products (no vector DB — fine at 50–1000-ECU scale); returns `{"id", "similarity", "brain"}` sorted desc.
 3. **Quiet-period activation fade** — `activation.apply_time_decay()` before scores are read (§11.10).
 4. **(3) Explicit scope restriction** — if `scope` given, keep only that level.
 5. **(3b) §11.11 UP-only hierarchy filter (D50)** — Section 5.4; unfiltered fallback if emptied.
@@ -757,13 +757,13 @@ normalized = score / max(scores)                  # divide_by_max, bounded [0, w
 
 - **Spread** (`ActivationState.spread`, `ec/activation.py:116-174`): retrieved seeds accumulate the full `base_boost` (repeated retrievals keep warming); neighbours receive hop boosts via BFS from the seed set, max-merged across seeds/paths/existing scores (spec-formula implementation — D12, not the reference's "spread from every warm ECU" loop; both bounded identically by divide_by_max).
 - **Mode-aware spread (§11.9, D9):** boosts crossing the mode's preferred edge type (`debugging → contradicts`, `architecture → depends_on`) are multiplied by `mode_spread_multiplier = 1.5`, **capped at one hop less of decay** (`min(base × decay^(hop−1), hop_boost × 1.5)`) — preferred edges cool slower, never amplify.
-- **Persistence (§6.6, D13/D22):** scores + per-ECU timestamps live in `session_activation`; saved after every `ec_query` (`activation.save(brain)` in `_tool_query`); on resume, `ActivationState.load` re-applies `exp(−rate × elapsed)` for the break (5-minute break ≈ intact; 15-hour break ≈ decayed); on session close the rows are deleted — a new session starts with a clean slate (§12.2). ECU ids may belong to either brain (activation is per-session, not per-brain).
+- **Persistence (§6.6, D13/D22):** scores + per-ECU timestamps live in `session_activation`; saved after every `reverie_query` (`activation.save(brain)` in `_tool_query`); on resume, `ActivationState.load` re-applies `exp(−rate × elapsed)` for the break (5-minute break ≈ intact; 15-hour break ≈ decayed); on session close the rows are deleted — a new session starts with a clean slate (§12.2). ECU ids may belong to either brain (activation is per-session, not per-brain).
 
 ### 7.6 Modes and the output format
 
 **Mode detection** (`ec/mode_detection.py`): LLM classification at temperature 0.0 (`"Classify this engineering query into one of: debugging, architecture, implementation, investigation, planning. Respond with only the mode name."`, max_tokens 16) with a keyword fallback (per-mode keyword lists, phrase hits weigh double, single words match exactly or as ≥4-char prefixes; default `investigation`) when no API key or the LLM fails — mode detection never blocks retrieval.
 
-**Mode parameters** (`ec/config.py:193-224`):
+**Mode parameters** (`reverie/config.py:193-224`):
 
 | Mode | depth | max_tokens | prioritize | bias |
 |---|---|---|---|---|
@@ -789,12 +789,12 @@ normalized = score / max(scores)                  # divide_by_max, bounded [0, w
 
 `ec/maintainer.py` — the Cognition Maintainer keeps the Canonical Brain healthy. **Decision D33:** it runs *inside the MCP server process*, never as a separate daemon, in two modes:
 
-- **Startup check (eager):** `ECServer.start_maintenance()` (`ec/mcp_server.py:366-391`) runs `run_maintenance` synchronously *before* the JSON-RPC loop if `is_maintenance_overdue`; failures are logged, never prevent serving.
+- **Startup check (eager):** `ECServer.start_maintenance()` (`reverie/mcp_server.py:366-391`) runs `run_maintenance` synchronously *before* the JSON-RPC loop if `is_maintenance_overdue`; failures are logged, never prevent serving.
 - **Background thread (lazy):** `MaintainerThread` (daemon, `ec/maintainer.py:491-553`) checks every `check_interval_minutes = 5` and runs maintenance when a trigger fires. The thread opens its **own** SQLite connection over the same DB file (connections are thread-bound; WAL keeps reads concurrent). The first check fires one full interval after start; a crashed run never kills the thread.
 
 **How often:** trigger-based — run when `now − last_run_at > time_threshold_hours (6h)` **or** `count(ecus) − last_run_ecu_count ≥ ecu_threshold (10)` (`is_maintenance_overdue`, `ec/maintainer.py:457-484`; never-run brains are overdue). Never-run/never-used periods are fine: on next start everything catches up in one pass, and numeric decay is lazy anyway.
 
-**The user never sees it** (repo principle #4): no CLI command, no user action; the only visible surface is `last_maintenance_run` in `ec_get_summary` (plus `maintenance_log` rows, which also record review-gate activity).
+**The user never sees it** (repo principle #4): no CLI command, no user action; the only visible surface is `last_maintenance_run` in `reverie_summary` (plus `maintenance_log` rows, which also record review-gate activity).
 
 ### 8.2 The run and its bookkeeping
 
@@ -815,7 +815,7 @@ Order matters: grounding may deprecate ECUs → edge pruning then removes edges 
 **2. `task_grounding` (Phase 8)** — delegates to `GroundingVerifier` (`ec/grounding.py:267-375`). Verifies canonical ECUs whose `grounding.repo_path` matches the given repo and whose status is `active|challenged`:
 - *Checks:* (1) every `grounding.files` path must exist on disk (`file_exists`); (2) every `grounding.symbols` name must appear via substring search in surviving files (`symbol_present` — best-effort; structured names like `TokenManager::refresh` are also tried as separator-separated fragments ≥4 chars; unreadable files count as present — errs toward keeping the ECU); (3) informational commit staleness — `git rev-list --count <hash>..HEAD` > `COMMIT_STALENESS_COMMITS = 50` sets `metadata.stale_commit`, **never deprecates**.
 - *Deprecation rules:* per-scope (Section 5.5). On deprecation: status → `deprecated` (confidence auto-freezes), edges preserved, direct `depends_on` dependents challenged (`challenge_dependents`; `open_question` stays parked).
-- *Throttle (D35):* at most once per `grounding_check_interval_hours = 72` **per repo** (`maintenance_state['grounding_last_check:<repo>']`); skipped (clock unstamped) when no repo, repo not on disk, or throttled. Also run on session start for the session's repo (`SessionManager._run_startup_grounding`, best-effort) and at MCP startup with the resolved repo path (`EC_REPO_PATH` env → git toplevel → most recent active session's repo, `resolve_maintainer_repo_path`).
+- *Throttle (D35):* at most once per `grounding_check_interval_hours = 72` **per repo** (`maintenance_state['grounding_last_check:<repo>']`); skipped (clock unstamped) when no repo, repo not on disk, or throttled. Also run on session start for the session's repo (`SessionManager._run_startup_grounding`, best-effort) and at MCP startup with the resolved repo path (`REVERIE_REPO_PATH` env → git toplevel → most recent active session's repo, `resolve_maintainer_repo_path`).
 
 **3. `task_edge_pruning` (Phase 13, D52)** — scans `list_all_edges()`: skips `supersedes` (audit trail); removes edges whose target ECU is `deprecated|superseded`, or whose target row is gone (orphan cleanup). Reversal: for `supports|contradicts` edges with a non-zero stored delta, `reverse_update` subtracts/adds back the delta (`L_B' = L_B − delta`) before deletion; `depends_on` just removes. Weight-decay/stale-edge triggers are explicitly optional for v2. Sits after grounding so edges to freshly deprecated ECUs are cleaned in the same pass.
 
@@ -860,7 +860,7 @@ The Maintainer does **not** resolve contradictions. Division of labor:
 
 - **Session ECUs:** deleted at review (accepted → promoted then removed; rejected → removed) — `brain.delete_session_ecu` (`ec/review_gate.py:942-944`).
 - **Edges:** pruned by `task_edge_pruning` (targets dead/orphaned) and by open-question option (c) (contradicts edges removed on orthogonal reclassification). `supersedes` edges are never pruned.
-- **Orphan edges:** `ec-repair` (`ec/repair.py`) removes edges whose endpoint ECU row is gone — the only place edges to "missing" ECUs disappear.
+- **Orphan edges:** `reverie repair` (`reverie/repair.py`) removes edges whose endpoint ECU row is gone — the only place edges to "missing" ECUs disappear.
 - **Activation rows:** deleted at session close (ephemeral by design).
 
 ### 9.4 What happens to associations when an ECU is forgotten
@@ -876,7 +876,7 @@ The Maintainer does **not** resolve contradictions. Division of labor:
 
 ### 10.1 Purpose and trigger
 
-`ec/review_gate.py` — *"the only path into the Canonical Brain (§6.7: no bypass, no exceptions)."* Triggers: session close via `/ec-stop` (the slash-command template runs `python -m ec.session stop`), or on-demand via `apply_review_decisions` (used by tests and the benchmark's `--all-accept` flow). Only `active` sessions can go through the gate.
+`ec/review_gate.py` — *"the only path into the Canonical Brain (§6.7: no bypass, no exceptions)."* Triggers: session close via `/ec-stop` (the slash-command template runs `python -m reverie.session stop`), or on-demand via `apply_review_decisions` (used by tests and the benchmark's `--all-accept` flow). Only `active` sessions can go through the gate.
 
 ### 10.2 What the user is asked to do
 
@@ -926,13 +926,13 @@ Exactly Section 4.2's step list: accept → promote (same id, optional edit pres
 
 ### 10.5 The `--accept-all` flag (and siblings)
 
-`python -m ec.session stop` accepts (`ec/session.py:388-402`):
+`python -m reverie.session stop` accepts (`reverie/session.py:388-402`):
 
 - `--all-accept` — non-interactive: builds `{ecu_id: "accept"}` for every `pending|skipped` session ECU and calls `apply_review_decisions`; prints the result message, the diffusion-failure warning, and flags.
 - `--all-skip` — same but every decision is `skip` (close without reviewing; ECUs carry to the next session).
 - `--resolve-open-questions {auto,skip,archive}` — `auto` (default) prompts interactively on an interactive stop and skips otherwise; `archive` archives all open questions without prompting (`resolve_open_questions_archive_all`); `skip` never touches them.
 
-With either bulk flag the flow is identical to an interactive accept (promotion + full diffusion + cleanup), minus the prompts. This is what the EC-Bench runner uses between sessions (`ec/run_ecbench.py:392-395`, `--all-{accept|skip}`), and the spec's §28.10 `ec-stop.md` template documents both flags. The interactive path needs a TTY (documented limitation, `docs/ASSESSMENT.md` triage table).
+With either bulk flag the flow is identical to an interactive accept (promotion + full diffusion + cleanup), minus the prompts. This is what the EC-Bench runner uses between sessions (`reverie/run_ecbench.py:392-395`, `--all-{accept|skip}`), and the spec's §28.10 `ec-stop.md` template documents both flags. The interactive path needs a TTY (documented limitation, `docs/ASSESSMENT.md` triage table).
 
 ---
 
@@ -950,12 +950,12 @@ Each prompt declares an objective, the prompt text, the "expected engineering kn
 
 ### 11.2 The runner
 
-`ec/run_ecbench.py` (`python -m ec.run_ecbench`) and `bench/run_and_judge.py` (unified runner + inline judge). Per condition (`ec` | `baseline`), condition isolation (D31/D32):
+`reverie/run_ecbench.py` (`python -m reverie.run_ecbench`) and `bench/run_and_judge.py` (unified runner + inline judge). Per condition (`ec` | `baseline`), condition isolation (D31/D32):
 
 1. Fresh **copy** of the target repo (`workdir/`) — identical starting state, original untouched.
-2. Per-condition `EC_HOME` (the baseline never gets a brain) and isolated `XDG_DATA_HOME`/`XDG_STATE_HOME` (fresh agent context per prompt by default; `--continue-within-session` opts into `--continue`); provider `auth.json` copied into the isolated XDG dir.
-3. Agent config injected via `OPENCODE_CONFIG` overlay (`build_agent_config`, `ec/run_ecbench.py:127-165`): the `ec` condition gets the EC MCP server (absolute venv python + PYTHONPATH + `EC_HOME` + `EC_REPO_PATH`/`EC_BRANCH`) and the §28.9 AGENTS.md; the baseline gets **no** EC instructions and the `ec` server explicitly `enabled: false` (neutralizes a global install).
-4. Per session: `python -m ec.session start` → run each prompt headlessly (`opencode run --dir {repo} --format json --auto {prompt}` by default; JSONL transcripts + `.meta.json` per prompt) → `python -m ec.session stop --all-accept` (or `--all-skip`) as the between-session review gate.
+2. Per-condition `REVERIE_HOME` (the baseline never gets a brain) and isolated `XDG_DATA_HOME`/`XDG_STATE_HOME` (fresh agent context per prompt by default; `--continue-within-session` opts into `--continue`); provider `auth.json` copied into the isolated XDG dir.
+3. Agent config injected via `OPENCODE_CONFIG` overlay (`build_agent_config`, `reverie/run_ecbench.py:127-165`): the `ec` condition gets the EC MCP server (absolute venv python + PYTHONPATH + `REVERIE_HOME` + `REVERIE_REPO_PATH`/`REVERIE_BRANCH`) and the §28.9 AGENTS.md; the baseline gets **no** EC instructions and the `ec` server explicitly `enabled: false` (neutralizes a global install).
+4. Per session: `python -m reverie.session start` → run each prompt headlessly (`opencode run --dir {repo} --format json --auto {prompt}` by default; JSONL transcripts + `.meta.json` per prompt) → `python -m reverie.session stop --all-accept` (or `--all-skip`) as the between-session review gate.
 5. Outputs: `manifest.json` per condition (per-prompt transcripts, exit codes, durations, session CLI logs, diffusion warnings, `ec_stats` — canonical ECU count, edge counts by type, retrieval events, sessions) and a top-level `run.json`. Crash-safe resume via `--run-id` (completed prompts are skipped). `--dry-run` prints the plan.
 
 ### 11.3 The judge
@@ -987,7 +987,7 @@ Each metric 0.0–10.0 continuous with a mandatory evidence-based reason; output
 
 ### 11.4 Baselines and the exact v1/v2 numbers
 
-**Run 1 (v1 — "EMS", proactive injection; pre-v2):** on Mudit's summary, EMS won **22 of 30 prompts on raw score**, but metric decomposition exposed anchoring: Engineering Cognition Reuse **+2.214**, Engineering Quality **−0.589**, Repository Groundedness **−0.480**; worst in debugging — Prompt 23: **−4.17**, Prompt 24: **−2.08** (cited in `docs/SPEC.md` §11.3 with `[cite:f6100d2cb]`, in `docs/ASSESSMENT.md`, and in `~/.ec/AGENTS.md` itself). Conclusion: "the entire net positive came from reuse volume, not work quality… Remembering more is not the same as understanding better." This run designed v2's demand-driven architecture.
+**Run 1 (v1 — "EMS", proactive injection; pre-v2):** on Mudit's summary, EMS won **22 of 30 prompts on raw score**, but metric decomposition exposed anchoring: Engineering Cognition Reuse **+2.214**, Engineering Quality **−0.589**, Repository Groundedness **−0.480**; worst in debugging — Prompt 23: **−4.17**, Prompt 24: **−2.08** (cited in `docs/SPEC.md` §11.3 with `[cite:f6100d2cb]`, in `docs/ASSESSMENT.md`, and in `~/.reverie/AGENTS.md` itself). Conclusion: "the entire net positive came from reuse volume, not work quality… Remembering more is not the same as understanding better." This run designed v2's demand-driven architecture.
 
 **Run 2 (v2, demand-driven, headless)** — `runs/20260813-141550/`, glm-5.2 judge, 30 prompts, both conditions judged. Exact values computed from `runs/20260813-141550/scores.json`:
 
@@ -1010,9 +1010,9 @@ Reading (per `docs/handoffs/HANDOFF_PHASE_12.md` §3 and the prior reference): w
 
 ### 12.1 Agent-agnostic
 
-- **Protocol:** the MCP server speaks standard stdio MCP — NDJSON JSON-RPC 2.0 (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`; protocol version `2024-11-05`), hand-rolled because the `mcp` SDK is not in the pinned venv (D14). Any MCP-capable client can attach; the tool surface (4 tools with JSON Schemas, `ec/mcp_server.py:207-324`) is agent-neutral, and tool descriptions are written for the agent, not a specific product (§28.12).
-- **Installer abstraction:** `ec/install.py` has an `AgentSpec` registry (`AGENTS` list) with one subclass per agent — Claude Code (`~/.claude.json` mcpServers + `CLAUDE.md` import), Cursor (`~/.cursor/mcp.json` + `~/.cursor/rules/ec.md`), OpenCode (`~/.config/opencode/opencode.json` `mcp` key + `~/.config/opencode/AGENTS.md`), Codex (`~/.codex/config.toml` `[mcp_servers.ec]` + `~/.codex/AGENTS.md`). Detection = binary on PATH **or** marker file. Supporting a new agent = one new `AgentSpec` subclass with its two config writes; everything else is shared.
-- **Launch form:** `server_command()` returns the pip-installed `ec-mcp` console script when available (D45) or an absolute venv python + `PYTHONPATH` fallback (D28) — independent of any agent.
+- **Protocol:** the MCP server speaks standard stdio MCP — NDJSON JSON-RPC 2.0 (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`; protocol version `2024-11-05`), hand-rolled because the `mcp` SDK is not in the pinned venv (D14). Any MCP-capable client can attach; the tool surface (4 tools with JSON Schemas, `reverie/mcp_server.py:207-324`) is agent-neutral, and tool descriptions are written for the agent, not a specific product (§28.12).
+- **Installer abstraction:** `reverie/install.py` has an `AgentSpec` registry (`AGENTS` list) with one subclass per agent — Claude Code (`~/.claude.json` mcpServers + `CLAUDE.md` import), Cursor (`~/.cursor/mcp.json` + `~/.cursor/rules/ec.md`), OpenCode (`~/.config/opencode/opencode.json` `mcp` key + `~/.config/opencode/AGENTS.md`), Codex (`~/.codex/config.toml` `[mcp_servers.ec]` + `~/.codex/AGENTS.md`). Detection = binary on PATH **or** marker file. Supporting a new agent = one new `AgentSpec` subclass with its two config writes; everything else is shared.
+- **Launch form:** `server_command()` returns the pip-installed `reverie-mcp` console script when available (D45) or an absolute venv python + `PYTHONPATH` fallback (D28) — independent of any agent.
 - **EC's internal LLM is separate from the agent's LLM:** EC calls its own configured model for extraction/classification/mode detection; the agent's identity only lands in `provenance.origin_agent` metadata.
 
 ### 12.2 Model-agnostic
@@ -1023,18 +1023,18 @@ Reading (per `docs/handoffs/HANDOFF_PHASE_12.md` §3 and the prior reference): w
 
 ### 12.3 Hardcoded to coding agents / repositories
 
-- **Sessions are git-and-filesystem bound:** `(repo_path, branch)` detection shells out to `git rev-parse --show-toplevel` / `git branch --show-current` (`ec/session.py:69-107`); commit-hash stamping runs `git rev-parse HEAD` (D49); grounding verification reads the working tree and counts commits (`ec/grounding.py`). `EC_REPO_PATH`/`EC_BRANCH` env vars are the only bypass (used by tests/benchmark).
-- **The agent contract is a coding-agent conversation:** `ec_observe` expects `user_prompt` + `reasoning_trace` (+ optional `final_output`); the extractor prompt's signal catalog, Lifting Test, and few-shot examples are all engineering/coding-specific; scope levels and grounding (`files`/`symbols`) presume a codebase.
-- **Session lifecycle is user-controlled via CLI slash-command templates** (`/ec-start`/`/ec-stop`/`/ec-status`), which the installer writes into `~/.ec/commands/` — an agent-hosting convention, wired per agent.
+- **Sessions are git-and-filesystem bound:** `(repo_path, branch)` detection shells out to `git rev-parse --show-toplevel` / `git branch --show-current` (`reverie/session.py:69-107`); commit-hash stamping runs `git rev-parse HEAD` (D49); grounding verification reads the working tree and counts commits (`ec/grounding.py`). `REVERIE_REPO_PATH`/`REVERIE_BRANCH` env vars are the only bypass (used by tests/benchmark).
+- **The agent contract is a coding-agent conversation:** `reverie_observe` expects `user_prompt` + `reasoning_trace` (+ optional `final_output`); the extractor prompt's signal catalog, Lifting Test, and few-shot examples are all engineering/coding-specific; scope levels and grounding (`files`/`symbols`) presume a codebase.
+- **Session lifecycle is user-controlled via CLI slash-command templates** (`/ec-start`/`/ec-stop`/`/ec-status`), which the installer writes into `~/.reverie/commands/` — an agent-hosting convention, wired per agent.
 - **The 4 agents' config formats** (JSON/TOML shapes, import syntaxes) are hardcoded in the `AgentSpec` subclasses.
 
 ### 12.4 What would need to change for a different agent type
 
 1. **A new `AgentSpec`** for config wiring (or manual MCP config) — the protocol itself needs nothing.
 2. **Session anchoring** for non-git environments: replace/augment `detect_repo_branch` and the commit-hash storer with the new environment's identity/unit-of-work notion (the env-var override already provides an escape hatch).
-3. **`ec_observe` input mapping:** whatever the new agent calls "reasoning" must be passed as `reasoning_trace`; the tool schema is already loose strings.
+3. **`reverie_observe` input mapping:** whatever the new agent calls "reasoning" must be passed as `reasoning_trace`; the tool schema is already loose strings.
 4. **The extraction prompt** if the domain is not software engineering (the ECU definition, conclusion types, and grounding fields are engineering-specific; the confidence/retrieval machinery is domain-neutral).
-5. **AGENTS.md heuristics** (`~/.ec/AGENTS.md`) reference coding-specific behaviors (reading code first, /ec-start usage) and would need domain-appropriate rewording.
+5. **AGENTS.md heuristics** (`~/.reverie/AGENTS.md`) reference coding-specific behaviors (reading code first, /ec-start usage) and would need domain-appropriate rewording.
 6. **Grounding verification** assumes files/symbols on disk; a non-filesystem "repo" would need a different verifier behind `task_grounding`.
 
 What would *not* change: confidence math, retrieval ranking, diffusers, review gate, maintainer tasks (except grounding), clustering, schema, and the MCP tool surface — all are domain- and agent-neutral by construction.
@@ -1067,7 +1067,7 @@ Per-file distribution (512 total):
 | `test_phase2_extractor_diffuser.py` | 31 | prompt loading, validation, priors, full + lightweight diffusers, supersession, contradictions |
 | `test_phase11_production_gaps.py` | 31 | D40 prefilter fix, open-question UI (a–d), Ollama auto-setup, packaging/installer integration |
 | `test_phase10_reconsolidation.py` | 30 | supports/contradicts/supersedes paths, labile gate, pseudo-ECU, materialization, audit notes, MCP errors |
-| `test_phase5_install.py` | 26 | agent detection, per-agent config writes, ~/.ec bootstrap, dry-run, Ollama flow |
+| `test_phase5_install.py` | 26 | agent detection, per-agent config writes, ~/.reverie bootstrap, dry-run, Ollama flow |
 | `test_phase6_maintainer.py` | 24 | triggers, task order, logging, state baselines, startup check, thread lifecycle |
 | `test_llm_providers.py` | 24 | D48 dual wire format, keyless Ollama, fence stripping |
 | `test_phase4_review_gate.py` | 22 | grouping, promotion/edit, pending updates (D16), flags, cleanup |
@@ -1076,7 +1076,7 @@ Per-file distribution (512 total):
 | `test_phase13_opposing_edges.py` | 17 | D53 diffuser flags + review-gate cross-session scan |
 | `test_phase4_session.py` | 16 | start/resume/carry-over/stop, labile tracking, summary payload |
 | `test_phase13_mutators.py` | 15 | D55 grounding/evidence mutators |
-| `test_phase13_repair.py` | 13 | six `ec-repair` checks, dry-run, non-destructiveness |
+| `test_phase13_repair.py` | 13 | six `reverie repair` checks, dry-run, non-destructiveness |
 | `test_phase13_edge_pruning.py` | 13 | D52 triggers, delta reversal, supersedes never pruned |
 | `test_phase13_commit_hash.py` | 13 | D49 stamping end-to-end + staleness wakeup |
 | `test_ecbench_runner.py` | 12 | spec loading, condition configs, resume, dry-run |
@@ -1086,7 +1086,7 @@ Per-file distribution (512 total):
 | `test_phase13_config_cleanup.py` | 6 | D-config: decorative keys documented, `notify_on_dependent` wired |
 | `test_e2e_integration.py` | 6 | 1 live full-pipeline + 5 offline extended E2E (maintenance mid-session, grounding chain, reconsolidation via MCP, clustering population, controlled-forgetting retrieval) |
 
-Testing conventions (root `AGENTS.md`, handoffs): `EC_HOME` env redirect for isolation; `call_llm` mocked via `unittest.mock.patch` offline; `now` parameter injectable for all time-dependent logic; filesystem work in `tmp_path`; hermetic config (explicit `DEFAULT_CONFIG` copies rather than `get_config()`, which could read the user's `~/.ec/config.yaml`).
+Testing conventions (root `AGENTS.md`, handoffs): `REVERIE_HOME` env redirect for isolation; `call_llm` mocked via `unittest.mock.patch` offline; `now` parameter injectable for all time-dependent logic; filesystem work in `tmp_path`; hermetic config (explicit `DEFAULT_CONFIG` copies rather than `get_config()`, which could read the user's `~/.reverie/config.yaml`).
 
 ### 13.2 Spec requirements coverage
 
@@ -1132,7 +1132,7 @@ Two read-only compliance audits trace every actionable requirement to code + tes
 | D19 | Accept-with-edit preserves original in `metadata.review_edit`, re-embeds | HANDOFF_PHASE_4 |
 | D20 | Case-3 sets `competing_since`; gate sweep parks open_question | HANDOFF_PHASE_4 |
 | D21 | Promotion keeps the session ECU's id | HANDOFF_PHASE_4 |
-| D22 | Activation saved after every ec_query; rows deleted at close | HANDOFF_PHASE_4 |
+| D22 | Activation saved after every reverie_query; rows deleted at close | HANDOFF_PHASE_4 |
 | D23–D27 | Installer: direct merge-not-overwrite configs; verbatim spec-owned files; `--only`; `commands/` dir | HANDOFF_PHASE_5 |
 | D28 | Dev-mode MCP launch = absolute venv python + PYTHONPATH | HANDOFF_FIXES |
 | D29 | All classification calls at temperature 0.0 | HANDOFF_FIXES |
@@ -1142,14 +1142,14 @@ Two read-only compliance audits trace every actionable requirement to code + tes
 | D34 | Lazy decay, eager transitions | V2_COMPLETION_DESIGN |
 | D35 | Grounding on session start, per-repo 72h throttle | V2_COMPLETION_DESIGN |
 | D36 | Review grouping strategy scope/cluster with fallback | V2_COMPLETION_DESIGN |
-| D37 | `ec_reconsolidate` tool | V2_COMPLETION_DESIGN |
+| D37 | `reverie_reconsolidate` tool | V2_COMPLETION_DESIGN |
 | D38 | Unified `_diffuse_against_brain` entry point | V2_COMPLETION_DESIGN |
 | D39 | Labile set in session memory gates reconsolidation | V2_COMPLETION_DESIGN |
 | D40 | §17.2 prefilter unblocks different-scope pairs (grounding overlap / sim > 0.8) | V2_COMPLETION_DESIGN |
 | D41 | Open-question resolution UI (a–d) at the gate | V2_COMPLETION_DESIGN |
 | D42 | Ollama auto-setup when no Zen key | V2_COMPLETION_DESIGN |
 | D43/D44 | Repo reorg; root AGENTS.md | V2_COMPLETION_DESIGN |
-| D45 | pip-installable package; `ec-mcp` console script launch | V2_COMPLETION_DESIGN |
+| D45 | pip-installable package; `reverie-mcp` console script launch | V2_COMPLETION_DESIGN |
 | D46/D47 | Rapid commits; session-chained execution | V2_COMPLETION_DESIGN |
 | D48 | LLM wire format from model name (Anthropic vs OpenAI Chat) | PHASE_13_AUDIT_FIXES_DESIGN |
 | D49 | commit_hash stamped server-side at observe time | PHASE_13_AUDIT_FIXES_DESIGN |
@@ -1159,7 +1159,7 @@ Two read-only compliance audits trace every actionable requirement to code + tes
 | D53 | Opposing-edges decomposition flag | PHASE_13_AUDIT_FIXES_DESIGN |
 | D54 | Structural proximity: ≤5 one-hop extras after find_similar | PHASE_13_AUDIT_FIXES_DESIGN |
 | D55 | Grounding/evidence mutators (merge semantics, append-only) | PHASE_13_AUDIT_FIXES_DESIGN |
-| D56 | `rejection_summary` surfaced in ec_observe payload | PHASE_13_AUDIT_FIXES_DESIGN |
+| D56 | `rejection_summary` surfaced in reverie_observe payload | PHASE_13_AUDIT_FIXES_DESIGN |
 | D57 | `pending_review_count` in the summary payload | PHASE_13_AUDIT_FIXES_DESIGN |
 
 ## Appendix B — Console scripts and entry points
@@ -1168,11 +1168,11 @@ From `pyproject.toml:25-31`:
 
 | Script | Target | Purpose |
 |---|---|---|
-| `ec` | `ec.install:main` | Installer (agent detection + `~/.ec` bootstrap) |
-| `ec-mcp` | `ec.mcp_server:main` | MCP server launcher (used by agent configs when pip-installed, D45) |
+| `ec` | `ec.install:main` | Installer (agent detection + `~/.reverie` bootstrap) |
+| `reverie-mcp` | `ec.mcp_server:main` | MCP server launcher (used by agent configs when pip-installed, D45) |
 | `ec-start` / `ec-stop` / `ec-status` | `ec.session:main_start` / `main_stop` / `main_status` | Session lifecycle |
-| `ec-repair` | `ec.repair:main` | Brain integrity check (D51) |
-| `python -m ec.session` | CLI invoked by slash-command templates | start/stop/status with `--all-accept`/`--all-skip`/`--resolve-open-questions` |
-| `python -m ec.run_ecbench` | Benchmark runner | EC-Bench conditions |
+| `reverie repair` | `ec.repair:main` | Brain integrity check (D51) |
+| `python -m reverie.session` | CLI invoked by slash-command templates | start/stop/status with `--all-accept`/`--all-skip`/`--resolve-open-questions` |
+| `python -m reverie.run_ecbench` | Benchmark runner | EC-Bench conditions |
 
 Dependencies (`pyproject.toml:10-20`): `torch==2.2.2, numpy<2, scipy<1.13, scikit-learn<1.5, transformers<5, sentence-transformers==3.0.1, hdbscan>=0.8.33, requests, pyyaml` (Python ≥ 3.12). The pins exist for torch-2.2.2 ABI compatibility on the development machine and are asserted in the phase handoffs.

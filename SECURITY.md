@@ -13,7 +13,7 @@ the affected version. You will get a response as soon as possible.
 
 Reverie is a local-first tool. The security-relevant surfaces are:
 
-- **`~/.ec/ec.db`** — a single SQLite file holding your engineering
+- **`~/.reverie/reverie.db`** — a single SQLite file holding your engineering
   conclusions. It never leaves your machine by itself. Treat it as private:
   it may contain conclusions drawn from your proprietary code.
 - **LLM calls** — extraction, diffusion, review-gate and mode-detection calls

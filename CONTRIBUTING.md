@@ -19,17 +19,19 @@ pip install -e ".[dev]"
 Verify everything works:
 
 ```bash
-pytest tests/ -q          # ~500 tests, offline; live API tests auto-skip
-ruff check ec tests bench conftest.py
+pytest tests/ -q          # ~800 tests, offline; live API tests auto-skip
+ruff check reverie tests bench conftest.py
 ```
 
-The test suite runs fully offline: LLM calls are mocked, and the five live
+The test suite runs fully offline: LLM calls are mocked, and the live
 tests plus the end-to-end test skip unless the configured provider's key is
-set (`ec.llm.api_key` reads whichever `api_key_env` your `~/.ec/config.yaml`
-names — `OPENCODE_ZEN_API_KEY` for the default config, or
-`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`/`OPENROUTER_API_KEY`
-when you point the config at another registry provider).
-Use `EC_HOME` to redirect the brain directory to a temp path for isolation.
+set (`reverie.llm.api_key` reads whichever `api_key_env` your
+`~/.reverie/config.yaml` names — `OPENCODE_ZEN_API_KEY` for the default
+config, or `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`/
+`OPENROUTER_API_KEY` when you point the config at another registry
+provider). The end-to-end test also runs against a local Ollama model. Use
+`REVERIE_HOME` to redirect the brain directory to a temp path for
+isolation.
 
 ## Ground rules
 
@@ -39,32 +41,37 @@ honest:
 1. **Extraction over storage.** The interesting question is *what should be
    stored*, not *how to store more*. Every change must respect this.
 2. **Demand-driven, not proactive.** Cognition is never auto-injected; the
-   agent retrieves only when it decides to via `ec_query`.
+   agent retrieves only when it decides to via `reverie_query`.
 3. **Two brains, one review gate.** The session brain is ephemeral and
    unreviewed. The only path to the canonical brain is the human review gate
    → diffuser.
-4. **Confidence math lives in log-odds space** (`ec/confidence.py`). No
+4. **Confidence math lives in log-odds space** (`reverie/confidence.py`). No
    ad-hoc probability arithmetic elsewhere.
 5. **Schema changes must be additive** (`CREATE TABLE IF NOT EXISTS`,
    `ALTER TABLE ADD COLUMN`). Never `DROP TABLE` on existing databases.
-6. **Stable public surface.** Do not rename the `ec` package, its modules,
-   the console scripts (`ec`, `ec-mcp`, `ec-repair`, `ec-start`, `ec-stop`,
-   `ec-status`), the MCP tool names (`ec_observe`, `ec_query`,
-   `ec_get_summary`, `ec_reconsolidate`), config keys, or paths under
-   `~/.ec` — installers, agent instruction files and docs link to them.
+6. **Stable public surface.** Do not rename the `reverie` package, its
+   modules, the console scripts (`reverie`, `reverie-mcp`), the MCP tool
+   names (`reverie_observe`, `reverie_query`, `reverie_summary`,
+   `reverie_reconsolidate`, `reverie_set_repo_state`, `reverie_review_list`,
+   `reverie_review_decide`), config keys, or paths under `~/.reverie` —
+   installers, agent instruction files and docs link to them. User-facing
+   text says "conclusion"; "ECU" is internal.
 7. **Never commit secrets, personal data, or generated data** (`runs/`,
    `*.db`, transcripts).
 
 ## Style
 
 - Python 3.12, type hints, snake_case file names.
-- LLM calls go through `ec.llm.call_llm()` — never a direct HTTP call from
-  feature code. Temperature 0.0 for classification, 0.3 for extraction.
+- LLM calls go through `reverie.llm.call_llm()` — never a direct HTTP call from
+  feature code. Temperature 0.0 for classification, 0.3 for extraction —
+  except where a model rejects sampling parameters (post-Opus-4.6 Claude,
+  OpenAI reasoning models); the request shapes live in one function in
+  `reverie/llm.py`.
 - Tests live in `tests/` as `test_phase<N>_<topic>.py`; offline by default
   with `call_llm` mocked and `now` injectable for time-dependent logic.
 - `ruff` is the linter (configured in `pyproject.toml`).
-- Keep the installed agent instruction template (`AGENTS.md` block in
-  `ec/install.py`) byte-identical with its fenced block in
+- Keep the installed agent instruction template (`AGENTS_MD` in
+  `reverie/install.py`) byte-identical with its fenced block in
   `docs/SPEC.md` §28.9 — a test enforces this.
 
 ## Proposing changes
