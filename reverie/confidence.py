@@ -38,7 +38,7 @@ from .embeddings import from_blob
 if TYPE_CHECKING:
     from .brain import Brain
 
-log = logging.getLogger("ec.confidence")
+log = logging.getLogger("reverie.confidence")
 
 # §13.4 / §20.4: a supersession is "cosmetic" (reworded, same meaning) or
 # "semantic" (genuinely replaced). The spec defines the distinction but no

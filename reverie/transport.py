@@ -20,14 +20,14 @@ Import rules:
 
 Machine-specific data (D58): repo paths are absolute and differ between
 machines. Strategy: repo *states* travel by remote URL — the repos table
-records each repo's origin URL, and ``ec/repos.resolve_repo_state``
+records each repo's origin URL, and ``reverie/repos.resolve_repo_state``
 re-matches a never-seen path against exactly one known URL on first use
 (ambiguous or URL-less repos start fresh and are resolved by ``ec
 enable``). Sessions are tied to worktree paths on purpose (§28.5): rows
 pointing at paths that don't exist on this machine stay inert and are
 archived/ignored; the canonical memory is what meaningfully migrates.
 
-``ec reset`` always takes an automatic backup export first — even with
+``reverie reset`` always takes an automatic backup export first — even with
 ``--yes`` — and prints its path. ``--repo`` limits the wipe to one repo's
 sessions + candidates (long-term memory and the enablement row stay).
 """
@@ -45,7 +45,7 @@ from pathlib import Path
 
 from . import __version__, repos
 from .brain import Brain, BrainError
-from .config import SCHEMA_VERSION, ec_home, get_config
+from .config import SCHEMA_VERSION, reverie_home, get_config
 
 #: Export format revision (manifest["format"]); bump on breaking changes.
 EXPORT_FORMAT = 1
@@ -127,7 +127,7 @@ def _check_versions(manifest: dict, cfg) -> None:
             f"configured for \"{mine_model}\". Embeddings from different "
             "models are not comparable — import the export with the "
             "Reverie version that produced it, or reconfigure "
-            "~/.ec/config.yaml to match.")
+            "~/.reverie/config.yaml to match.")
     if int(manifest.get("embedding_dimensions") or 0) != mine_dims:
         raise TransportError(
             f"Cannot import: this export's embedding dimensions "
@@ -184,7 +184,7 @@ def import_brain(
                     "merging two brains is not supported. Re-run with "
                     "`--replace` (an automatic backup is taken first), or "
                     "import into an empty brain.")
-            backup_path = ec_home() / "backups" / (
+            backup_path = reverie_home() / "backups" / (
                 "pre-import-" + _utcnow().strftime("%Y%m%d-%H%M%S") + ".zip")
             export_brain(brain, backup_path, config=cfg)
             backup = str(backup_path)
@@ -227,7 +227,7 @@ def import_brain(
     print_fn(
         "Note: repo paths in the export are absolute paths from the "
         "exporting machine. Repos are re-matched by git remote URL on "
-        "first use; when ambiguous (or URL-less), run `ec enable` inside "
+        "first use; when ambiguous (or URL-less), run `reverie enable` inside "
         "the repo. Sessions tied to paths that don't exist on this "
         "machine stay inert.")
     return {"manifest": manifest, "counts": counts, "backup": backup}
@@ -243,7 +243,7 @@ def reset_brain(brain: Brain, *, repo: str | None = None, config=None,
     ALWAYS after taking an automatic backup export. Returns the backup
     path."""
     cfg = config or get_config()
-    backup_path = ec_home() / "backups" / (
+    backup_path = reverie_home() / "backups" / (
         "pre-reset-" + _utcnow().strftime("%Y%m%d-%H%M%S") + ".zip")
     export_brain(brain, backup_path, config=cfg)
     print_fn(f"Automatic backup written to {backup_path}")

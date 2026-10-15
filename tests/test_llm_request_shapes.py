@@ -1,7 +1,7 @@
 """feat/providers — per-provider request shapes.
 
 For every registry provider, the config sets ONLY `provider` (exercising the
-registry fill in ec.config) and these tests assert the exact request
+registry fill in reverie.config) and these tests assert the exact request
 call_llm issues: URL, headers and body. All offline — requests.post is
 mocked; keys are test-only env vars.
 """
@@ -15,15 +15,15 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.config import load_config
+from reverie.config import load_config
 
 KEY_ENV = "EC_REQUEST_SHAPE_KEY"
 
 
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
-    monkeypatch.setattr("ec.llm._sleep", lambda _s: None)
-    monkeypatch.setattr("ec.llm._jitter", lambda delay: delay)
+    monkeypatch.setattr("reverie.llm._sleep", lambda _s: None)
+    monkeypatch.setattr("reverie.llm._jitter", lambda delay: delay)
 
 
 def make_response(fmt: str):
@@ -90,8 +90,8 @@ def test_anthropic_format_providers(provider, tmp_path, monkeypatch):
     assert cfg.llm.base_url == base_url
     monkeypatch.setenv(KEY_ENV, "test-key")
     fake = FakePost("anthropic")
-    with patch("ec.llm.requests.post", fake):
-        from ec.llm import call_llm
+    with patch("reverie.llm.requests.post", fake):
+        from reverie.llm import call_llm
         assert call_llm("do the thing", system="be brief", config=cfg) == "ok"
     url, kwargs = fake.calls[0]
     assert url == f"{base_url}/messages"
@@ -117,8 +117,8 @@ def test_openai_format_providers(provider, tmp_path, monkeypatch):
     else:
         monkeypatch.setenv(KEY_ENV, "test-key")
     fake = FakePost("openai")
-    with patch("ec.llm.requests.post", fake):
-        from ec.llm import call_llm
+    with patch("reverie.llm.requests.post", fake):
+        from reverie.llm import call_llm
         assert call_llm("do the thing", system="be brief", config=cfg) == "ok"
     url, kwargs = fake.calls[0]
     assert url == f"{base_url}/chat/completions"

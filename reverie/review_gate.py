@@ -1,7 +1,7 @@
 """Human Review Gate (Spec §5/§7, §28.6/§28.7) — the only path into the
 Canonical Brain (§6.7: no bypass, no exceptions).
 
-Flow (§28.6 /ec-stop):
+Flow (§28.6 review-gate close path):
   1. candidate session ECUs (review_status pending|skipped) are grouped by
      topic for batch review (§7.4 — scope-path grouping, D18)
   2. accept → promote into the Canonical Brain (same id, D21; optional edit
@@ -38,7 +38,7 @@ from .brain import Brain, _now_iso
 from .config import get_config
 from .diffuser import DiffuserError
 
-log = logging.getLogger("ec.review_gate")
+log = logging.getLogger("reverie.review_gate")
 
 
 class ReviewGateError(RuntimeError):
@@ -943,7 +943,7 @@ def apply_review_decisions(
                     # Promotion stands (the human decided); diffusion is
                     # enrichment and can fail offline — recorded, not fatal.
                     # The metadata flag makes the ECU findable by
-                    # `ec-retry --rediffuse` (feat/providers).
+                    # `reverie retry --rediffuse` (feat/providers).
                     log.warning("diffusion failed for %s: %s", canonical_id, exc)
                     brain.update_ecu_metadata(canonical_id, diffusion_failed=True)
                     result.errors.append(
@@ -1029,7 +1029,7 @@ def diffusion_failure_warning(result: ReviewResult) -> str | None:
 
     A promoted-but-undiffused ECU has no edges and unchanged confidence —
     silent edge loss would corrupt benchmark results, so both the interactive
-    and non-interactive /ec-stop paths print this when it happens.
+    and non-interactive review paths print this when it happens.
     """
     if not result.undiffused:
         return None

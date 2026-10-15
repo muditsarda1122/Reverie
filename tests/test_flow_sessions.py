@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from ec.brain import Brain
-from ec.repos import archive_missing_branch_sessions, branch_exists
-from ec.session import SessionManager
+from reverie.brain import Brain
+from reverie.repos import archive_missing_branch_sessions, branch_exists
+from reverie.session import SessionManager
 
 T0 = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -27,13 +27,13 @@ REPO_A = "/repos/project-a"
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    monkeypatch.delenv("EC_REPO_PATH", raising=False)
-    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+    monkeypatch.delenv("REVERIE_BRANCH", raising=False)
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -156,7 +156,7 @@ def test_activation_decays_without_close(manager, brain):
 
 def test_detached_head_gets_own_session(manager, brain, repo):
     git(repo, "checkout", "--detach", "HEAD")
-    from ec.session import detect_repo_branch
+    from reverie.session import detect_repo_branch
     repo_path, branch = detect_repo_branch(cwd=repo)
     assert branch.startswith("detached:")
     sid = manager.ensure_session(repo_path, branch)["id"]
@@ -169,7 +169,7 @@ def test_two_worktrees_different_branches(manager, brain, repo, tmp_path):
     same repo *identity* for enablement (D58)."""
     wt = tmp_path / "wt"
     git(repo, "worktree", "add", "-b", "feat/wt", str(wt))
-    from ec.repos import resolve_repo
+    from reverie.repos import resolve_repo
     info_main = resolve_repo(cwd=repo)
     info_wt = resolve_repo(cwd=wt)
     assert info_main.repo_path != info_wt.repo_path

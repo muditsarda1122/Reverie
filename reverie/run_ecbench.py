@@ -4,18 +4,18 @@ everything for later scoring.
 EC-Bench v2: 30 prompts across 3 sequential sessions on a target repository
 (e.g. FastAPI), comparing an agent WITH EC against a stateless baseline.
 
-What the runner does, per condition (``ec`` | ``baseline``):
+What the runner does, per condition (``reverie`` | ``baseline``):
 
 1. gives the condition its own COPY of the target repo (``workdir/``) so the
    two conditions start from identical state and the original is untouched
-2. isolates ``EC_HOME`` per condition (the baseline never gets a brain)
+2. isolates ``REVERIE_HOME`` per condition (the baseline never gets a brain)
 3. generates an agent config and injects it via ``OPENCODE_CONFIG``:
-   - ``ec``: the EC MCP server (absolute venv python + PYTHONPATH + EC_HOME,
-     the B2 fix from ``ec.install.server_command``) plus the §28.9 AGENTS.md
-   - ``baseline``: no EC instructions, and the ``ec`` MCP server explicitly
+   - ``reverie``: the EC MCP server (absolute venv python + PYTHONPATH + REVERIE_HOME,
+     the B2 fix from ``reverie.install.server_command``) plus the §28.9 AGENTS.md
+   - ``baseline``: no EC instructions, and the ``reverie`` MCP server explicitly
      disabled (in case EC is installed in the user's global config)
-4. per session: ``ec.session start`` → run each prompt headlessly
-   (transcripts captured per prompt) → ``ec.session bench-close --review
+4. per session: ``reverie.session start`` → run each prompt headlessly
+   (transcripts captured per prompt) → ``reverie.session bench-close --review
    accept`` (the review gate + session close between bench sessions;
    ``--review skip`` also available — the user-facing flow never closes
    sessions, this hook exists only for the harness)
@@ -43,7 +43,7 @@ plan and writes nothing.
 
 Example:
 
-    .venv/bin/python -m ec.run_ecbench \\
+    .venv/bin/python -m reverie.run_ecbench \\
         --spec bench/ecbench_v2.json --repo ~/src/fastapi --branch main \\
         --runs-dir runs
 
@@ -73,9 +73,9 @@ REVIEWS = ("accept", "skip")
 
 
 def _runner_python() -> str:
-    """Absolute interpreter able to import ``ec`` for harness subprocesses.
+    """Absolute interpreter able to import ``reverie`` for harness subprocesses.
 
-    D45 moved ``server_command()`` to the ``ec-mcp`` console script for MCP
+    D45 moved ``server_command()`` to the ``reverie-mcp`` console script for MCP
     CONFIGS; the harness instead spawns real interpreters (session CLI,
     default agent template) and always needs an executable path, so it
     resolves the project venv python directly.
@@ -126,12 +126,12 @@ def load_spec(path: str | Path) -> dict:
 # per-condition agent config (injected via OPENCODE_CONFIG)
 # ---------------------------------------------------------------------------
 
-def build_agent_config(condition: str, ec_home: Path, repo: Path,
+def build_agent_config(condition: str, reverie_home: Path, repo: Path,
                        branch: str) -> dict:
     """The OpenCode config overlay for one condition.
 
-    ``ec``: the EC MCP server (absolute interpreter + PYTHONPATH + EC_HOME +
-    EC_REPO_PATH/EC_BRANCH so session resolution never depends on the spawn
+    ``reverie``: the EC MCP server (absolute interpreter + PYTHONPATH + REVERIE_HOME +
+    REVERIE_REPO_PATH/REVERIE_BRANCH so session resolution never depends on the spawn
     cwd) and the §28.9 AGENTS.md instructions. ``baseline``: no EC anything,
     and the server explicitly disabled to neutralize a global install.
     """
@@ -140,24 +140,24 @@ def build_agent_config(condition: str, ec_home: Path, repo: Path,
         return {
             "$schema": "https://opencode.ai/config.json",
             "mcp": {
-                "ec": {
+                "reverie": {
                     "type": "local",
                     "command": [python, *args],
                     "environment": {
                         **env,
-                        "EC_HOME": str(ec_home),
-                        "EC_REPO_PATH": str(repo),
-                        "EC_BRANCH": branch,
+                        "REVERIE_HOME": str(reverie_home),
+                        "REVERIE_REPO_PATH": str(repo),
+                        "REVERIE_BRANCH": branch,
                     },
                     "enabled": True,
                 },
             },
-            "instructions": [str(ec_home / "AGENTS.md")],
+            "instructions": [str(reverie_home / "AGENTS.md")],
         }
     return {
         "$schema": "https://opencode.ai/config.json",
         "mcp": {
-            "ec": {
+            "reverie": {
                 "type": "local",
                 "command": [python, *args],
                 "environment": env,
@@ -227,9 +227,9 @@ def _run_prompt(argv: list[str], cwd: Path, env: dict, timeout: int,
 # EC brain statistics (post-run, for the manifest)
 # ---------------------------------------------------------------------------
 
-def collect_ec_stats(ec_home: Path) -> dict:
+def collect_ec_stats(reverie_home: Path) -> dict:
     """Brain stats for the ec condition: what was observed, promoted, queried."""
-    db = ec_home / "ec.db"
+    db = reverie_home / "reverie.db"
     if not db.exists():
         return {"brain": "absent"}
     brain = Brain(db)
@@ -283,11 +283,11 @@ def run_condition(
     """Run all sessions of the spec under one condition. Returns the
     condition's manifest fragment (also written incrementally to disk)."""
     cond_dir = run_dir / condition
-    ec_home = cond_dir / "ec_home"
+    reverie_home = cond_dir / "reverie_home"
     workdir = (cond_dir / "workdir").resolve()
     logs = cond_dir / "logs"
     transcripts_dir = cond_dir / "transcripts"
-    for d in (ec_home, logs, transcripts_dir):
+    for d in (reverie_home, logs, transcripts_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     # 1. fresh copy of the target repo (identical starting state; the
@@ -300,20 +300,20 @@ def run_condition(
     python, _args, env = server_command()
     python = _runner_python()      # harness spawns interpreters, not scripts
     if condition == "ec":
-        (ec_home / "AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
-        Brain(ec_home / "ec.db").close()          # create the empty brain
+        (reverie_home / "AGENTS.md").write_text(AGENTS_MD, encoding="utf-8")
+        Brain(reverie_home / "reverie.db").close()          # create the empty brain
     config_path = cond_dir / "opencode_config.json"
     config_path.write_text(
-        json.dumps(build_agent_config(condition, ec_home, workdir, branch),
+        json.dumps(build_agent_config(condition, reverie_home, workdir, branch),
                    indent=2),
         encoding="utf-8",
     )
 
     session_cli_env = {
         **os.environ, **env,
-        "EC_HOME": str(ec_home),
-        "EC_REPO_PATH": str(workdir),
-        "EC_BRANCH": branch,
+        "REVERIE_HOME": str(reverie_home),
+        "REVERIE_REPO_PATH": str(workdir),
+        "REVERIE_BRANCH": branch,
         "HF_HUB_OFFLINE": os.environ.get("HF_HUB_OFFLINE", "1"),
     }
     agent_env = {
@@ -325,7 +325,7 @@ def run_condition(
         "XDG_STATE_HOME": str(cond_dir / "xdg_state"),
     }
     if condition == "ec":
-        agent_env["EC_HOME"] = str(ec_home)
+        agent_env["REVERIE_HOME"] = str(reverie_home)
     # the isolated XDG data dir must still carry the agent's provider auth
     src_auth = Path.home() / ".local" / "share" / "opencode" / "auth.json"
     if src_auth.exists():
@@ -338,7 +338,7 @@ def run_condition(
     manifest: dict = {
         "condition": condition,
         "workdir": str(workdir),
-        "ec_home": str(ec_home),
+        "reverie_home": str(reverie_home),
         "agent_config": str(config_path),
         "agent_cmd": agent_cmd,
         "review": review,
@@ -356,16 +356,16 @@ def run_condition(
         session_rec: dict = {"id": sid, "prompts": []}
 
         if condition == "ec":
-            # feat/flow: the user-facing `ec.session start` only enables
+            # feat/flow: the user-facing `reverie.session start` only enables
             # the repo (sessions are automatic); the bench uses its hidden
             # hook to enable + create the isolated session it measures.
             session_rec["start"] = _run_cli(
-                [python, "-m", "ec.session", "bench-start",
+                [python, "-m", "reverie.session", "bench-start",
                  "--repo", str(workdir), "--branch", branch],
                 session_cli_env, logs / f"{sid}_start.log", timeout=120)
             if session_rec["start"]["exit_code"] != 0:
                 raise BenchError(
-                    f"ec.session start failed for {sid} — see "
+                    f"reverie.session start failed for {sid} — see "
                     f"{session_rec['start']['log']}")
 
         for i, prompt in enumerate(session["prompts"], start=1):
@@ -394,11 +394,11 @@ def run_condition(
             _flush()
 
         if condition == "ec":
-            # feat/flow: the user-facing stop is now `ec review` (sessions
+            # feat/flow: the user-facing stop is now `reverie review` (sessions
             # stay open); the bench needs the old isolated-session
             # semantics, so it uses the hidden bench-close hook.
             session_rec["stop"] = _run_cli(
-                [python, "-m", "ec.session", "bench-close", "--repo",
+                [python, "-m", "reverie.session", "bench-close", "--repo",
                  str(workdir), "--branch", branch, "--review", review],
                 session_cli_env, logs / f"{sid}_stop.log", timeout=600)
             stop_log = Path(session_rec["stop"]["log"]).read_text(encoding="utf-8")
@@ -406,14 +406,14 @@ def run_condition(
                 "promoted without diffusion" in stop_log
             if session_rec["stop"]["exit_code"] != 0:
                 raise BenchError(
-                    f"ec.session stop failed for {sid} — see "
+                    f"reverie.session stop failed for {sid} — see "
                     f"{session_rec['stop']['log']}")
 
         manifest["sessions"].append(session_rec)
         _flush()
 
     if condition == "ec":
-        manifest["ec_stats"] = collect_ec_stats(ec_home)
+        manifest["ec_stats"] = collect_ec_stats(reverie_home)
     manifest["finished_at"] = _utcnow_iso()
     _flush()
     return manifest
@@ -425,7 +425,7 @@ def run_condition(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m ec.run_ecbench",
+        prog="python -m reverie.run_ecbench",
         description="EC-Bench runner: N prompts x M sessions, with-EC vs "
                     "baseline, transcripts + manifest for scoring.",
     )
@@ -484,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n[dry-run] condition '{condition}':")
             print(f"  config:  {cond_dir / 'opencode_config.json'}")
             print(json.dumps(
-                build_agent_config(condition, cond_dir / "ec_home",
+                build_agent_config(condition, cond_dir / "reverie_home",
                                    cond_dir / "workdir", args.branch),
                 indent=2))
             print(f"  workdir: {cond_dir / 'workdir'} (fresh copy of repo)")

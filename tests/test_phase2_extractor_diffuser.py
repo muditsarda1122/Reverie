@@ -1,8 +1,8 @@
 """Phase 2 tests — extractor, confidence math, full + lightweight diffuser.
 
 Run: .venv/bin/python -m pytest tests/ -v
-All LLM calls are mocked (unittest.mock.patch on ec.extractor.call_llm /
-ec.diffuser.call_llm). Real embeddings (HF cache, offline-safe). Two live
+All LLM calls are mocked (unittest.mock.patch on reverie.extractor.call_llm /
+reverie.diffuser.call_llm). Real embeddings (HF cache, offline-safe). Two live
 Zen API tests skip unless OPENCODE_ZEN_API_KEY is set.
 """
 
@@ -15,15 +15,15 @@ from unittest.mock import patch
 
 import pytest
 
-from ec import confidence as conf
-from ec.brain import Brain
-from ec.diffuser import (
+from reverie import confidence as conf
+from reverie.brain import Brain
+from reverie.diffuser import (
     DiffuserError,
     _contradiction_prefilter,
     diffuse_ecu,
     diffuse_session_ecu,
 )
-from ec.extractor import (
+from reverie.extractor import (
     ExtractionError,
     ExtractorError,
     count_evidence_sources,
@@ -32,7 +32,7 @@ from ec.extractor import (
     load_extractor_prompt,
     validate_ecu,
 )
-from ec.llm import LLMError, api_key
+from reverie.llm import LLMError, api_key
 
 
 def make_ecu(cognition: str, **overrides) -> dict:
@@ -60,14 +60,14 @@ def classifications_response(*rels: str) -> str:
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
@@ -232,7 +232,7 @@ class TestExtractor:
         })
 
     def test_extract_ecus_mocked(self):
-        with patch("ec.extractor.call_llm", return_value=self._mock_payload()) as m:
+        with patch("reverie.extractor.call_llm", return_value=self._mock_payload()) as m:
             result = extract_ecus(
                 {"prompt": "debug auth", "reasoning_trace": "...", "output": "fixed"},
                 origin_agent="test-agent",
@@ -256,7 +256,7 @@ class TestExtractor:
 
     def test_extract_ecus_fenced_json(self):
         fenced = "```json\n" + self._mock_payload() + "\n```"
-        with patch("ec.extractor.call_llm", return_value=fenced):
+        with patch("reverie.extractor.call_llm", return_value=fenced):
             result = extract_ecus({"output": "x"})
         assert len(result.ecus) == 2
 
@@ -275,19 +275,19 @@ class TestExtractor:
             "rejected_count": 0,
             "rejection_summary": "",
         })
-        with patch("ec.extractor.call_llm", return_value=payload):
+        with patch("reverie.extractor.call_llm", return_value=payload):
             result = extract_ecus({"output": "x"})
         assert len(result.ecus) == 1
         assert result.skipped_invalid == 2
 
     def test_extract_ecus_errors(self):
-        with patch("ec.extractor.call_llm", return_value="not json at all {{{"):
+        with patch("reverie.extractor.call_llm", return_value="not json at all {{{"):
             with pytest.raises(ExtractionError):
                 extract_ecus({"output": "x"})
-        with patch("ec.extractor.call_llm", return_value='{"no_ecus": true}'):
+        with patch("reverie.extractor.call_llm", return_value='{"no_ecus": true}'):
             with pytest.raises(ExtractionError):
                 extract_ecus({"output": "x"})
-        with patch("ec.extractor.call_llm", side_effect=LLMError("no key")):
+        with patch("reverie.extractor.call_llm", side_effect=LLMError("no key")):
             with pytest.raises(ExtractorError):
                 extract_ecus({"output": "x"})
         with pytest.raises(ExtractorError):
@@ -295,7 +295,7 @@ class TestExtractor:
 
     def test_extract_and_store_session(self, brain, model):
         session_id = brain.create_session("/tmp/myapp", "main")
-        with patch("ec.extractor.call_llm", return_value=self._mock_payload()):
+        with patch("reverie.extractor.call_llm", return_value=self._mock_payload()):
             result, ids = extract_and_store_session(
                 brain, session_id,
                 {"prompt": "debug auth", "output": "fixed"},
@@ -330,7 +330,7 @@ class TestFullDiffuser:
             "The auth race condition is caused by refresh completing before cache clear",
             confidence=0.63,
         )
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("supports")) as m:
             result = diffuse_ecu(brain, new, embedding_model=model)
         assert m.call_count == 1  # single batched classification call
@@ -372,7 +372,7 @@ class TestFullDiffuser:
             classifications_response("contradicts"),          # classification
             json.dumps({"verdict": "genuine_contradiction", "differentiator": ""}),
         ]
-        with patch("ec.diffuser.call_llm", side_effect=responses) as m:
+        with patch("reverie.diffuser.call_llm", side_effect=responses) as m:
             result = diffuse_ecu(brain, new, embedding_model=model)
         assert m.call_count == 2  # classification + Stage 2 adjudication
 
@@ -403,7 +403,7 @@ class TestFullDiffuser:
             "calls in the auth module",
             confidence=0.6,
         )
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("contradicts")) as m:
             result = diffuse_ecu(brain, new, embedding_model=model)
         assert m.call_count == 1  # classification only — no adjudication
@@ -443,7 +443,7 @@ class TestFullDiffuser:
             classifications_response("contradicts"),
             json.dumps({"verdict": "genuine_contradiction", "differentiator": ""}),
         ]
-        with patch("ec.diffuser.call_llm", side_effect=responses):
+        with patch("reverie.diffuser.call_llm", side_effect=responses):
             result = diffuse_ecu(brain, new, embedding_model=model)
         updated = brain.get_ecu(existing)
         assert updated["status"] == "superseded"
@@ -462,7 +462,7 @@ class TestFullDiffuser:
         new = self._insert_with_embedding(
             brain, model, "Auth tokens expire after 1 hour with sliding renewal",
             confidence=0.6)
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("supersedes")):
             result = diffuse_ecu(brain, new, embedding_model=model)
         assert brain.get_ecu(weak)["status"] == "superseded"
@@ -475,7 +475,7 @@ class TestFullDiffuser:
         new2 = self._insert_with_embedding(
             brain, model, "Session cookies must be HttpOnly, Secure and SameSite=Lax",
             confidence=0.6)
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("supersedes")):
             result2 = diffuse_ecu(brain, new2, embedding_model=model)
         assert brain.get_ecu(healthy)["status"] == "active"
@@ -493,7 +493,7 @@ class TestFullDiffuser:
             brain, model,
             "PostgreSQL message persistence scales to higher load with partitioning",
             confidence=0.5)
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("depends_on")):
             diffuse_ecu(brain, new, embedding_model=model)
         edge = brain.get_edges_from(new)[0]
@@ -505,14 +505,14 @@ class TestFullDiffuser:
     def test_unrelated_and_empty_brain(self, brain, model):
         lone = self._insert_with_embedding(
             brain, model, "Sourdough starter needs feeding twice daily")
-        with patch("ec.diffuser.call_llm") as m:
+        with patch("reverie.diffuser.call_llm") as m:
             result = diffuse_ecu(brain, lone, embedding_model=model)
         assert m.call_count == 0  # no candidates -> no LLM call
         assert result.candidates == 0
 
         other = self._insert_with_embedding(
             brain, model, "Database migrations must run before deployment")
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("unrelated")):
             result2 = diffuse_ecu(brain, other, embedding_model=model)
         assert brain.get_edges_from(other) == []
@@ -524,11 +524,11 @@ class TestFullDiffuser:
             brain, model, "Load tests confirm pool exhaustion at 10 connections",
             confidence=0.6)
         # garbage response -> unrelated, no crash
-        with patch("ec.diffuser.call_llm", return_value="sure! here's my take: ..."):
+        with patch("reverie.diffuser.call_llm", return_value="sure! here's my take: ..."):
             diffuse_ecu(brain, new, embedding_model=model)
         assert brain.get_edges_from(new) == []
         # invalid relationship label -> unrelated
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("admires")):
             diffuse_ecu(brain, new, embedding_model=model)
         assert brain.get_edges_from(new) == []
@@ -565,7 +565,7 @@ class TestLightweightDiffuser:
                      confidence=0.6),
             embedding=model.encode_one("stale auth tokens from refresh before cache clear"),
         )
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("supports")) as m:
             result = diffuse_session_ecu(brain, session_id, s2, embedding_model=model)
         assert m.call_count == 1  # one batched call (§4.4 step 3)
@@ -597,7 +597,7 @@ class TestLightweightDiffuser:
                      confidence=0.55),
             embedding=model.encode_one("auth refresh happens after cache clear observed"),
         )
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("contradicts", "contradicts")):
             result = diffuse_session_ecu(brain, session_id, s2, embedding_model=model)
 
@@ -628,7 +628,7 @@ class TestLightweightDiffuser:
                      confidence=0.5),
             embedding=model.encode_one("auth refresh ordering contradicts documentation"),
         )
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("contradicts")):
             diffuse_session_ecu(brain, session_id, s2, embedding_model=model)
         # §4.4: no challenged status, no supersedes/depends_on in session brain
@@ -653,7 +653,7 @@ class TestLightweightDiffuser:
         with pytest.raises(ValueError):
             brain.add_session_edge(session_id, s1, s1, "supports",
                                    target_type="nonsense")
-        from ec.brain import BrainError
+        from reverie.brain import BrainError
         with pytest.raises(BrainError):
             brain.add_session_edge(session_id, s1, "ghost", "supports")
         with pytest.raises(BrainError):
@@ -666,7 +666,7 @@ class TestLightweightDiffuser:
 
 @pytest.mark.skipif(
     not api_key(),
-    reason="no provider key configured (see ec.llm.api_key) — live test skipped",
+    reason="no provider key configured (see reverie.llm.api_key) — live test skipped",
 )
 class TestLive:
     def test_extractor_live(self):

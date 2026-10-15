@@ -1,8 +1,8 @@
-"""feat/flow tests — `ec uninstall` (review fix 10): undoes exactly what
-`ec install` did, nothing more.
+"""feat/flow tests — `reverie uninstall` (review fix 10): undoes exactly what
+`reverie install` did, nothing more.
 
 Run: .venv/bin/python -m pytest tests/test_flow_uninstall.py -v
-All offline, everything under tmp_path (sandboxed home + EC_HOME).
+All offline, everything under tmp_path (sandboxed home + REVERIE_HOME).
 """
 
 import json
@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from ec import install, uninstall
-from ec.brain import Brain
-from ec.transport import TransportError
+from reverie import install, uninstall
+from reverie.brain import Brain
+from reverie.transport import TransportError
 
 T0 = "2026-10-14T12:00:00+00:00"
 
@@ -26,13 +26,13 @@ T0 = "2026-10-14T12:00:00+00:00"
 def home(tmp_path, monkeypatch):
     h = tmp_path / "home"
     h.mkdir()
-    monkeypatch.setenv("EC_HOME", str(h / ".ec"))
+    monkeypatch.setenv("REVERIE_HOME", str(h / ".reverie"))
     return h
 
 
 @pytest.fixture()
-def ec_home(home):
-    return home / ".ec"
+def reverie_home(home):
+    return home / ".reverie"
 
 
 def json_text(data: dict) -> str:
@@ -85,20 +85,19 @@ def snapshot(home: Path) -> dict[str, bytes]:
     }
 
 
-def do_install(home, ec_home, **kwargs):
+def do_install(home, reverie_home, **kwargs):
     return install.run(
-        home=home, ec_home=ec_home, all_agents=True, no_verify=True,
+        home=home, reverie_home=reverie_home, all_agents=True, no_verify=True,
         which=lambda _b: None, input_fn=lambda _p="": "",
         print_fn=lambda s: None, environ={}, **kwargs)
 
 
-def do_uninstall(home, ec_home, **kwargs):
+def do_uninstall(home, reverie_home, **kwargs):
     """Run the uninstaller sandboxed; returns (exit_code, transcript).
-    The default confirmation answer is 'delete' (pass input_fn to
-    override)."""
+    The default confirmation answer is 'y' (pass input_fn to override)."""
     out: list[str] = []
-    kwargs.setdefault("input_fn", lambda _p="": "delete")
-    code = uninstall.run(home=home, ec_home=ec_home, print_fn=out.append,
+    kwargs.setdefault("input_fn", lambda _p="": "y")
+    code = uninstall.run(home=home, reverie_home=reverie_home, print_fn=out.append,
                          **kwargs)
     return code, "\n".join(out)
 
@@ -107,56 +106,60 @@ def do_uninstall(home, ec_home, **kwargs):
 # install → uninstall is byte-identical for files install only merged into
 # ---------------------------------------------------------------------------
 
-def test_uninstall_restores_harness_files_exactly(home, ec_home):
+def test_uninstall_restores_harness_files_exactly(home, reverie_home):
     seed_files(home)
     before = snapshot(home)
-    assert do_install(home, ec_home) == 0
+    assert do_install(home, reverie_home) == 0
     assert snapshot(home) != before             # install actually changed
-    # things: merged entries + new files (ec.md, ~/.ec/**)
+    # things: merged entries + new files (ec.md, ~/.reverie/**)
 
-    assert do_uninstall(home, ec_home)[0] == 0
+    assert do_uninstall(home, reverie_home)[0] == 0
     after = snapshot(home)
     # every harness file is byte-identical to before install
     for rel, content in before.items():
         assert rel in after, f"{rel} was removed by uninstall"
         assert after[rel] == content, f"{rel} differs after uninstall"
-    # and nothing new appeared outside ~/.ec
+    # and nothing new appeared outside ~/.reverie
     leftovers = {rel for rel in after
-                 if rel not in before and not rel.startswith(".ec/")}
+                 if rel not in before and not rel.startswith(".reverie/")}
     assert leftovers == set(), leftovers
 
 
-def test_uninstall_removes_entries_it_created(home, ec_home):
+def test_uninstall_removes_entries_it_created(home, reverie_home):
     seed_files(home)                            # markers → agents detected
-    do_install(home, ec_home)
+    do_install(home, reverie_home)
     claude = json.loads((home / ".claude.json").read_text())
-    assert "ec" in claude["mcpServers"]         # sanity: install merged it
-    _, transcript = do_uninstall(home, ec_home)
-    assert "Removed the ec MCP server" in transcript
-    assert (home / ".cursor" / "rules" / "ec.md").exists() is False
-    # command files live under ~/.ec (kept by default)
-    assert (ec_home / "commands" / "ec-start.md").exists()
+    assert "reverie" in claude["mcpServers"]    # sanity: install merged it
+    _, transcript = do_uninstall(home, reverie_home)
+    assert "Removed the reverie MCP server" in transcript
+    # the user-level command files are gone
+    assert not (home / ".claude" / "commands" / "reverie-review.md").exists()
+    assert not (home / ".cursor" / "commands" / "reverie-status.md").exists()
+    assert not (home / ".config" / "opencode" / "commands"
+                / "reverie-review.md").exists()
+    assert not (home / ".codex" / "prompts" / "reverie-review.md").exists()
+    assert not (home / ".gemini" / "commands" / "reverie-review.toml").exists()
 
 
 # ---------------------------------------------------------------------------
 # invalid / edited files are skipped, not damaged
 # ---------------------------------------------------------------------------
 
-def test_uninstall_skips_invalid_and_edited_files(home, ec_home):
+def test_uninstall_skips_invalid_and_edited_files(home, reverie_home):
     seed_files(home)
-    do_install(home, ec_home)
+    do_install(home, reverie_home)
     (home / ".claude.json").write_text("{not valid json")
-    (home / ".codex" / "config.toml").write_text("[mcp_servers.ec\nbroken")
+    (home / ".codex" / "config.toml").write_text("[mcp_servers.reverie\nbroken")
     edited = home / ".config" / "opencode" / "AGENTS.md"
     text = edited.read_text()
     edited.write_text(text.replace(
-        "engineering memory via ec_observe", "MY OWN EDIT LIVES HERE"))
+        "engineering memory via reverie_observe", "MY OWN EDIT LIVES HERE"))
     before = {
         p: p.read_bytes()
         for p in (home / ".claude.json", home / ".codex" / "config.toml",
                   edited)
     }
-    _, transcript = do_uninstall(home, ec_home)
+    _, transcript = do_uninstall(home, reverie_home)
     assert "not valid JSON" in transcript
     assert "not valid TOML" in transcript
     assert "edited after install" in transcript
@@ -164,15 +167,15 @@ def test_uninstall_skips_invalid_and_edited_files(home, ec_home):
         assert path.read_bytes() == content     # untouched, not damaged
     # the untouched files were still cleaned
     claude_md = home / ".claude" / "CLAUDE.md"
-    assert "@~/.ec/AGENTS.md" not in claude_md.read_text()
+    assert "@~/.reverie/AGENTS.md" not in claude_md.read_text()
 
 
 # ---------------------------------------------------------------------------
 # --delete-data: export first, then confirm, then remove
 # ---------------------------------------------------------------------------
 
-def seed_brain(ec_home: Path) -> None:
-    brain = Brain(ec_home / "ec.db")
+def seed_brain(reverie_home: Path) -> None:
+    brain = Brain(reverie_home / "reverie.db")
     brain.insert_ecu({
         "cognition": "a kept conclusion",
         "conclusion_type": "invariant",
@@ -183,10 +186,10 @@ def seed_brain(ec_home: Path) -> None:
     brain.close()
 
 
-def test_delete_data_exports_then_deletes(home, ec_home, tmp_path):
-    ec_home.mkdir(parents=True, exist_ok=True)
-    seed_brain(ec_home)
-    code, transcript = do_uninstall(home, ec_home, delete_data=True,
+def test_delete_data_exports_then_deletes(home, reverie_home, tmp_path):
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed_brain(reverie_home)
+    code, transcript = do_uninstall(home, reverie_home, delete_data=True,
                                     yes=True, export_dir=tmp_path)
     assert code == 0
     exports = list(tmp_path.glob("reverie-final-export-*.zip"))
@@ -194,77 +197,136 @@ def test_delete_data_exports_then_deletes(home, ec_home, tmp_path):
     assert str(exports[0]) in transcript
     with zipfile.ZipFile(exports[0]) as zf:
         assert set(zf.namelist()) == {"brain.db", "manifest.json"}
-    assert not ec_home.exists()                 # ~/.ec removed
-    assert "Removed ~/.ec" in transcript
+    assert not reverie_home.exists()                 # ~/.reverie removed
+    assert "Removed ~/.reverie" in transcript
 
 
-def test_delete_data_without_export_flag_skips_export(home, ec_home,
+def test_delete_data_without_export_flag_skips_export(home, reverie_home,
                                                       tmp_path):
-    ec_home.mkdir(parents=True, exist_ok=True)
-    seed_brain(ec_home)
-    code, _ = do_uninstall(home, ec_home, delete_data=True,
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed_brain(reverie_home)
+    code, _ = do_uninstall(home, reverie_home, delete_data=True,
                            no_export=True, yes=True, export_dir=tmp_path)
     assert code == 0
     assert not list(tmp_path.glob("reverie-final-export-*.zip"))
-    assert not ec_home.exists()
+    assert not reverie_home.exists()
 
 
-def test_failed_export_removes_nothing(home, ec_home, tmp_path, monkeypatch):
+def test_failed_export_removes_nothing(home, reverie_home, tmp_path, monkeypatch):
     seed_files(home)
-    ec_home.mkdir(parents=True, exist_ok=True)
-    seed_brain(ec_home)
-    assert do_install(home, ec_home) == 0
-    monkeypatch.setattr("ec.transport.export_brain",
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed_brain(reverie_home)
+    assert do_install(home, reverie_home) == 0
+    monkeypatch.setattr("reverie.transport.export_brain",
                         lambda *a, **k: (_ for _ in ()).throw(
                             TransportError("disk full")))
-    code, transcript = do_uninstall(home, ec_home, delete_data=True,
+    code, transcript = do_uninstall(home, reverie_home, delete_data=True,
                                     yes=True, export_dir=tmp_path)
     assert code == 1
     assert "Final export FAILED" in transcript
-    assert ec_home.exists()                     # ~/.ec untouched
+    assert reverie_home.exists()                     # ~/.reverie untouched
     claude = json.loads((home / ".claude.json").read_text())
-    assert "ec" in claude["mcpServers"]         # harness entries untouched
+    assert "reverie" in claude["mcpServers"]    # harness entries untouched
 
 
-def test_delete_data_requires_typing_delete(home, ec_home, tmp_path,
-                                            monkeypatch):
+def test_abort_leaves_everything_unchanged(home, reverie_home, tmp_path):
+    """Answering 'no' to the single confirmation aborts BEFORE anything is
+    touched: no export, no harness edits, memory intact."""
     seed_files(home)
-    ec_home.mkdir(parents=True, exist_ok=True)
-    seed_brain(ec_home)
-    assert do_install(home, ec_home) == 0
-    code, transcript = do_uninstall(home, ec_home, delete_data=True,
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed_brain(reverie_home)
+    assert do_install(home, reverie_home) == 0
+    before = snapshot(home)
+    code, transcript = do_uninstall(home, reverie_home, delete_data=True,
                                     export_dir=tmp_path,
                                     input_fn=lambda _p="": "no")
     assert code == 1
-    assert "your memory was NOT removed" in transcript
-    assert ec_home.exists()                     # aborted — memory kept
+    assert "Aborted" in transcript
+    assert not list(tmp_path.glob("reverie-final-export-*.zip"))
+    for rel, content in before.items():          # byte-identical everything
+        assert (home / rel).read_bytes() == content, rel
 
 
-# ---------------------------------------------------------------------------
-# --dry-run and idempotence
-# ---------------------------------------------------------------------------
+def test_confirmation_covers_whole_plan(home, reverie_home, tmp_path):
+    """The plan (harness entries + data) is printed BEFORE the single
+    confirmation, and one 'y' applies all of it."""
+    seed_files(home)
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed_brain(reverie_home)
+    assert do_install(home, reverie_home) == 0
+    out: list[str] = []
+    plan_at: list[int] = []
 
-def test_dry_run_writes_nothing(home, ec_home):
+    def scripted(prompt=""):
+        plan_at.append(len(out))                 # lines printed before ask
+        return "y"
+
+    code = uninstall.run(home=home, reverie_home=reverie_home,
+                         delete_data=True, export_dir=tmp_path,
+                         print_fn=out.append, input_fn=scripted)
+    transcript = "\n".join(out)
+    assert code == 0
+    assert len(plan_at) == 1                     # exactly one question
+    # the plan preceded the prompt and named the harnesses + the data step
+    plan = "\n".join(out[:plan_at[0]])
+    assert "The plan:" in plan
+    assert "Claude Code" in plan and "Gemini CLI" in plan
+    assert "final export" in plan
+    assert reverie_home.exists() is False        # applied in full
+    assert len(list(tmp_path.glob("reverie-final-export-*.zip"))) == 1
+
+
+def test_yes_skips_confirmation_but_not_the_export(home, reverie_home,
+                                                   tmp_path):
+    seed_files(home)
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed_brain(reverie_home)
+    assert do_install(home, reverie_home) == 0
+    code, transcript = do_uninstall(home, reverie_home, delete_data=True,
+                                    yes=True, export_dir=tmp_path,
+                                    input_fn=lambda _p="": (_ for _ in ()).throw(
+                                        AssertionError("no prompt expected")))
+    assert code == 0
+    assert not reverie_home.exists()
+    assert len(list(tmp_path.glob("reverie-final-export-*.zip"))) == 1
+
+
+def test_dry_run_shows_plan_and_changes_nothing(home, reverie_home, tmp_path):
+    seed_files(home)
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed_brain(reverie_home)
+    assert do_install(home, reverie_home) == 0
+    before = snapshot(home)
+    code, transcript = do_uninstall(home, reverie_home, delete_data=True,
+                                    yes=True, dry_run=True,
+                                    export_dir=tmp_path)
+    assert code == 0
+    assert "dry run" in transcript.lower()
+    assert not list(tmp_path.glob("reverie-final-export-*.zip"))
+    for rel, content in before.items():
+        assert (home / rel).read_bytes() == content, rel
+
+def test_dry_run_writes_nothing(home, reverie_home):
     seed_files(home)
     before = snapshot(home)
-    do_install(home, ec_home)
-    code, transcript = do_uninstall(home, ec_home, dry_run=True,
+    do_install(home, reverie_home)
+    code, transcript = do_uninstall(home, reverie_home, dry_run=True,
                                     delete_data=True, yes=True)
     assert code == 0
     assert "[dry-run]" in transcript
     after = snapshot(home)
     # nothing changed by the dry run: every file install created/edited is
-    # still exactly as install left it (and ~/.ec was not removed)
+    # still exactly as install left it (and ~/.reverie was not removed)
     assert after != before
-    assert ec_home.exists()
-    assert "would ask for confirmation" in transcript
+    assert reverie_home.exists()
+    assert "REMOVED after a final export" in transcript
 
 
-def test_uninstall_twice_is_harmless(home, ec_home):
+def test_uninstall_twice_is_harmless(home, reverie_home):
     seed_files(home)
-    do_install(home, ec_home)
-    assert do_uninstall(home, ec_home)[0] == 0
-    code, second = do_uninstall(home, ec_home)
+    do_install(home, reverie_home)
+    assert do_uninstall(home, reverie_home)[0] == 0
+    code, second = do_uninstall(home, reverie_home)
     assert code == 0
     assert "not present" in second
     assert "✓" not in second                    # nothing left to remove

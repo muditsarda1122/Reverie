@@ -13,11 +13,11 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 import numpy as np
 import pytest
 
-from ec.brain import Brain, BrainError
-from ec.config import get_base_prior, load_config
-from ec.embeddings import from_blob, get_embedding_model, to_blob
-from ec.llm import api_key, extract_json
-from ec.mode_detection import MODES, detect_mode, get_mode_params
+from reverie.brain import Brain, BrainError
+from reverie.config import get_base_prior, load_config
+from reverie.embeddings import from_blob, get_embedding_model, to_blob
+from reverie.llm import api_key, extract_json
+from reverie.mode_detection import MODES, detect_mode, get_mode_params
 
 
 def make_ecu(cognition: str, **overrides) -> dict:
@@ -47,7 +47,7 @@ def make_ecu(cognition: str, **overrides) -> dict:
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -148,7 +148,7 @@ class TestConfig:
 
 class TestBrain:
     def test_brain_auto_create(self, tmp_path):
-        b = Brain(tmp_path / "sub" / "dir" / "ec.db")  # nested dirs auto-created
+        b = Brain(tmp_path / "sub" / "dir" / "reverie.db")  # nested dirs auto-created
         try:
             assert b.journal_mode == "wal"
             expected = {
@@ -356,7 +356,7 @@ class TestModeDetection:
 
     @pytest.mark.skipif(
         not api_key(),
-        reason="no provider key configured (see ec.llm.api_key) — live test skipped",
+        reason="no provider key configured (see reverie.llm.api_key) — live test skipped",
     )
     def test_mode_detection_llm_live(self):
         mode = detect_mode("why does the server crash on startup under load")

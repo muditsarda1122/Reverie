@@ -1,13 +1,13 @@
 """Engineering Extractor (Spec Section 3 / §5.x).
 
-Loads the tested extraction prompt (``ec/prompts/extractor_prompt.md``) at
+Loads the tested extraction prompt (``reverie/prompts/extractor_prompt.md``) at
 runtime — the prompt is the extraction methodology (five-pass process,
 Lifting Test, signal catalog, self-review pass); this module is the plumbing
 around it:
 
 1. send the full interaction (prompt + reasoning trace + output + session
-   context, §5.2) to Claude Haiku 4.5 via ec.llm at temperature 0.3
-2. strip fences + parse JSON (ec.llm.extract_json)
+   context, §5.2) to Claude Haiku 4.5 via reverie.llm at temperature 0.3
+2. strip fences + parse JSON (reverie.llm.extract_json)
 3. validate each candidate ECU against §1 vocabularies (invalid ECUs are
    skipped with a warning — one malformed ECU must not lose the batch)
 4. assign initial confidence priors per §5.9 (base x scope modifier,
@@ -32,7 +32,7 @@ from . import confidence as conf
 from .config import CONCLUSION_TYPES, SCOPE_LEVELS, get_base_prior, get_config
 from .llm import LLMError, call_llm, extract_json, model_for
 
-log = logging.getLogger("ec.extractor")
+log = logging.getLogger("reverie.extractor")
 
 _PROMPT_FILENAME = "extractor_prompt.md"
 _PROMPT_ENV_VAR = "EC_EXTRACTOR_PROMPT"
@@ -77,7 +77,7 @@ def load_extractor_prompt(refresh: bool = False) -> str:
     """Load ``extractor_prompt.md`` at runtime (never paraphrased into code).
 
     Resolution order: ``EC_EXTRACTOR_PROMPT`` env var, package-relative
-    ``ec/prompts/`` (always works), cwd. Cached process-wide.
+    ``reverie/prompts/`` (always works), cwd. Cached process-wide.
     """
     global _prompt_cache
     if _prompt_cache is not None and not refresh:
@@ -94,7 +94,7 @@ def load_extractor_prompt(refresh: bool = False) -> str:
     raise ExtractorError(
         f"{_PROMPT_FILENAME} not found (searched: {searched}). The extractor "
         "prompt is the tested extraction methodology and must be loadable at "
-        f"runtime. Keep it in ec/prompts/ or set {_PROMPT_ENV_VAR}."
+        f"runtime. Keep it in reverie/prompts/ or set {_PROMPT_ENV_VAR}."
     )
 
 
@@ -307,10 +307,10 @@ def extract_and_store_session(
     ``commit_hash`` (D49): when given, stamped into every stored ECU's
     ``grounding.commit_hash`` after extraction and before storage — the
     server reads it from the session repo's HEAD; see
-    ec.mcp_server._current_commit_hash.
+    reverie.mcp_server._current_commit_hash.
 
     Lightweight diffusion of the stored ECUs is a separate step
-    (ec.diffuser.diffuse_session_ecu) — the Extractor never creates edges.
+    (reverie.diffuser.diffuse_session_ecu) — the Extractor never creates edges.
     """
     if embedding_model is None:
         from .embeddings import get_embedding_model

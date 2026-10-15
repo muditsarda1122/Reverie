@@ -22,10 +22,10 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-from ec import clustering as clustering_mod
-from ec import maintainer, review_gate
-from ec.brain import Brain, BrainError
-from ec.config import DEFAULT_CONFIG, AttrDict, _to_attrdict
+from reverie import clustering as clustering_mod
+from reverie import maintainer, review_gate
+from reverie.brain import Brain, BrainError
+from reverie.config import DEFAULT_CONFIG, AttrDict, _to_attrdict
 
 # ---------------------------------------------------------------------------
 # fixtures + helpers
@@ -59,7 +59,7 @@ def lenient_config():
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -569,6 +569,6 @@ class TestReviewGateClusterGrouping:
         assert [g.label for g in plan.groups] == ["repo:demo > module:m"]
 
     def test_unknown_session_raises(self, brain):
-        from ec.review_gate import ReviewGateError
+        from reverie.review_gate import ReviewGateError
         with pytest.raises(ReviewGateError):
             review_gate.group_for_review(brain, "no-such-session")

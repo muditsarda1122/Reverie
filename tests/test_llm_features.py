@@ -15,8 +15,8 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.config import DEFAULT_CONFIG, _to_attrdict
-from ec.llm import (
+from reverie.config import DEFAULT_CONFIG, _to_attrdict
+from reverie.llm import (
     LLMError,
     _api_format,
     _backoff_delay,
@@ -34,8 +34,8 @@ KEY_ENV = "EC_TEST_LLM_KEY"
 def _no_sleep(monkeypatch):
     """Retry tests count attempts, never sleep."""
     sleeps: list[float] = []
-    monkeypatch.setattr("ec.llm._sleep", sleeps.append)
-    monkeypatch.setattr("ec.llm._jitter", lambda delay: delay)
+    monkeypatch.setattr("reverie.llm._sleep", sleeps.append)
+    monkeypatch.setattr("reverie.llm._jitter", lambda delay: delay)
     return sleeps
 
 
@@ -94,7 +94,7 @@ class TestWireFormatOverride:
                           base_url="https://gw.example/v1",
                           wire_format="openai")
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)) as m:
             call_llm("x", config=cfg)
         assert m.call_args.args[0] == "https://gw.example/v1/chat/completions"
@@ -130,7 +130,7 @@ class TestReasoningParams:
             self, monkeypatch):
         cfg = make_config(model="gpt-5-mini", base_url="https://api.example/v1")
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)) as m:
             call_llm("x", config=cfg)
         body = m.call_args.kwargs["json"]
@@ -142,7 +142,7 @@ class TestReasoningParams:
         cfg = make_config(model="gpt-4o-mini",
                           base_url="https://api.example/v1")
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)) as m:
             call_llm("x", config=cfg)
         body = m.call_args.kwargs["json"]
@@ -154,7 +154,7 @@ class TestReasoningParams:
         cfg = make_config(model="gpt-4o-mini", openai_reasoning=True,
                           base_url="https://api.example/v1")
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)) as m:
             call_llm("x", config=cfg)
         assert "max_completion_tokens" in m.call_args.kwargs["json"]
@@ -163,7 +163,7 @@ class TestReasoningParams:
         cfg = make_config(model="gpt-5-mini", openai_reasoning=False,
                           base_url="https://api.example/v1")
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)) as m:
             call_llm("x", config=cfg)
         body = m.call_args.kwargs["json"]
@@ -172,7 +172,7 @@ class TestReasoningParams:
     def test_anthropic_requests_are_never_reshaped(self, monkeypatch):
         cfg = make_config(model="claude-haiku-4-5")   # reasoning rule is openai-only
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=ANTHROPIC_PAYLOAD)) as m:
             call_llm("x", config=cfg)
         body = m.call_args.kwargs["json"]
@@ -206,13 +206,13 @@ class TestPerTaskModels:
         cfg = make_config(model="main-model",
                           base_url="https://api.example/v1")
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)) as m:
             call_llm("x", config=cfg, model="other-model")
         assert m.call_args.kwargs["json"]["model"] == "other-model"
 
     def test_extractor_passes_extraction_model(self, monkeypatch):
-        from ec import extractor
+        from reverie import extractor
         cfg = make_config(model="main-model", models={
             "extraction": "strong-extractor",
             "classification": None,
@@ -221,14 +221,14 @@ class TestPerTaskModels:
         monkeypatch.setenv(KEY_ENV, "k")
         with patch.object(extractor, "load_extractor_prompt",
                           return_value="prompt"):
-            with patch("ec.extractor.call_llm",
+            with patch("reverie.extractor.call_llm",
                        return_value='{"ecus": []}') as m:
                 extractor.extract_ecus(
                     {"prompt": "p"}, config=cfg)
         assert m.call_args.kwargs.get("model") == "strong-extractor"
 
     def test_classifier_passes_classification_model(self, monkeypatch):
-        from ec import diffuser
+        from reverie import diffuser
         cfg = make_config(model="main-model", models={
             "extraction": None,
             "classification": "cheap-classifier",
@@ -243,7 +243,7 @@ class TestPerTaskModels:
                    "conclusion_type": "pattern",
                    "scope": {"level": "repo", "path": "r"},
                    "confidence": 0.5})]
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value='{"classifications": []}') as m:
             diffuser._classify_pairs(pairs, diffuser.CLASSIFICATION_SYSTEM,
                                      diffuser._RELATIONSHIPS, cfg)
@@ -294,7 +294,7 @@ class TestKeyGate:
         cfg = make_config(model="gpt-4o-mini", provider="openai",
                           api_key_env=KEY_ENV)
         monkeypatch.delenv(KEY_ENV, raising=False)
-        with patch("ec.llm.requests.post") as post:
+        with patch("reverie.llm.requests.post") as post:
             with pytest.raises(LLMError) as exc:
                 call_llm("x", config=cfg)
         post.assert_not_called()
@@ -320,20 +320,20 @@ class TestRetry:
         cfg = self._cfg()
         responses = [FakeResponse(429, {}, {"Retry-After": "2"}),
                      FakeResponse(payload=OPENAI_PAYLOAD)]
-        with patch("ec.llm.requests.post", side_effect=responses) as m:
+        with patch("reverie.llm.requests.post", side_effect=responses) as m:
             assert call_llm("x", config=cfg) == "hi"
         assert m.call_count == 2
 
     def test_500_then_success(self, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    side_effect=[FakeResponse(503, {}),
                                 FakeResponse(payload=OPENAI_PAYLOAD)]):
             assert call_llm("x", config=self._cfg()) == "hi"
 
     def test_retries_exhausted_raises(self, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(500, {})) as m:
             with pytest.raises(LLMError, match="HTTP 500"):
                 call_llm("x", config=self._cfg())
@@ -342,14 +342,14 @@ class TestRetry:
     def test_timeout_then_success(self, monkeypatch):
         import requests as _requests
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    side_effect=[_requests.Timeout("read timed out"),
                                 FakeResponse(payload=OPENAI_PAYLOAD)]):
             assert call_llm("x", config=self._cfg()) == "hi"
 
     def test_no_retry_on_4xx(self, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(401, {})) as m:
             with pytest.raises(LLMError, match="HTTP 401"):
                 call_llm("x", config=self._cfg())
@@ -357,7 +357,7 @@ class TestRetry:
 
     def test_attempts_configurable(self, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "k")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(429, {})) as m:
             with pytest.raises(LLMError):
                 call_llm("x", config=self._cfg(retry_attempts=1))
@@ -366,7 +366,7 @@ class TestRetry:
     def test_backoff_is_exponential_and_capped(self, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "k")
         cfg = self._cfg(retry_backoff=1.0, retry_backoff_cap=4.0)
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(429, {})) as m:
             with pytest.raises(LLMError):
                 call_llm("x", config=cfg)
@@ -386,8 +386,8 @@ class TestRetry:
         """The three exhausted retries produce exactly two sleeps, no real time."""
         monkeypatch.setenv(KEY_ENV, "k")
         sleeps: list[float] = []
-        monkeypatch.setattr("ec.llm._sleep", sleeps.append)
-        with patch("ec.llm.requests.post",
+        monkeypatch.setattr("reverie.llm._sleep", sleeps.append)
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(429, {})):
             with pytest.raises(LLMError):
                 call_llm("x", config=self._cfg())

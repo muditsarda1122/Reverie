@@ -2,7 +2,7 @@
 Input 2, §8.5 third context; design doc Section 5, D37/D38/D39).
 
 Retrieval makes a canonical ECU labile: when the agent discovers new evidence
-about a previously retrieved ECU during the session, ``ec_reconsolidate``
+about a previously retrieved ECU during the session, ``reverie_reconsolidate``
 feeds that evidence back through the Diffuser. The change is written to the
 Canonical Brain immediately — the ECU was already human-reviewed when it
 entered the brain; reconsolidation is an evidence update, not a new ECU
@@ -52,7 +52,7 @@ from .diffuser import (
 )
 from .embeddings import from_blob
 
-log = logging.getLogger("ec.reconsolidation")
+log = logging.getLogger("reverie.reconsolidation")
 
 #: How much evidence text is kept in the metadata audit note (the full text
 #: lives with the agent; the note only needs to identify the update).
@@ -146,7 +146,7 @@ def _append_audit_note(brain, ecu_id: str, relationship: str, evidence: str,
         "relationship": relationship,
         "evidence": evidence[:MAX_EVIDENCE_NOTE],
         "confidence_delta": round(delta, 6),
-        "via": "ec_reconsolidate",
+        "via": "reverie_reconsolidate",
     })
     brain.update_ecu_metadata(ecu_id, reconsolidations=history)
 
@@ -235,7 +235,7 @@ def reconsolidate(
 
     if not isinstance(evidence, str) or not evidence.strip():
         raise ReconsolidationError(
-            "ec_reconsolidate requires 'evidence' (a non-empty description of "
+            "reverie_reconsolidate requires 'evidence' (a non-empty description of "
             "what you found and why it affects the ECU)"
         )
     evidence = evidence.strip()
@@ -244,7 +244,7 @@ def reconsolidate(
     if target is None:
         raise ReconsolidationError(
             f"No canonical ECU with id {ecu_id}. Use the ecu_id exactly as it "
-            "appeared in the ec_query result."
+            "appeared in the reverie_query result."
         )
     if target["status"] not in RETRIEVABLE_STATUSES:
         raise ReconsolidationError(

@@ -11,7 +11,7 @@ Two wire formats cover every supported backend:
 The format is derived from the model name (``_api_format``) unless
 ``llm.wire_format`` is set, in which case the config wins — this is what
 allows ``claude-*`` models on OpenAI-compatible gateways. The ``provider``
-config key selects a registry entry (``ec/providers.py``): unset ``llm``
+config key selects a registry entry (``reverie/providers.py``): unset ``llm``
 fields are filled from it, and the registry tells the client whether the
 provider needs a key (so a missing key surfaces as a clear message instead
 of a raw 401).
@@ -20,7 +20,7 @@ Retries: transient failures (429, 5xx, timeouts, connection errors) are
 retried with capped exponential backoff and jitter, honouring ``Retry-After``
 when the server sends one. Other 4xx errors are never retried. Policy keys:
 ``llm.retry_attempts`` / ``retry_backoff`` / ``retry_backoff_cap``. Tests
-inject time by patching ``ec.llm._sleep`` / ``ec.llm._jitter``.
+inject time by patching ``reverie.llm._sleep`` / ``reverie.llm._jitter``.
 
 Temperature: 0.3 for extraction/diffusion, 0.0 for mode detection
 (config keys llm.temperature / llm.temperature_mode_detection).
@@ -41,7 +41,7 @@ import requests
 from . import providers
 from .config import get_config
 
-log = logging.getLogger("ec.llm")
+log = logging.getLogger("reverie.llm")
 
 #: Injectable so tests stay fast and deterministic (monkeypatch these).
 _sleep = time.sleep
@@ -171,11 +171,11 @@ def key_missing(config=None) -> str | None:
     if _is_local_base_url(cfg.llm.base_url):
         return None
     if _api_format(cfg.llm.model, cfg) == "anthropic":
-        return cfg.llm.api_key_env or "EC_LLM_API_KEY"
+        return cfg.llm.api_key_env or "REVERIE_LLM_API_KEY"
     entry = providers.get(cfg.llm.provider)
     if entry is not None and not entry.key_required:
         return None
-    return cfg.llm.api_key_env or "EC_LLM_API_KEY"
+    return cfg.llm.api_key_env or "REVERIE_LLM_API_KEY"
 
 
 def _is_local_base_url(base_url: str | None) -> bool:
@@ -271,7 +271,7 @@ def call_llm(
     """Single-turn call to the configured LLM. Returns the text content.
 
     ``model`` (optional) overrides the configured model for this one call —
-    the per-task overrides in ``ec.llm.model_for`` feed through here. The
+    the per-task overrides in ``reverie.llm.model_for`` feed through here. The
     contract stays string-in, string-out.
 
     Routes to the correct wire format based on the effective model (D48),

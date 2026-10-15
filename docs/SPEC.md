@@ -2639,20 +2639,21 @@ args = ["-m", "ec.mcp_server"]
 This is the complete `~/.ec/AGENTS.md` file. The install script writes this verbatim. Development should produce this file exactly.
 
 ```markdown
-# Engineering Cognition — Agent Instructions
+# Reverie — Agent Instructions
 
-EC is an MCP server providing engineering memory for your codebase.
-It stores Engineering Cognition Units (ECUs) — conclusions, not facts —
-and retrieves them when you need them.
+Reverie is an MCP server providing engineering memory for your codebase.
+It stores engineering conclusions (the internal record is an Engineering
+Cognition Unit, ECU) — conclusions, not facts — and retrieves them when
+you need them.
 
-EC provides seven MCP tools:
-- ec_observe: Extract engineering conclusions from your reasoning
-- ec_query: Retrieve relevant engineering cognition
-- ec_get_summary: Get brain statistics at session start
-- ec_reconsolidate: Update a retrieved ECU with new evidence
-- ec_set_repo_state: Record the user's enablement answer for a repo
-- ec_review_list: Show the user's pending review candidates
-- ec_review_decide: Apply review decisions the user stated
+Reverie provides seven MCP tools:
+- reverie_observe: Extract engineering conclusions from your reasoning
+- reverie_query: Retrieve relevant engineering cognition
+- reverie_summary: Get brain statistics at session start
+- reverie_reconsolidate: Update a retrieved conclusion with new evidence
+- reverie_set_repo_state: Record the user's enablement answer for a repo
+- reverie_review_list: Show the user's pending review candidates
+- reverie_review_decide: Apply review decisions the user stated
 
 ## Repo Path — Pass It on Every Call
 
@@ -2668,15 +2669,15 @@ a tool call reports that a repo is undecided, ask the user exactly:
 Reverie isn't on for this repo. Turn it on? (yes / not now / never)
 
 Ask this question AT MOST ONCE per conversation. Record the answer with
-ec_set_repo_state:
+reverie_set_repo_state:
 - "yes" -> state="enabled"
 - "not now" -> state="not_now" (stays off for now; do not ask again in
   this conversation)
 - "never" -> state="disabled" (fully off for this repo: nothing is
   captured, retrieved, or injected; existing memory is kept)
 
-If a tool response reports the repo is disabled, do nothing with EC in
-that repo and do not ask again.
+If a tool response reports the repo is disabled, do nothing with
+Reverie in that repo and do not ask again.
 
 ## Sessions Are Automatic
 
@@ -2684,13 +2685,11 @@ In an enabled repo, every branch has a session that is created
 automatically on the first tool call and never needs closing. Switching
 branches mid-conversation switches session memory; long-term memory
 stays shared across branches. Never suggest starting or stopping a
-session. (For compatibility, `ec-start` enables the repo and shows
-status, and `ec-stop` is an alias for `ec review` — do not suggest
-either unless the user asks.)
+session — there is nothing to start or stop.
 
-## When to Call ec_observe
+## When to Call reverie_observe
 
-Call ec_observe AFTER you:
+Call reverie_observe AFTER you:
 - Discover a non-obvious invariant or dependency
 - Debug a tricky issue and find the root cause
 - Make an architectural decision with rationale
@@ -2700,20 +2699,20 @@ Call ec_observe AFTER you:
 Pass your reasoning trace (your thinking, decisions, and rationale) — not
 just the final code output. The Extractor lifts observations into conclusions.
 
-Do NOT call ec_observe for:
+Do NOT call reverie_observe for:
 - Simple code changes with no insight
-- Things already captured in existing ECUs
+- Things already captured in existing conclusions
 - Pure factual observations (e.g., "this function returns a string")
 - Every single response — only when you have engineering insight worth saving
 
-## When to Call ec_query
+## When to Call reverie_query
 
-Call ec_query when you recognize a gap that past engineering cognition might fill.
-Read the relevant code files FIRST. Do NOT call ec_query before you have grounded
-yourself in the repository. EC cognition is a supplement to your understanding,
-not a replacement for reading the code.
+Call reverie_query when you recognize a gap that past engineering cognition might fill.
+Read the relevant code files FIRST. Do NOT call reverie_query before you have grounded
+yourself in the repository. Reverie's memory is a supplement to your
+understanding, not a replacement for reading the code.
 
-Call ec_query AFTER reading the code, when:
+Call reverie_query AFTER reading the code, when:
 - You're about to make a decision between multiple approaches
 - You're debugging and the cause isn't obvious from the code alone
 - You see a pattern in the code you don't recognise
@@ -2723,7 +2722,7 @@ Call ec_query AFTER reading the code, when:
 - You're planning an architectural change and want to check for existing
   architectural decisions or constraints
 
-Do NOT call ec_query:
+Do NOT call reverie_query:
 - Before you have read the relevant code files (this causes anchoring bias)
 - For simple code changes with no engineering insight needed
 - On every single response — only when you genuinely need past context
@@ -2739,62 +2738,63 @@ Pass a natural language query describing what you want to know. Be specific.
 than "dependency injection." The query is embedded and compared semantically —
 precise engineering questions retrieve better than single keywords.
 
-If ec_query returns no results, proceed normally — this means EC has no relevant
-cognition yet. EC starts empty and builds up over sessions.
+If reverie_query returns no results, proceed normally — this means Reverie
+has no relevant memory yet. It starts empty and builds up over sessions.
 
-## When to Call ec_reconsolidate
+## When to Call reverie_reconsolidate
 
-Call ec_reconsolidate when you discover that a previously retrieved ECU needs
-updating based on what you've found in the current codebase. This is how EC
-stays current — beliefs that are no longer accurate get corrected.
+Call reverie_reconsolidate when you discover that a previously retrieved
+conclusion needs updating based on what you've found in the current
+codebase. This is how Reverie stays current — beliefs that are no longer
+accurate get corrected.
 
-Call ec_reconsolidate when:
-- You verified a retrieved ECU against the code and found it's no longer accurate
-- You discovered new evidence that strengthens a retrieved ECU
-- You discovered new evidence that contradicts a retrieved ECU
-- The code an ECU is grounded in has changed, and the conclusion needs updating
+Call reverie_reconsolidate when:
+- You verified a retrieved conclusion against the code and found it's no longer accurate
+- You discovered new evidence that strengthens a retrieved conclusion
+- You discovered new evidence that contradicts a retrieved conclusion
+- The code a conclusion is grounded in has changed, and the conclusion needs updating
 
-Pass the ECU ID (from the ec_query result), your evidence (your reasoning about
+Pass the ECU ID (from the reverie_query result), your evidence (your reasoning about
 what changed), and optionally the relationship (supports/contradicts/supersedes).
 
-Do NOT call ec_reconsolidate for:
-- New insights unrelated to a previously retrieved ECU (use ec_observe)
-- ECUs you haven't retrieved in this session (ec_query first)
+Do NOT call reverie_reconsolidate for:
+- New insights unrelated to a previously retrieved conclusion (use reverie_observe)
+- Conclusions you haven't retrieved in this session (reverie_query first)
 - Simple code changes with no impact on engineering conclusions
 
-If ec_reconsolidate is not available (older EC version), use ec_observe to record
+If reverie_reconsolidate is not available, use reverie_observe to record
 the new finding — the Diffuser will handle the relationship at review time.
 
-## When to Call ec_get_summary
+## When to Call reverie_summary
 
-Call ec_get_summary ONCE at session start to see what EC already knows.
-This helps you decide whether to ec_query for specific context before
-starting work. Returns brain statistics, not individual ECUs.
+Call reverie_summary ONCE at session start to see what Reverie already
+knows. This helps you decide whether to reverie_query for specific context
+before starting work. Returns brain statistics, not individual conclusions.
 
 If the response contains a pending-review backlog line (counts only),
 mention it to the user AT MOST ONCE per conversation and offer two ways
-to review: run `ec review` in a terminal, or say "show my Reverie
+to review: run `reverie review` in a terminal, or say "show my Reverie
 candidates" here. Counts only — never candidate contents.
 
 ## Review — The Human Decides
 
 Observations are stored as review candidates, never promoted
 automatically. The user reviews them:
-- in a terminal with `ec review`, or
+- in a terminal with `reverie review`, or
 - through you: when the user asks to see their Reverie candidates, call
-  ec_review_list and show EVERY candidate's full conclusion text before
+  reverie_review_list and show EVERY candidate's full conclusion text before
   asking what they want to do.
 
 Rules for review through you:
-- Relay ONLY the decisions the user actually states, via ec_review_decide.
+- Relay ONLY the decisions the user actually states, via reverie_review_decide.
 - NEVER decide on the user's behalf.
 - NEVER bulk-accept unless the user explicitly asked for that group.
 - Be honest about the limits: Reverie cannot verify who made a decision;
   every decision is recorded with its channel (tui, agent, or cli).
 
-## Reading EC Output
+## Reading Reverie Output
 
-When ec_query returns ECUs, interpret them as follows:
+When reverie_query returns conclusions, interpret them as follows:
 
 ### Confidence levels:
 - High (>0.7): Reliable, act on this. Verify grounding if the decision is critical.
@@ -2805,49 +2805,51 @@ When ec_query returns ECUs, interpret them as follows:
 ### Status indicators:
 - active: Normal, current belief. Safe to use.
 - challenged: Contradicting evidence exists. Be careful — this belief
-  may be wrong. Check for a newer ECU that might supersede it.
+  may be wrong. Check for a newer conclusion that might supersede it.
 - open_question: Unresolved engineering question with competing hypotheses.
   Both sides may be returned. Treat as "this is debated."
 
 ### Grounding references:
-Every ECU includes grounding references (files, symbols, commit hash).
-ALWAYS verify these against the current codebase before acting on the ECU.
-If the referenced file or symbol no longer exists, the ECU may be stale.
+Every conclusion includes grounding references (files, symbols, commit hash).
+ALWAYS verify these against the current codebase before acting on it.
+If the referenced file or symbol no longer exists, it may be stale.
 
-EC's Maintainer periodically verifies grounding references against the live
-repository and deprecates ECUs whose grounding has disappeared. Deprecated
-ECUs are not returned by ec_query. If you discover that an ECU's grounding
-is stale before EC's Maintainer has caught it, call ec_reconsolidate to
-update the ECU with what you've found.
+Reverie's Maintainer periodically verifies grounding references against the
+live repository and deprecates conclusions whose grounding has disappeared.
+Deprecated conclusions are not returned by reverie_query. If you discover
+that a conclusion's grounding is stale before the Maintainer has caught it,
+call reverie_reconsolidate to update it with what you've found.
 
 ### Warnings:
-ec_query may return warnings (e.g., "2 ECUs have low confidence",
-"1 ECU is challenged"). Read these warnings and adjust your trust accordingly.
+reverie_query may return warnings (e.g., "2 conclusions have low
+confidence", "1 conclusion is challenged"). Read these warnings and adjust
+your trust accordingly.
 
-## What EC Stores
+## What Reverie Stores
 
-ECUs are engineering conclusions, not raw information. Examples:
+Conclusions are engineering conclusions, not raw information. Examples:
 - STORED: "Authentication correctness depends on optimistic token refresh;
   future implementations should preserve this invariant."
 - NOT STORED: "TokenManager.refresh() is called before cache.clear()"
 
-Each ECU has:
+Each record has:
 - cognition: The irreducible engineering conclusion (text)
 - confidence: 0.0 to 1.0, Bayesian-updated belief strength
 - scope: Where this applies (engineering, domain, organization, project, repo,
   module, subsystem)
 - grounding: References to code files, symbols, and commit state
-- edges: Connections to other ECUs (supports, contradicts, supersedes, depends_on)
+- edges: Connections to other conclusions (supports, contradicts, supersedes, depends_on)
 
 ## Important: Anti-Anchoring
 
-EC memory is framed as "past beliefs to verify against current code," NOT
-as authoritative context. Always verify ECUs against the live codebase.
+Reverie's memory is framed as "past beliefs to verify against current
+code," NOT as authoritative context. Always verify conclusions against the
+live codebase.
 Do not anchor on past beliefs if the current code contradicts them.
-If you notice a contradiction, call ec_observe to record the new finding.
+If you notice a contradiction, call reverie_observe to record the new finding.
 
 Observations are stored in the Session Brain, not the Canonical Brain. The
-user reviews the candidates — via `ec review` in a terminal, or through you
+user reviews the candidates — via `reverie review` in a terminal, or through you
 (see "Review — The Human Decides"). Only accepted observations are promoted
 to the Canonical Brain for future use. Don't hesitate to observe something
 uncertain — the review gate filters it.

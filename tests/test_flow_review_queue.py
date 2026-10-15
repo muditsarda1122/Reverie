@@ -15,8 +15,8 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.brain import Brain
-from ec.review_queue import (
+from reverie.brain import Brain
+from reverie.review_queue import (
     QueueError,
     apply_decisions,
     candidates,
@@ -43,7 +43,7 @@ def mk_cfg(**review):
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -205,7 +205,7 @@ def test_apply_decisions_cross_session_channel_recorded(brain):
     s2 = make_session(brain, repo="/repos/b", branch="dev")
     c1 = make_candidate(brain, s1, "A1", confidence=0.9)
     c2 = make_candidate(brain, s2, "B1", confidence=0.4)
-    with patch("ec.diffuser.diffuse_ecu") as mock_diffuse:
+    with patch("reverie.diffuser.diffuse_ecu") as mock_diffuse:
         out = apply_decisions(brain, {c1: "accept", c2: "reject"},
                               channel="agent", now=T0)
     assert sorted(out["decided"]) == sorted([c1, c2])
@@ -226,7 +226,7 @@ def test_apply_decisions_undecided_left_untouched(brain):
     s = make_session(brain)
     c1 = make_candidate(brain, s, "decided")
     c2 = make_candidate(brain, s, "undecided")
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         out = apply_decisions(brain, {c1: "skip"}, channel="tui", now=T0)
     assert out["decided"] == [c1]
     assert brain.get_session_ecu(c2)["review_status"] == "pending"
@@ -235,7 +235,7 @@ def test_apply_decisions_undecided_left_untouched(brain):
 def test_apply_decisions_accept_promotes(brain):
     s = make_session(brain)
     c1 = make_candidate(brain, s, "promote me", confidence=0.8)
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         out = apply_decisions(brain, {c1: "accept"}, channel="tui", now=T0)
     assert out["results"][0].accepted == [c1]
     assert brain.ecu_exists(c1)                  # same id, D21
@@ -245,7 +245,7 @@ def test_apply_decisions_accept_promotes(brain):
 def test_apply_decisions_edited_cognition_recorded(brain):
     s = make_session(brain)
     c1 = make_candidate(brain, s, "original text")
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         out = apply_decisions(
             brain, {c1: {"action": "accept",
                          "edited_cognition": "edited conclusion"}},
@@ -268,7 +268,7 @@ def test_apply_decisions_unknown_ids_reported(brain):
 def test_apply_decisions_archived_session_reviewable(brain):
     s = make_session(brain, status="archived")
     c1 = make_candidate(brain, s, "orphan")
-    with patch("ec.diffuser.diffuse_ecu"):
+    with patch("reverie.diffuser.diffuse_ecu"):
         out = apply_decisions(brain, {c1: "reject"}, channel="tui", now=T0)
     assert out["decided"] == [c1]
     assert brain.get_session_ecu(c1) is None

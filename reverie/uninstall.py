@@ -1,30 +1,35 @@
-"""``ec uninstall`` — remove exactly what ``ec install`` did, nothing more.
+"""``reverie uninstall`` — remove exactly what ``reverie install`` did, nothing more.
 
 The installer's safety contract is merge-only: existing agent config is
-merged, never overwritten, and only the ``ec`` entry is added. Uninstall
+merged, never overwritten, and only the ``reverie`` entry is added. Uninstall
 applies the same merge logic in reverse:
 
 - For every supported harness, only Reverie's own entries are removed:
-  the ``ec`` MCP server entry in ``~/.claude.json``,
-  ``~/.cursor/mcp.json``, ``~/.config/opencode/opencode.json`` and
-  ``~/.codex/config.toml``; the ``@~/.ec/AGENTS.md`` line in
-  ``~/.claude/CLAUDE.md``; the reference blocks in the OpenCode and Codex
-  ``AGENTS.md`` files; ``~/.cursor/rules/ec.md`` (only when Reverie's
-  verbatim content is still intact). Every other key, line and file stays
+  the ``reverie`` MCP server entry in ``~/.claude.json``,
+  ``~/.cursor/mcp.json``, ``~/.config/opencode/opencode.json``,
+  ``~/.codex/config.toml`` and ``~/.gemini/settings.json``; the
+  ``@~/.reverie/AGENTS.md`` line in ``~/.claude/CLAUDE.md``; the reference
+  blocks in the OpenCode/Codex ``AGENTS.md`` and Gemini ``GEMINI.md``
+  files; the user-level slash-command files (only while their content is
+  still Reverie's verbatim text). Every other key, line and file stays
   byte-identical. A file that is invalid JSON/TOML, or was edited so that
   Reverie's entry can't be found unambiguously, is skipped and reported —
   never guessed at.
-- **Your memory (``~/.ec``)** is KEPT by default, so a reinstall picks up
+- **The plan comes first.** The full plan (harness entries; whether data
+  will be exported and deleted) is printed and ONE confirmation covers it
+  (``--yes`` skips). Nothing is touched before the confirmation; aborting
+  leaves everything unchanged.
+- **Your memory (``~/.reverie``)** is KEPT by default, so a reinstall picks up
   where you left off. With ``--delete-data``: a final export is written
-  outside ``~/.ec`` first (default: the current directory) and its path
-  printed; then the user must type ``delete``; only then is ``~/.ec``
-  removed. ``--no-export`` skips the export (confirmation still required).
-  ``--yes`` skips the confirmation for scripts but NEVER skips the export
-  unless ``--no-export`` is also given.
+  outside ``~/.reverie`` first (default: the current directory) and its path
+  printed; only then is ``~/.reverie`` removed. ``--no-export`` skips the
+  export (the confirmation still covers the deletion). ``--yes`` skips the
+  confirmation for scripts but NEVER skips the export unless ``--no-export``
+  is also given.
 - ``--dry-run`` prints every planned removal with the exact before/after
   for each file and changes nothing.
 
-``ec uninstall`` cannot reliably remove its own Python package while it is
+``reverie uninstall`` cannot reliably remove its own Python package while it is
 running; as the last step it prints the exact command to run by hand
 (pip, or the pipx/uv equivalent when that is how it was installed).
 """
@@ -41,8 +46,9 @@ from pathlib import Path
 
 from . import transport
 from .brain import Brain
-from .config import ec_home as _default_ec_home
-from .install import AGENTS, DIST_NAME, _agents_ref, _reference_block
+from .config import reverie_home as _default_reverie_home
+from .install import (AGENTS, DIST_NAME, REFERENCE_BLOCK_MARKER,
+                      _agents_ref, _reference_block)
 
 
 @dataclass
@@ -72,7 +78,7 @@ def _display(path: Path, home: Path) -> str:
 def _plan_json_entry(path: Path, home: Path, section: str,
                      label: str, schema_only_ok: bool = False
                      ) -> PlannedRemoval:
-    """Remove ``data[section]["ec"]`` — the reverse of install._json_merge.
+    """Remove ``data[section]["reverie"]`` — the reverse of install._json_merge.
 
     When nothing meaningful remains (the file was created by the
     installer), the file itself is removed. Invalid JSON is skipped,
@@ -87,21 +93,21 @@ def _plan_json_entry(path: Path, home: Path, section: str,
         return PlannedRemoval(
             path, "skipped",
             f"SKIPPED {disp}: not valid JSON ({exc}) — fix it by hand if "
-            "you want the ec entry gone.")
+            "you want the reverie entry gone.")
     if not isinstance(data, dict):
         return PlannedRemoval(
             path, "skipped",
             f"SKIPPED {disp}: does not contain a JSON object.")
     node = data.get(section)
-    if not isinstance(node, dict) or "ec" not in node:
+    if not isinstance(node, dict) or "reverie" not in node:
         return PlannedRemoval(
             path, "unchanged", f"{disp}: no ec entry in '{section}'")
     node = dict(node)
-    node.pop("ec")
+    node.pop("reverie")
     remaining = dict(data)
     remaining[section] = node
     if isinstance(remaining[section], dict) and not remaining[section]:
-        del remaining[section]           # the section held only the ec entry
+        del remaining[section]           # the section held only the reverie entry
     meaningful = {k: v for k, v in remaining.items()
                   if not (schema_only_ok and k == "$schema")}
     if not meaningful:
@@ -111,7 +117,7 @@ def _plan_json_entry(path: Path, home: Path, section: str,
     after = json.dumps(remaining, indent=2) + "\n"
     return PlannedRemoval(
         path, "remove-entry",
-        f"Removed the ec MCP server from {disp} ('{section}' preserved)",
+        f"Removed the reverie MCP server from {disp} ('{section}' preserved)",
         after=after, removed=f"[{section}].ec")
 
 
@@ -191,7 +197,7 @@ def _plan_verbatim_file(path: Path, home: Path, content: str, label: str
 
 
 def _plan_toml_table(path: Path, home: Path, label: str) -> PlannedRemoval:
-    """Remove the ``[mcp_servers.ec]`` table — the reverse of
+    """Remove the ``[mcp_servers.reverie]`` table — the reverse of
     install._codex_toml. Invalid TOML is skipped, never touched."""
     disp = _display(path, home)
     if not path.exists():
@@ -203,15 +209,15 @@ def _plan_toml_table(path: Path, home: Path, label: str) -> PlannedRemoval:
         return PlannedRemoval(
             path, "skipped",
             f"SKIPPED {disp}: not valid TOML ({exc}) — fix it by hand if "
-            "you want the ec entry gone.")
+            "you want the reverie entry gone.")
     lines = text.splitlines()
     start = next(
         (i for i, line in enumerate(lines)
-         if line.strip() == "[mcp_servers.ec]"),
+         if line.strip() == "[mcp_servers.reverie]"),
         None,
     )
     if start is None:
-        return PlannedRemoval(path, "unchanged", f"{disp}: no ec table")
+        return PlannedRemoval(path, "unchanged", f"{disp}: no reverie table")
     end = next(
         (i for i in range(start + 1, len(lines))
          if lines[i].strip().startswith("[")),
@@ -234,18 +240,21 @@ def _plan_toml_table(path: Path, home: Path, label: str) -> PlannedRemoval:
             f"SKIPPED {disp}: removing the table would not parse ({exc}).")
     return PlannedRemoval(
         path, "remove-entry",
-        f"Removed [mcp_servers.ec] from {disp} (everything else kept)",
-        after=after, removed="[mcp_servers.ec]")
+        f"Removed [mcp_servers.reverie] from {disp} (everything else kept)",
+        after=after, removed="[mcp_servers.reverie]")
 
 
-def _plan_harnesses(home: Path, ec_home: Path) -> list[tuple[str,
-                                                             PlannedRemoval]]:
+def _plan_harnesses(home: Path, reverie_home: Path) -> list[tuple[str,
+                                                              PlannedRemoval]]:
     """Every planned harness removal, for ALL supported agents — uninstall
     does not depend on detection: it cleans wherever Reverie may have
     written. Returns [(agent_name, removal), ...]."""
-    ref = _agents_ref(home, ec_home)
+    from .install import (CLAUDE_CODE_COMMANDS, CODEX_PROMPTS,
+                          CURSOR_COMMANDS, GEMINI_COMMANDS,
+                          OPENCODE_COMMANDS)
+    ref = _agents_ref(home, reverie_home)
     block = _reference_block(ref)
-    marker = "## Engineering Cognition (EC)"
+    marker = REFERENCE_BLOCK_MARKER
     plans: list[tuple[str, PlannedRemoval]] = []
     for agent in AGENTS:
         if agent.key == "claude_code":
@@ -255,12 +264,20 @@ def _plan_harnesses(home: Path, ec_home: Path) -> list[tuple[str,
                 _plan_line(home / ".claude" / "CLAUDE.md", home,
                            f"@{ref}", "claude_code"),
             ]
+            entries += [
+                _plan_verbatim_file(home / ".claude" / "commands" / name,
+                                    home, body, "claude_code")
+                for name, body in CLAUDE_CODE_COMMANDS.items()
+            ]
         elif agent.key == "cursor":
             entries = [
                 _plan_json_entry(home / ".cursor" / "mcp.json", home,
                                  "mcpServers", "cursor"),
-                _plan_verbatim_file(home / ".cursor" / "rules" / "ec.md",
-                                    home, block, "cursor"),
+            ]
+            entries += [
+                _plan_verbatim_file(home / ".cursor" / "commands" / name,
+                                    home, body, "cursor")
+                for name, body in CURSOR_COMMANDS.items()
             ]
         elif agent.key == "opencode":
             entries = [
@@ -270,12 +287,35 @@ def _plan_harnesses(home: Path, ec_home: Path) -> list[tuple[str,
                 _plan_block(home / ".config" / "opencode" / "AGENTS.md",
                             home, block, marker, "opencode"),
             ]
+            entries += [
+                _plan_verbatim_file(
+                    home / ".config" / "opencode" / "commands" / name,
+                    home, body, "opencode")
+                for name, body in OPENCODE_COMMANDS.items()
+            ]
         elif agent.key == "codex":
             entries = [
                 _plan_toml_table(home / ".codex" / "config.toml", home,
                                  "codex"),
                 _plan_block(home / ".codex" / "AGENTS.md", home, block,
                             marker, "codex"),
+            ]
+            entries += [
+                _plan_verbatim_file(home / ".codex" / "prompts" / name,
+                                    home, body, "codex")
+                for name, body in CODEX_PROMPTS.items()
+            ]
+        elif agent.key == "gemini_cli":
+            entries = [
+                _plan_json_entry(home / ".gemini" / "settings.json", home,
+                                 "mcpServers", "gemini_cli"),
+                _plan_block(home / ".gemini" / "GEMINI.md", home, block,
+                            marker, "gemini_cli"),
+            ]
+            entries += [
+                _plan_verbatim_file(home / ".gemini" / "commands" / name,
+                                    home, body, "gemini_cli")
+                for name, body in GEMINI_COMMANDS.items()
             ]
         else:                                   # future agents: nothing yet
             continue
@@ -338,33 +378,76 @@ def package_removal_command() -> str:
 # the uninstaller
 # ---------------------------------------------------------------------------
 
-def run(*, home: Path | None = None, ec_home: Path | None = None,
+def run(*, home: Path | None = None, reverie_home: Path | None = None,
         delete_data: bool = False, no_export: bool = False, yes: bool = False,
         dry_run: bool = False, export_dir: Path | None = None,
         print_fn=print, input_fn=input) -> int:
-    """§ uninstall. Returns 0 on success (nothing fatal), 1 otherwise."""
-    home = Path(home) if home else Path.home()
-    ec_home = Path(ec_home) if ec_home else _default_ec_home()
+    """`reverie uninstall`. Returns 0 on success (nothing fatal), 1 otherwise.
 
-    print_fn("\nEngineering Cognition — Uninstall\n")
+    The FULL plan is always shown first — the harness entries to remove and
+    whether data will be exported and deleted — and ONE confirmation covers
+    the whole plan (``--yes`` skips it). Nothing is touched before the
+    confirmation; aborting leaves everything unchanged. The export-before-
+    delete rule holds regardless of the flag: with ``--delete-data`` a final
+    export is written outside ``~/.reverie`` first (``--no-export`` skips
+    it) and a failed export aborts the whole uninstall."""
+    home = Path(home) if home else Path.home()
+    reverie_home = Path(reverie_home) if reverie_home else _default_reverie_home()
+
+    print_fn("\nReverie — Uninstall\n")
     if dry_run:
         print_fn("(dry run — showing exactly what would be removed; "
                  "no files will be changed)\n")
 
-    # -- 1. the final export happens FIRST: a failed export aborts the
-    #       whole uninstall so nothing is removed without a backup --------
+    # -- 1. the plan, computed pure and printed BEFORE anything changes ---
+    harness_plans = _plan_harnesses(home, reverie_home)
     export_path: Path | None = None
-    if delete_data and not no_export and ec_home.exists():
-        target_base = Path(export_dir) if export_dir else Path.cwd()
-        export_path = target_base / (
-            "reverie-final-export-"
-            + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + ".zip")
+    will_delete = delete_data and reverie_home.exists()
+
+    print_fn("The plan:")
+    for agent_name, removal in harness_plans:
+        print_fn(f"  - {agent_name}: {removal.detail}"
+                 if removal.action != "unchanged"
+                 else f"  - {agent_name}: {removal.detail}")
+    if delete_data:
+        if not reverie_home.exists():
+            print_fn(f"  - {_display(reverie_home, home)}: not present — "
+                     "nothing to remove")
+        else:
+            target_base = Path(export_dir) if export_dir else Path.cwd()
+            export_path = target_base / (
+                "reverie-final-export-"
+                + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+                + ".zip")
+            print_fn(f"  - {_display(reverie_home, home)}: "
+                     + ("REMOVED after a final export to "
+                        f"{export_path}" if not no_export else
+                        "REMOVED (no final export — --no-export)"))
+    else:
+        print_fn(f"  - {_display(reverie_home, home)}: KEPT (default) — "
+                 "a reinstall picks up where you left off. Pass "
+                 "--delete-data to remove it (a final export is taken "
+                 "first).")
+
+    # -- 2. ONE confirmation covers the whole plan -------------------------
+    if not dry_run and not yes:
+        try:
+            answer = input_fn("\nProceed with this plan? (y/n): ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            print_fn("\nAborted — nothing was changed.")
+            return 1
+
+    # -- 3. the export happens FIRST: a failed export aborts the whole
+    #       uninstall so nothing is removed without a backup ---------------
+    if will_delete and not no_export:
         if dry_run:
-            print_fn(f"[dry-run] would write a final export to "
+            print_fn(f"\n[dry-run] would write a final export to "
                      f"{export_path}")
         else:
             try:
-                brain = Brain(ec_home / "ec.db")
+                brain = Brain(reverie_home / "reverie.db")
                 try:
                     transport.export_brain(brain, export_path)
                 finally:
@@ -376,39 +459,27 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
                 return 1
             print_fn(f"  ✓ Final export written to {export_path}")
 
-    # -- 2. harness entries (merge logic in reverse) -----------------------
+    # -- 4. harness entries (merge logic in reverse) -----------------------
     print_fn("\nRemoving Reverie from your coding agents...")
-    for agent_name, removal in _plan_harnesses(home, ec_home):
+    for agent_name, removal in harness_plans:
         _emit(removal, home, dry_run, print_fn, agent_name)
 
-    # -- 3. your memory (~/.ec) -------------------------------------------
-    print_fn(f"\nYour memory ({_display(ec_home, home)})...")
-    if not ec_home.exists():
+    # -- 5. your memory (~/.reverie) ---------------------------------------
+    print_fn(f"\nYour memory ({_display(reverie_home, home)})...")
+    if not reverie_home.exists():
         print_fn("  · not present — nothing to remove")
     elif not delete_data:
         print_fn("  · KEPT (default) — a reinstall picks up where you "
-                 "left off. Run `ec uninstall --delete-data` to remove it "
-                 "(a final export is taken first).")
+                 "left off. Run `reverie uninstall --delete-data` to remove "
+                 "it (a final export is taken first).")
     elif dry_run:
-        print_fn(f"  [dry-run] would ask for confirmation, then remove "
-                 f"{_display(ec_home, home)} entirely")
+        print_fn(f"  [dry-run] would remove {_display(reverie_home, home)} "
+                 "entirely")
     else:
-        if not yes:
-            try:
-                answer = input_fn(
-                    f"This permanently removes {_display(ec_home, home)} "
-                    "(the brain, config and agent instructions).\n"
-                    "Type 'delete' to confirm: ").strip()
-            except EOFError:
-                answer = ""
-            if answer != "delete":
-                print_fn("  Aborted — your memory was NOT removed. The "
-                         "harness entries above are already gone.")
-                return 1
-        shutil.rmtree(ec_home)
-        print_fn(f"  ✓ Removed {_display(ec_home, home)}")
+        shutil.rmtree(reverie_home)
+        print_fn(f"  ✓ Removed {_display(reverie_home, home)}")
 
-    # -- 4. report ---------------------------------------------------------
+    # -- 6. report ---------------------------------------------------------
     print_fn("\nUninstall report:")
     if not dry_run:
         print_fn("  Removed: Reverie's MCP entries, instruction references "
@@ -416,33 +487,36 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
     else:
         print_fn("  (dry run — nothing above was actually removed)")
     if not delete_data:
-        print_fn(f"  Kept: {_display(ec_home, home)} (your memory)")
+        print_fn(f"  Kept: {_display(reverie_home, home)} (your memory)")
     elif not dry_run:
-        print_fn(f"  Removed: {_display(ec_home, home)} (your memory)")
-    if delete_data and export_path is not None and not dry_run:
+        print_fn(f"  Removed: {_display(reverie_home, home)} (your memory)")
+    if delete_data and export_path is not None and not dry_run \
+            and not no_export:
         print_fn(f"  Final export: {export_path}")
     print_fn("\nLast step, run by hand:")
     print_fn(f"  {package_removal_command()}")
-    print_fn("  (Reverie's published package name is "
-             f"{DIST_NAME}; the running package cannot remove itself)")
+    print_fn(f"  (Reverie's published package name is {DIST_NAME}; the "
+             "running package cannot remove itself)")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
     parser = argparse.ArgumentParser(
-        prog="ec uninstall",
-        description="Remove exactly what `ec install` did, and nothing "
-                    "more: Reverie's MCP entries and instruction "
-                    "references in every supported agent. Your memory "
-                    "(~/.ec) is kept unless --delete-data is given.",
+        prog="reverie uninstall",
+        description="Remove exactly what `reverie install` did, and nothing "
+                    "more: Reverie's MCP entries, instruction references "
+                    "and command files in every supported agent. The full "
+                    "plan is shown first; one confirmation covers it. Your "
+                    "memory (~/.reverie) is kept unless --delete-data is "
+                    "given.",
     )
     parser.add_argument("--delete-data", action="store_true",
-                        help="also remove ~/.ec (a final export is written "
-                             "first, and you must confirm)")
+                        help="also remove ~/.reverie (a final export is "
+                             "written first)")
     parser.add_argument("--no-export", action="store_true",
                         help="with --delete-data: skip the final export "
-                             "(confirmation is still required)")
+                             "(the confirmation still covers the deletion)")
     parser.add_argument("--yes", action="store_true",
                         help="skip the confirmation prompt (scripts); the "
                              "export still happens unless --no-export")

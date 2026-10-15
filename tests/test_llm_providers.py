@@ -20,9 +20,9 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.config import DEFAULT_CONFIG, _to_attrdict
-from ec.install import OLLAMA_BASE_URL, OLLAMA_LLM_BLOCK
-from ec.llm import LLMError, _api_format, api_key, call_llm
+from reverie.config import DEFAULT_CONFIG, _to_attrdict
+from reverie.install import OLLAMA_BASE_URL, OLLAMA_LLM_BLOCK
+from reverie.llm import LLMError, _api_format, api_key, call_llm
 
 # ---------------------------------------------------------------------------
 # fixtures + helpers
@@ -34,8 +34,8 @@ KEY_ENV = "EC_TEST_LLM_KEY"
 @pytest.fixture(autouse=True)
 def _fast_retries(monkeypatch):
     """No real sleeping in retry tests: attempts are counted via the mock."""
-    monkeypatch.setattr("ec.llm._sleep", lambda _s: None)
-    monkeypatch.setattr("ec.llm._jitter", lambda delay: delay)
+    monkeypatch.setattr("reverie.llm._sleep", lambda _s: None)
+    monkeypatch.setattr("reverie.llm._jitter", lambda delay: delay)
 
 
 def make_config(model="claude-haiku-4-5", base_url="https://zen.example/v1"):
@@ -122,7 +122,7 @@ class TestApiFormatRouting:
 class TestCallAnthropic:
     def test_anthropic_wire_format(self, anthropic_cfg, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "sk-test")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=ANTHROPIC_PAYLOAD)) as m:
             out = call_llm("do the thing", system="be brief",
                            config=anthropic_cfg)
@@ -145,7 +145,7 @@ class TestCallAnthropic:
                                                    monkeypatch):
         anthropic_cfg.llm.base_url = "https://zen.example/v1/"
         monkeypatch.setenv(KEY_ENV, "sk-test")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=ANTHROPIC_PAYLOAD)) as m:
             call_llm("x", config=anthropic_cfg)
         assert m.call_args.args[0] == "https://zen.example/v1/messages"
@@ -153,7 +153,7 @@ class TestCallAnthropic:
     def test_temperature_and_max_tokens_overrides(self, anthropic_cfg,
                                                   monkeypatch):
         monkeypatch.setenv(KEY_ENV, "sk-test")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=ANTHROPIC_PAYLOAD)) as m:
             call_llm("x", temperature=0.0, max_tokens=128,
                      config=anthropic_cfg)
@@ -171,7 +171,7 @@ class TestCallAnthropic:
 
     def test_non_200_raises_llmerror(self, anthropic_cfg, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "sk-test")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(status_code=503, payload={})):
             with pytest.raises(LLMError, match="HTTP 503"):
                 call_llm("x", config=anthropic_cfg)
@@ -179,14 +179,14 @@ class TestCallAnthropic:
     def test_network_failure_raises_llmerror(self, anthropic_cfg, monkeypatch):
         import requests as _requests
         monkeypatch.setenv(KEY_ENV, "sk-test")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    side_effect=_requests.ConnectionError("refused")):
             with pytest.raises(LLMError, match="request failed"):
                 call_llm("x", config=anthropic_cfg)
 
     def test_malformed_body_raises_llmerror(self, anthropic_cfg, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "sk-test")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload={"content": "oops"})):
             with pytest.raises(LLMError, match="Malformed"):
                 call_llm("x", config=anthropic_cfg)
@@ -199,7 +199,7 @@ class TestCallAnthropic:
 class TestCallOpenai:
     def test_openai_wire_format(self, openai_cfg, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "sk-oai")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)) as m:
             out = call_llm("do the thing", system="be brief",
                            config=openai_cfg)
@@ -221,7 +221,7 @@ class TestCallOpenai:
     def test_no_system_prompt_omits_system_message(self, openai_cfg,
                                                    monkeypatch):
         monkeypatch.setenv(KEY_ENV, "sk-oai")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)) as m:
             call_llm("just this", config=openai_cfg)
         assert m.call_args.kwargs["json"]["messages"] == [
@@ -230,14 +230,14 @@ class TestCallOpenai:
 
     def test_non_200_raises_llmerror(self, openai_cfg, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "sk-oai")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(status_code=404, payload={})):
             with pytest.raises(LLMError, match="HTTP 404"):
                 call_llm("x", config=openai_cfg)
 
     def test_malformed_body_raises_llmerror(self, openai_cfg, monkeypatch):
         monkeypatch.setenv(KEY_ENV, "sk-oai")
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload={"nope": []})):
             with pytest.raises(LLMError, match="Malformed"):
                 call_llm("x", config=openai_cfg)
@@ -256,7 +256,7 @@ class TestOllamaNoApiKey:
         cfg.llm.provider = "ollama"
         monkeypatch.delenv(KEY_ENV, raising=False)
         assert api_key(cfg) is None
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)) as m:
             out = call_llm("classify these pairs",
                            system="you are a classifier", config=cfg)
@@ -274,7 +274,7 @@ class TestOllamaNoApiKey:
         monkeypatch.delenv(KEY_ENV, raising=False)
         assert api_key(cfg) is None
         assert cfg.llm.provider == "opencode_zen"    # untouched, still keyless
-        with patch("ec.llm.requests.post",
+        with patch("reverie.llm.requests.post",
                    return_value=FakeResponse(payload=OPENAI_PAYLOAD)):
             assert call_llm("x", config=cfg) == "hi there"
 

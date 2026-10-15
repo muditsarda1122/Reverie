@@ -14,15 +14,15 @@ from datetime import datetime, timezone
 
 import pytest
 
-from ec.brain import Brain
-from ec.config import SCHEMA_VERSION
+from reverie.brain import Brain
+from reverie.config import SCHEMA_VERSION
 
 T0 = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 

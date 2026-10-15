@@ -10,21 +10,21 @@ pinned venv): ``initialize``, ``notifications/initialized`` (ignored), ``ping``,
 payload as JSON text; ``isError`` mirrors the payload's ``status == "error"``.
 
 Tools (feat/flow surface — the §28.3 four plus review/enablement, D55-D57):
-  - ``ec_observe``       — extract + lightweight-diffuse reasoning into the
+  - ``reverie_observe``       — extract + lightweight-diffuse reasoning into the
                            Session Brain (§28.13)
-  - ``ec_query``         — demand-driven retrieval over both brains (§11.3)
-  - ``ec_get_summary``   — brain statistics at session start (§11.3 awareness
+  - ``reverie_query``         — demand-driven retrieval over both brains (§11.3)
+  - ``reverie_summary``   — brain statistics at session start (§11.3 awareness
                            without anchoring)
-  - ``ec_reconsolidate`` — re-evaluate a retrieved ECU with new evidence
+  - ``reverie_reconsolidate`` — re-evaluate a retrieved ECU with new evidence
                            (design doc §5.2/D37; writes to the Canonical
                             Brain immediately — the ECU was reviewed when it
                             entered). Only ECUs retrieved in this session are
                             labile (D39): the server marks surfaced canonical
-                            ids during ec_query and refuses others.
-  - ``ec_set_repo_state``— record the user's answer to the first-time
+                            ids during reverie_query and refuses others.
+  - ``reverie_set_repo_state``— record the user's answer to the first-time
                            enablement question (or turn Reverie off/on here)
-  - ``ec_review_list``   — the review queue page, for the agent to relay
-  - ``ec_review_decide`` — apply decisions the USER stated, through the
+  - ``reverie_review_list``   — the review queue page, for the agent to relay
+  - ``reverie_review_decide`` — apply decisions the USER stated, through the
                            review gate (channel "agent", D57)
 
 Repo enablement (feat/flow, D55): every tool call first resolves the repo
@@ -39,10 +39,10 @@ Automatic sessions (feat/flow, D56 — replaces D15 for the MCP surface):
 in an enabled repo every tool call resolves or creates the session for
 (repo, branch). The database stays the source of truth (WAL keeps the
 CLI/MCP processes consistent); sessions are never closed by the user —
-review is independent of sessions (``ec_review_list``/``ec_review_decide``
-and the ``ec review`` TUI work across every session, branch and repo).
+review is independent of sessions (``reverie_review_list``/``reverie_review_decide``
+and the ``reverie review`` TUI work across every session, branch and repo).
 
-After each successful ec_query the server writes retrieval metadata
+After each successful reverie_query the server writes retrieval metadata
 (``last_retrieved`` / ``retrieval_count``, canonical ECUs only — D17) and
 applies retrieval reinforcement (design doc §2.1): the STORED confidence is
 bumped by ``alpha_retrieval`` in log-odds space and ``last_reinforced`` is
@@ -59,14 +59,14 @@ the process. Maintenance failures never prevent the server from starting.
 
 Grounding verification (D35): the maintenance run receives a repo path so
 the grounding task can verify ECUs against the live working tree. It is
-resolved once at startup — ``EC_REPO_PATH`` env override (with
-``EC_BRANCH``), else git toplevel of the server's cwd, else the most
+resolved once at startup — ``REVERIE_REPO_PATH`` env override (with
+``REVERIE_BRANCH``), else git toplevel of the server's cwd, else the most
 recently started active session's repo from the database (the server may
 be launched outside any work tree) — and reused by both the startup run
 and the background thread. Grounding runs are additionally throttled per
 repo (72h) inside the task itself.
 
-commit_hash provenance (D49, design doc §4): every ec_observe stamps the
+commit_hash provenance (D49, design doc §4): every reverie_observe stamps the
 session repo's git HEAD into each extracted ECU's grounding before storage,
 so §3.3's informational commit-staleness check has input.
 """
@@ -97,10 +97,10 @@ from .extractor import ExtractorError
 from .reconsolidation import ReconsolidationError
 from .session import SessionError, SessionManager, brain_summary, detect_repo_branch
 
-log = logging.getLogger("ec.mcp_server")
+log = logging.getLogger("reverie.mcp_server")
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_NAME = "ec"
+SERVER_NAME = "reverie"
 
 # §28.4-style messages — verbatim, actionable (feat/flow).
 NO_REPO_ERROR = (
@@ -118,7 +118,7 @@ NO_ECUS_FOUND = (
     "rephrasing. The brain may not have relevant cognition for this topic yet."
 )
 
-#: How long a review_token stays valid for ec_review_decide (feat/flow).
+#: How long a review_token stays valid for reverie_review_decide (feat/flow).
 REVIEW_TOKEN_TTL_SECONDS = 3600
 
 #: D49 (design doc §4): how long to wait for ``git rev-parse HEAD`` when
@@ -170,21 +170,21 @@ in the Session Brain for immediate use. Call this AFTER you:
 - Make an architectural decision with rationale
 - Discover that a previous assumption was wrong
 
-Do NOT call ec_observe for:
+Do NOT call reverie_observe for:
 - Simple code changes with no insight
 - Things already captured in existing ECUs
 - Pure factual observations (the Extractor handles the lifting to conclusions)
 
-ec_observe runs the Extractor on your reasoning, produces candidate ECUs,
+reverie_observe runs the Extractor on your reasoning, produces candidate ECUs,
 and stores them in the Session Brain. They are immediately available for
-retrieval via ec_query. The USER reviews these candidates (via `ec review`
+retrieval via reverie_query. The USER reviews these candidates (via `reverie review`
 or by asking you to show them) — never promote or judge them yourself.
 
 Sessions are automatic: in an enabled repo the session for the current
 branch resolves or is created by this call. If the response asks you to
 turn Reverie on for this repo, ask the user the question it contains
 exactly once per conversation, and record their answer with
-ec_set_repo_state. Pass the workspace path as 'repo_path' on every call."""
+reverie_set_repo_state. Pass the workspace path as 'repo_path' on every call."""
 
 _QUERY_DESCRIPTION = """\
 Retrieve engineering conclusions relevant to your current task. Call this
@@ -232,13 +232,13 @@ branch and repo, strongest first). Use this when the user asks to see
 their Reverie candidates or wants to review memory. Show EVERY candidate's
 full conclusion text to the user before asking for their decisions, relay
 only the decisions the user actually states, and never decide on their
-behalf. Returns a short-lived review_token — pass it to ec_review_decide.
+behalf. Returns a short-lived review_token — pass it to reverie_review_decide.
 Pass the workspace path as 'repo_path' to scope to the current repo."""
 
 _REVIEW_DECIDE_DESCRIPTION = """\
 Apply review decisions the USER stated in the chat (accept | reject | skip,
 optionally with edited_cognition they dictated). Requires the review_token
-from ec_review_decide's sibling ec_review_list; only candidates that were
+from reverie_review_decide's sibling reverie_review_list; only candidates that were
 in that listing can be decided. Bulk-accepting every candidate is refused
 — reverie review must stay per-candidate or per-group, on the user's
 explicit instruction. Pass the workspace path as 'repo_path'."""
@@ -255,7 +255,7 @@ supersession. The change is written to the Canonical Brain immediately (the ECU
 was already human-reviewed when it entered the Canonical Brain — reconsolidation
 is a confidence/evidence update, not a new ECU entering the brain).
 
-Call ec_reconsolidate when:
+Call reverie_reconsolidate when:
 - You verified a retrieved ECU against the code and found it's no longer accurate
 - You discovered new evidence that strengthens a retrieved ECU (it should be
   more confident)
@@ -263,8 +263,8 @@ Call ec_reconsolidate when:
   less confident or superseded)
 - The code an ECU is grounded in has changed, and the conclusion needs updating
 
-Do NOT call ec_reconsolidate for:
-- New insights that aren't related to a previously retrieved ECU (use ec_observe)
+Do NOT call reverie_reconsolidate for:
+- New insights that aren't related to a previously retrieved ECU (use reverie_observe)
 - ECUs you haven't retrieved in this session (reconsolidation requires prior
   retrieval — you can't reconsolidate something you haven't looked at)
 - Simple code changes with no impact on engineering conclusions"""
@@ -297,7 +297,7 @@ def _observe_schema() -> dict:
         "reasoning_trace": {
             "type": "string",
             "description": (
-                "Your reasoning trace since the last ec_observe call. "
+                "Your reasoning trace since the last reverie_observe call. "
                 "Include your thinking, decisions, and rationale — not "
                 "just the final code output."
             ),
@@ -421,7 +421,7 @@ def _review_decide_schema() -> dict:
     return _schema({
         "review_token": {
             "type": "string",
-            "description": "The token from ec_review_list.",
+            "description": "The token from reverie_review_list.",
         },
         "decisions": {
             "type": "array",
@@ -452,37 +452,37 @@ def _review_decide_schema() -> dict:
 
 TOOLS = [
     {
-        "name": "ec_observe",
+        "name": "reverie_observe",
         "description": _OBSERVE_DESCRIPTION,
         "inputSchema": _observe_schema(),
     },
     {
-        "name": "ec_query",
+        "name": "reverie_query",
         "description": _QUERY_DESCRIPTION,
         "inputSchema": _query_schema(),
     },
     {
-        "name": "ec_get_summary",
+        "name": "reverie_summary",
         "description": _SUMMARY_DESCRIPTION,
         "inputSchema": _summary_schema(),
     },
     {
-        "name": "ec_reconsolidate",
+        "name": "reverie_reconsolidate",
         "description": _RECONSOLIDATE_DESCRIPTION,
         "inputSchema": _reconsolidate_schema(),
     },
     {
-        "name": "ec_set_repo_state",
+        "name": "reverie_set_repo_state",
         "description": _REPO_STATE_DESCRIPTION,
         "inputSchema": _set_repo_state_schema(),
     },
     {
-        "name": "ec_review_list",
+        "name": "reverie_review_list",
         "description": _REVIEW_LIST_DESCRIPTION,
         "inputSchema": _review_list_schema(),
     },
     {
-        "name": "ec_review_decide",
+        "name": "reverie_review_decide",
         "description": _REVIEW_DECIDE_DESCRIPTION,
         "inputSchema": _review_decide_schema(),
     },
@@ -493,10 +493,10 @@ TOOLS = [
 # server
 # ---------------------------------------------------------------------------
 
-class ECServer:
+class ReverieServer:
     """One MCP server bound to one brain. Holds no session state of its own
     beyond the SessionManager's activation cache — the database is the source
-    of truth (D15), so CLI-driven /ec-stop takes effect immediately."""
+    of truth (D15), so review decisions from any process take effect immediately."""
 
     def __init__(self, brain: Brain | None = None, manager=None, config=None,
                  embedding_model=None):
@@ -611,19 +611,19 @@ class ECServer:
         name = params.get("name")
         arguments = params.get("arguments") or {}
         handler = {
-            "ec_observe": self._tool_observe,
-            "ec_query": self._tool_query,
-            "ec_get_summary": self._tool_summary,
-            "ec_reconsolidate": self._tool_reconsolidate,
-            "ec_set_repo_state": self._tool_set_repo_state,
-            "ec_review_list": self._tool_review_list,
-            "ec_review_decide": self._tool_review_decide,
+            "reverie_observe": self._tool_observe,
+            "reverie_query": self._tool_query,
+            "reverie_summary": self._tool_summary,
+            "reverie_reconsolidate": self._tool_reconsolidate,
+            "reverie_set_repo_state": self._tool_set_repo_state,
+            "reverie_review_list": self._tool_review_list,
+            "reverie_review_decide": self._tool_review_decide,
         }.get(name)
         if handler is None:
             return self._error(
                 msg_id, INVALID_PARAMS,
-                f"Unknown tool {name!r}. Available tools: ec_observe, "
-                "ec_query, ec_get_summary, ec_reconsolidate.",
+                f"Unknown tool {name!r}. Available tools: reverie_observe, "
+                "reverie_query, reverie_summary, reverie_reconsolidate.",
             )
         try:
             payload = handler(arguments)
@@ -650,7 +650,7 @@ class ECServer:
         The tool's optional ``repo_path`` argument (the agent's workspace
         path) wins — some harnesses start global MCP servers in the home
         folder, where cwd is useless. Falls back to the server's working
-        directory (and the EC_REPO_PATH/EC_BRANCH overrides inside
+        directory (and the REVERIE_REPO_PATH/REVERIE_BRANCH overrides inside
         repos.resolve_repo). Returns ``(repos.RepoInfo, None)`` or
         ``(None, error_payload)``."""
         repo_arg = args.get("repo_path")
@@ -699,7 +699,7 @@ class ECServer:
                 "error": repos.FIRST_TIME_QUESTION,
                 "instructions": (
                     "Ask the user this exact question once per conversation. "
-                    "Record their answer with ec_set_repo_state: 'yes' -> "
+                    "Record their answer with reverie_set_repo_state: 'yes' -> "
                     "enabled, 'not now' -> not_now, 'never' -> disabled. If "
                     "they say 'not now', do not ask again in this "
                     "conversation and continue without Reverie."
@@ -712,7 +712,7 @@ class ECServer:
                 "repo": info.repo_path,
                 "error": "Reverie is disabled for this repo. Nothing was "
                          "captured or retrieved. The user can re-enable it "
-                         "any time with `ec enable` (existing memory is "
+                         "any time with `reverie enable` (existing memory is "
                          "kept).",
             }, None
         # enabled: archive sessions whose branch vanished (D56, best-effort)
@@ -792,10 +792,10 @@ class ECServer:
             return {
                 "status": "error",
                 "session_active": True,
-                "error": "ec_observe requires 'user_prompt' and "
+                "error": "reverie_observe requires 'user_prompt' and "
                          "'reasoning_trace' (non-empty strings). Pass the "
                          "user's prompt and your reasoning since the last "
-                         "ec_observe call.",
+                         "reverie_observe call.",
             }
         interaction = {
             "prompt": user_prompt,
@@ -821,7 +821,7 @@ class ECServer:
         except ExtractorError as exc:
             # feat/providers: the interaction is persisted so the failure
             # costs nothing — it is retried at the next successful
-            # ec_observe (or via `ec-retry`).
+            # reverie_observe (or via `reverie retry`).
             pending_id = pending.save_pending_extraction(
                 brain, row, interaction, str(exc),
                 commit_hash=commit_hash,
@@ -829,7 +829,7 @@ class ECServer:
             error = EXTRACTION_FAILED.format(reason=exc) + (
                 f" The interaction was saved locally (pending id "
                 f"{pending_id[:8]}) and will be retried automatically at "
-                "the next successful ec_observe, or via `ec-retry`."
+                "the next successful reverie_observe, or via `reverie retry`."
             )
             return {"status": "error", "session_active": True,
                     "error": error, "pending_extraction_id": pending_id}
@@ -876,7 +876,7 @@ class ECServer:
             message += (
                 f" {retry_summary['failed'] + retry_summary['skipped']} "
                 "pending extraction(s) could not be recovered yet "
-                "(retry at the next observe, or via `ec-retry`)."
+                "(retry at the next observe, or via `reverie retry`)."
             )
         return {
             "status": "ok",
@@ -893,7 +893,7 @@ class ECServer:
         }
 
     def _tool_query(self, args: dict) -> dict:
-        """The §11.3 demand-driven retrieval path (ec_query)."""
+        """The §11.3 demand-driven retrieval path (reverie_query)."""
         gate, ctx = self._gate(args)
         if gate is not None:
             return gate
@@ -904,7 +904,7 @@ class ECServer:
             return {
                 "status": "error",
                 "session_active": True,
-                "error": "ec_query requires a 'query' parameter (natural "
+                "error": "reverie_query requires a 'query' parameter (natural "
                          "language). Example: 'How does the authentication "
                          "token refresh work?'",
             }
@@ -934,7 +934,7 @@ class ECServer:
         return payload
 
     def _tool_summary(self, args: dict) -> dict:
-        """§16.3 ec_get_summary — the nudge line included (feat/flow §4).
+        """§16.3 reverie_summary — the nudge line included (feat/flow §4).
 
         Gated on enablement when a repo resolves; works repo-less (a
         global server in the home folder still reports brain stats)."""
@@ -956,7 +956,7 @@ class ECServer:
         return payload
 
     def _tool_reconsolidate(self, args: dict) -> dict:
-        """D37 — ec_reconsolidate (design doc §5.2): re-evaluate a labile
+        """D37 — reverie_reconsolidate (design doc §5.2): re-evaluate a labile
         canonical ECU with new evidence. Writes to the Canonical Brain
         immediately; the §5.2 payload is returned verbatim."""
         gate, ctx = self._gate(args)
@@ -973,8 +973,8 @@ class ECServer:
             return {
                 "status": "error",
                 "session_active": True,
-                "error": "ec_reconsolidate requires 'ecu_id' — the id exactly "
-                         "as it appeared in the ec_query result.",
+                "error": "reverie_reconsolidate requires 'ecu_id' — the id exactly "
+                         "as it appeared in the reverie_query result.",
             }
         if relationship is not None \
                 and relationship not in reconsolidation.VALID_RELATIONSHIPS:
@@ -995,8 +995,8 @@ class ECServer:
                 "error": f"ECU {ecu_id} was not retrieved in this session, so "
                          "it cannot be reconsolidated — you can't "
                          "reconsolidate something you haven't looked at. Call "
-                         "ec_query first; if the ECU appears in the result, "
-                         "call ec_reconsolidate with its id.",
+                         "reverie_query first; if the ECU appears in the result, "
+                         "call reverie_reconsolidate with its id.",
             }
 
         brain = self._ensure_brain()
@@ -1079,8 +1079,8 @@ class ECServer:
 
     def _tool_review_list(self, args: dict) -> dict:
         """The review queue page for the agent channel (D57): same ordered
-        candidates as `ec review`, a compact verbatim block, and a
-        short-lived review_token for ec_review_decide."""
+        candidates as `reverie review`, a compact verbatim block, and a
+        short-lived review_token for reverie_review_decide."""
         gate, ctx = self._gate(args)
         if gate is not None:
             return gate
@@ -1139,9 +1139,9 @@ class ECServer:
             "message": message,
             "instructions": (
                 "Show every candidate's full conclusion text, then relay "
-                "only the decisions the user states via ec_review_decide. "
+                "only the decisions the user states via reverie_review_decide. "
                 "Never decide on the user's behalf. One listing feeds one "
-                "decide call — after it succeeds, call ec_review_list again "
+                "decide call — after it succeeds, call reverie_review_list again "
                 "for the next batch (single-use tokens; this adds friction, "
                 "it is not a security boundary). Reverie cannot verify "
                 "who made a decision; the channel is recorded as 'agent'."
@@ -1174,7 +1174,7 @@ class ECServer:
             return {
                 "status": "error",
                 "error": "Unknown or expired review_token. Call "
-                         "ec_review_list again to get a fresh listing, "
+                         "reverie_review_list again to get a fresh listing, "
                          "then decide from those ids.",
             }
         raw = args.get("decisions")
@@ -1206,7 +1206,7 @@ class ECServer:
                 "status": "error",
                 "error": f"Decision ids not in this listing: {unknown}. "
                          "Only candidates returned under this review_token "
-                         "can be decided — call ec_review_list again.",
+                         "can be decided — call reverie_review_list again.",
             }
         accepts = {cid for cid, d in decisions.items()
                    if d["action"] == "accept"}
@@ -1215,7 +1215,7 @@ class ECServer:
                 "status": "error",
                 "error": "Refusing a bulk accept-all through the agent. "
                          "Review per candidate, or skip at least one and "
-                         "re-list; the user can also run `ec review` in a "
+                         "re-list; the user can also run `reverie review` in a "
                          "terminal.",
             }
         out = review_queue.apply_decisions(
@@ -1224,7 +1224,7 @@ class ECServer:
         )
         # Single-use tokens (feat/flow review fix): the token is consumed
         # once a decide call succeeds, so each listing feeds exactly one
-        # decision call — the next batch needs a fresh ec_review_list. This
+        # decision call — the next batch needs a fresh reverie_review_list. This
         # adds friction, it is not a security boundary: Reverie cannot
         # verify who is on the other end of the channel.
         del self._review_tokens[token]
@@ -1248,7 +1248,7 @@ class ECServer:
 
 def resolve_maintainer_repo_path(brain: Brain | None = None) -> str | None:
     """Repo the Maintainer verifies grounding against (D35), resolved once
-    at server startup. Priority: ``EC_REPO_PATH`` (+``EC_BRANCH``) env
+    at server startup. Priority: ``REVERIE_REPO_PATH`` (+``REVERIE_BRANCH``) env
     override, git toplevel of the current directory, else the most recent
     active session's repo from the database. None when nothing resolves —
     grounding verification is then skipped by its task."""
@@ -1265,7 +1265,7 @@ def resolve_maintainer_repo_path(brain: Brain | None = None) -> str | None:
     return None
 
 
-def serve(server: ECServer, stdin, stdout) -> None:
+def serve(server: ReverieServer, stdin, stdout) -> None:
     """NDJSON loop: one JSON-RPC message per line (MCP stdio transport)."""
     for line in stdin:
         line = line.strip()
@@ -1283,7 +1283,7 @@ def main() -> int:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
     log.info("EC MCP server starting (protocol %s)", PROTOCOL_VERSION)
-    server = ECServer()
+    server = ReverieServer()
     server.start_maintenance(
         repo_path=resolve_maintainer_repo_path(server._ensure_brain()))
     try:

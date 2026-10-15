@@ -6,7 +6,7 @@ after extraction and before storage. The extractor prompt stays untouched;
 the extractor merely guarantees a grounding dict exists to stamp into.
 
 Run: .venv/bin/python -m pytest tests/test_phase13_commit_hash.py -v
-Offline: mocked LLM calls (ec.extractor.call_llm / ec.diffuser.call_llm)
+Offline: mocked LLM calls (reverie.extractor.call_llm / reverie.diffuser.call_llm)
 plus real throwaway git repos under tmp_path.
 """
 
@@ -21,11 +21,11 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.brain import Brain
-from ec.extractor import extract_and_store_session, stamp_grounding_commit_hash
-from ec.grounding import evaluate_ecu
-from ec.mcp_server import ECServer, _current_commit_hash
-from ec.session import SessionManager
+from reverie.brain import Brain
+from reverie.extractor import extract_and_store_session, stamp_grounding_commit_hash
+from reverie.grounding import evaluate_ecu
+from reverie.mcp_server import ReverieServer, _current_commit_hash
+from reverie.session import SessionManager
 
 REPO_BRANCH = "main"
 
@@ -84,13 +84,13 @@ def _head_short(path: Path) -> str:
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -102,13 +102,13 @@ def manager(brain):
 
 def enable_repo(brain):
     """feat/flow: enable the env-detected repo (call AFTER setenv)."""
-    from ec import repos
+    from reverie import repos
     repos.set_repo_state(brain, repos.resolve_repo(), "enabled")
 
 
 @pytest.fixture()
 def server(brain, manager, model):
-    return ECServer(brain=brain, manager=manager, embedding_model=model)
+    return ReverieServer(brain=brain, manager=manager, embedding_model=model)
 
 
 def call_tool(server, name, arguments=None, msg_id=1):
@@ -182,7 +182,7 @@ class TestStampGroundingCommitHash:
 def test_extract_and_store_session_stamps(brain, model):
     sid = brain.create_session(str(Path("/repos/x")), REPO_BRANCH)
     interaction = {"prompt": "p", "reasoning_trace": "r"}
-    with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
+    with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
         _, ids = extract_and_store_session(
             brain, sid, interaction, embedding_model=model,
             commit_hash="abc123def456")
@@ -195,7 +195,7 @@ def test_extract_and_store_session_stamps(brain, model):
 def test_extract_and_store_session_without_hash_stays_clean(brain, model):
     sid = brain.create_session("/repos/x", REPO_BRANCH)
     interaction = {"prompt": "p", "reasoning_trace": "r"}
-    with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
+    with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
         _, ids = extract_and_store_session(
             brain, sid, interaction, embedding_model=model, commit_hash=None)
     assert "commit_hash" not in brain.get_session_ecu(ids[0])["grounding"]
@@ -205,22 +205,22 @@ def test_extract_and_store_session_without_hash_stays_clean(brain, model):
 
 
 # ---------------------------------------------------------------------------
-# ec_observe end-to-end (§28.13 flow with the D49 stamp)
+# reverie_observe end-to-end (§28.13 flow with the D49 stamp)
 # ---------------------------------------------------------------------------
 
 def test_commit_hash_stamped(tmp_path, monkeypatch, server, manager, model,
                              brain):
     repo = tmp_path / "demo-repo"
     _init_git_repo(repo)
-    monkeypatch.setenv("EC_REPO_PATH", str(repo))
-    monkeypatch.setenv("EC_BRANCH", REPO_BRANCH)
+    monkeypatch.setenv("REVERIE_REPO_PATH", str(repo))
+    monkeypatch.setenv("REVERIE_BRANCH", REPO_BRANCH)
     enable_repo(brain)
     sid = manager.start_session()["session_id"]
 
-    with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
-         patch("ec.diffuser.call_llm",
+    with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
+         patch("reverie.diffuser.call_llm",
                return_value=json.dumps({"classifications": []})):
-        payload, result = call_tool(server, "ec_observe", {
+        payload, result = call_tool(server, "reverie_observe", {
             "user_prompt": "why do sessions drop?",
             "reasoning_trace": "I traced it to the token refresh race...",
         })
@@ -240,15 +240,15 @@ def test_commit_hash_no_git_repo(tmp_path, monkeypatch, server, manager,
                                  brain):
     plain = tmp_path / "plain-dir"
     plain.mkdir()
-    monkeypatch.setenv("EC_REPO_PATH", str(plain))
-    monkeypatch.setenv("EC_BRANCH", REPO_BRANCH)
+    monkeypatch.setenv("REVERIE_REPO_PATH", str(plain))
+    monkeypatch.setenv("REVERIE_BRANCH", REPO_BRANCH)
     enable_repo(brain)
     sid = manager.start_session()["session_id"]
 
-    with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
-         patch("ec.diffuser.call_llm",
+    with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
+         patch("reverie.diffuser.call_llm",
                return_value=json.dumps({"classifications": []})):
-        payload, result = call_tool(server, "ec_observe", {
+        payload, result = call_tool(server, "reverie_observe", {
             "user_prompt": "p", "reasoning_trace": "r"})
     assert result["isError"] is False
     assert payload["status"] == "ok"

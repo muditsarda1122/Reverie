@@ -33,7 +33,7 @@ updates ``maintenance_state`` (last_run_at, last_run_ecu_count) so the
 trigger checks can compare future brain state against this baseline.
 
 The user never sees any of this: no CLI command, no user action. The only
-visible surface is ``last_maintenance_run`` in ``ec_get_summary``.
+visible surface is ``last_maintenance_run`` in ``reverie_summary``.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ from .confidence import (
     propagate as propagate_confidence,
 )
 
-log = logging.getLogger("ec.maintainer")
+log = logging.getLogger("reverie.maintainer")
 
 # Fixed task execution order (design doc §1.3).
 TASK_ORDER = ("forgetting", "grounding", "edge_pruning", "clustering")
@@ -299,7 +299,7 @@ def task_grounding(brain, config, repo_path=None, now=None) -> TaskResult:
     ``maintainer.grounding_check_interval_hours`` (72h) per repo via
     maintenance_state. Skipped entirely when no repo is given, the repo is
     not on disk, or the throttle has not elapsed. Implemented in Phase 8
-    (design doc Section 3); see ec/grounding.py for the checks.
+    (design doc Section 3); see reverie/grounding.py for the checks.
     """
     from .grounding import GroundingVerifier
     return GroundingVerifier(brain, config, repo_path, now=now).run()
@@ -381,7 +381,7 @@ def task_clustering(brain, config, repo_path=None, now=None) -> TaskResult:
     means never clustered — the count starts from zero). The baseline is
     stamped on every non-gated invocation, including ones where the brain
     turned out too small to cluster — the examination happened. The actual
-    clustering lives in ec/clustering.py.
+    clustering lives in reverie/clustering.py.
     """
     from .clustering import run_clustering
 

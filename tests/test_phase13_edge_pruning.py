@@ -17,11 +17,11 @@ import json
 
 import pytest
 
-from ec import maintainer
-from ec.brain import Brain
-from ec.confidence import contradiction_update, support_update
-from ec.config import DEFAULT_CONFIG, _to_attrdict
-from ec.maintainer import run_maintenance, task_edge_pruning
+from reverie import maintainer
+from reverie.brain import Brain
+from reverie.confidence import contradiction_update, support_update
+from reverie.config import DEFAULT_CONFIG, _to_attrdict
+from reverie.maintainer import run_maintenance, task_edge_pruning
 
 # ---------------------------------------------------------------------------
 # fixtures + helpers
@@ -35,7 +35,7 @@ def config():
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 

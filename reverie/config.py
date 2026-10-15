@@ -1,12 +1,12 @@
 """EC configuration — every tunable constant in one place (Spec Section 15).
 
-Defaults live here in code. If ``~/.ec/config.yaml`` (or ``$EC_HOME/config.yaml``)
+Defaults live here in code. If ``~/.reverie/config.yaml`` (or ``$REVERIE_HOME/config.yaml``)
 exists it is deep-merged over the defaults, so users can override any value
 without touching code.
 
-EC_HOME resolution order:
-    1. ``EC_HOME`` environment variable
-    2. ``~/.ec``
+REVERIE_HOME resolution order:
+    1. ``REVERIE_HOME`` environment variable
+    2. ``~/.reverie``
 
 Deferred sections (clustering) are included so the config surface matches
 Section 15 exactly. The maintainer block became live code in Phase 6;
@@ -28,9 +28,9 @@ from . import providers as _providers
 # Paths
 # ---------------------------------------------------------------------------
 
-def ec_home() -> Path:
+def reverie_home() -> Path:
     """Root directory for the global EC brain. One DB for all projects (§28.1)."""
-    return Path(os.environ.get("EC_HOME", "~/.ec")).expanduser()
+    return Path(os.environ.get("REVERIE_HOME", "~/.reverie")).expanduser()
 
 
 #: This Reverie version's schema level (feat/flow). Stored in the database as
@@ -40,11 +40,11 @@ SCHEMA_VERSION = 1
 
 
 def default_db_path() -> Path:
-    return ec_home() / "ec.db"
+    return reverie_home() / "reverie.db"
 
 
 def default_config_path() -> Path:
-    return ec_home() / "config.yaml"
+    return reverie_home() / "config.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
 
     # -- LLM (§15 llm block) -------------------------------------------------
-    # `provider` selects an entry from ec/providers.py; fields the user does
+    # `provider` selects an entry from reverie/providers.py; fields the user does
     # not set explicitly are filled from that entry (custom/unknown = today's
     # behaviour: every field is used as written below).
     "llm": {
@@ -193,7 +193,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "wire_format": None,
         # True/False force the reasoning-model request shape (no temperature,
         # max_completion_tokens instead of max_tokens); None = auto-detect by
-        # a conservative model-name rule (ec.llm._is_openai_reasoning_model).
+        # a conservative model-name rule (reverie.llm._is_openai_reasoning_model).
         "openai_reasoning": None,
         # Retry policy for transient failures (429 / 5xx / timeouts).
         "retry_attempts": 3,            # total attempts (1 = no retry)
@@ -253,7 +253,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # -- Review gate (§5) ----------------------------------------------------
     "review_gate": {
-        # Decorative: the trigger is implicit (session close via /ec-stop,
+        # Decorative: the trigger is implicit (review decisions via `reverie review`,
         # plus on-demand apply_review_decisions); this key is never read.
         "trigger": "session_close | on_demand",
         # Decorative: grouping behaviour is governed by grouping_strategy
@@ -269,14 +269,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "review": {
         # Candidates unreviewed this many days become review_status='expired'
         # (kept, never deleted; still usable in session memory; revived only
-        # via `ec review --expired`). 0 disables expiry.
+        # via `reverie review --expired`). 0 disables expiry.
         "expire_after_days": 21,
-        # ec_get_summary nudge: one counts-only line when the unreviewed
+        # reverie_summary nudge: one counts-only line when the unreviewed
         # backlog exceeds this many candidates...
         "nudge_threshold": 10,
         # ...or the oldest unreviewed candidate is older than this many days.
         "nudge_age_days": 5,
-        # Page size for `ec review` and ec_review_list (never a filter —
+        # Page size for `reverie review` and reverie_review_list (never a filter —
         # "more" is always available).
         "page_size": 10,
     },
@@ -445,7 +445,7 @@ _config_cache: AttrDict | None = None
 
 
 def get_config(refresh: bool = False) -> AttrDict:
-    """Process-wide config singleton (loads ~/.ec/config.yaml once)."""
+    """Process-wide config singleton (loads ~/.reverie/config.yaml once)."""
     global _config_cache
     if _config_cache is None or refresh:
         _config_cache = load_config()

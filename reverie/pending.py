@@ -1,22 +1,20 @@
-"""ec-retry — recovery for failed LLM work (feat/providers).
+"""Recovery for failed LLM work (feat/providers) — `reverie retry`.
 
 Two failure states this recovers:
 
 1. **Pending extractions.** When the extraction LLM call fails after
    retries, the interaction input is persisted to ``pending_extractions``
    (nothing is lost). Items are retried automatically at the next
-   successful ``ec_observe`` for the same (repo, branch), or manually here:
-   ``ec-retry`` / ``ec-retry --list`` / ``ec-retry --drop <id>``. A retry
-   extracts the stored interaction into the *current* active session for
-   that (repo, branch) — a closed session's brain is never written.
+   successful ``reverie_observe`` for the same (repo, branch), or manually:
+   ``reverie retry`` / ``reverie retry --list`` / ``reverie retry --drop <id>``.
+   A retry extracts the stored interaction into the *current* active
+   session for that (repo, branch) — a closed session's brain is never
+   written.
 
 2. **Undiffused ECUs.** A review-gate accept whose Full-Diffuser pass
    failed leaves the ECU promoted but edgeless (ASSESSMENT.md:178). The
    review gate flags those in metadata (``diffusion_failed``);
-   ``ec-retry --rediffuse`` re-runs the diffuser and clears the flag.
-
-The CLI shares the ``ec-start``/``ec-stop`` entry-point style (a thin
-console script over this module's ``main``, pyproject.toml).
+   ``reverie retry --rediffuse`` re-runs the diffuser and clears the flag.
 """
 
 from __future__ import annotations
@@ -63,9 +61,9 @@ def retry_pending(
 ) -> dict:
     """Retry pending extractions, storing recovered ECUs in the active session.
 
-    An item whose (repo, branch) has no active session is skipped (start
-    one with ec-start). Returns a summary dict; individual failures are
-    recorded, never raised.
+    An item whose (repo, branch) has no active session is skipped (one is
+    created automatically on that repo's next tool call). Returns a summary
+    dict; individual failures are recorded, never raised.
     """
     cfg = config or get_config()
     items = brain.list_pending_extractions(repo_path=repo_path, branch=branch)
@@ -80,7 +78,8 @@ def retry_pending(
             summary["details"].append({
                 "id": item["id"], "outcome": "skipped",
                 "reason": f"no active session for {item['repo_path']} "
-                          f"({item['branch']}) — run ec-start there first",
+                          f"({item['branch']}) — it is created on that "
+                          "repo's next tool call",
             })
             continue
         try:
@@ -175,7 +174,7 @@ def _print_rediffuse_summary(summary: dict, print_fn) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="ec-retry",
+        prog="reverie retry",
         description="Retry pending extractions and re-diffuse promoted-but-"
                     "undiffused ECUs.",
     )

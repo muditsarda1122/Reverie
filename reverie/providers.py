@@ -5,7 +5,7 @@ reach it, which environment variable holds the key (plus accepted aliases),
 which wire format it speaks, a sensible small/cheap default model, whether a
 key is required, and where to get one.
 
-``provider`` in ``~/.ec/config.yaml`` selects an entry; ec/config.py fills
+``provider`` in ``~/.reverie/config.yaml`` selects an entry; reverie/config.py fills
 any llm field the user did not set explicitly from this table (``custom``
 and unknown names are left untouched — today's behaviour).
 
@@ -77,7 +77,7 @@ REGISTRY: dict[str, Provider] = {
     # gpt-5-mini: $0.25/$2 per MTok; OpenAI's documented cheap model for
     # low-latency, high-volume workloads (successor to o4-mini). A reasoning
     # model — it rejects `temperature` and needs `max_completion_tokens`;
-    # the auto rule in ec.llm handles the request shape. Source checked
+    # the auto rule in reverie.llm handles the request shape. Source checked
     # 2026-10-14: https://developers.openai.com/api/docs/models/gpt-5-mini
     # and https://developers.openai.com/api/docs/pricing
     "openai": Provider(
@@ -125,7 +125,7 @@ REGISTRY: dict[str, Provider] = {
     ),
     # qwen2.5-coder:14b: the existing D42 offline fallback model (the
     # installer pulls it); keyless local inference. Sources: the repo's own
-    # D42/D48 history (ec/install.py); Ollama's OpenAI-compatible endpoint
+    # D42/D48 history (reverie/install.py); Ollama's OpenAI-compatible endpoint
     # lives at http://localhost:11434/v1.
     "ollama": Provider(
         key="ollama",

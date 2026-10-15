@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-log = logging.getLogger("ec.grounding")
+log = logging.getLogger("reverie.grounding")
 
 #: Informational staleness flag: more than this many commits between the ECU's
 #: grounding.commit_hash and HEAD marks ``metadata.stale_commit``. Never a

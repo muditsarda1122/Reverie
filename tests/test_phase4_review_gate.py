@@ -2,7 +2,7 @@
 
 Run: .venv/bin/python -m pytest tests/ -v
 Offline: real embeddings (HF cache); all LLM calls mocked at
-ec.diffuser.call_llm (classification + adjudication), following Phase 2.
+reverie.diffuser.call_llm (classification + adjudication), following Phase 2.
 Verified embedding similarities (MiniLM, offline):
   supports pair 0.695 | contradicts pair 0.927 | engineering pair 0.993
   depends_on pair 0.901 | case-3 pair 0.925   (diffuser threshold: 0.6)
@@ -19,10 +19,10 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from ec import confidence as conf
-from ec.brain import Brain
-from ec.llm import LLMError
-from ec.review_gate import (
+from reverie import confidence as conf
+from reverie.brain import Brain
+from reverie.llm import LLMError
+from reverie.review_gate import (
     ReviewGateError,
     ReviewResult,
     apply_review_decisions,
@@ -72,14 +72,14 @@ def classifications_response(*rels: str) -> str:
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
@@ -147,7 +147,7 @@ def test_accept_promotes_and_diffuses(brain, model, session_id):
     target = insert_canonical(brain, model, SUPPORTS_T, confidence=0.5)
     s = insert_session(brain, model, session_id, SUPPORTS_S, confidence=0.63)
 
-    with patch("ec.diffuser.call_llm",
+    with patch("reverie.diffuser.call_llm",
                return_value=classifications_response("supports")):
         result = apply_review_decisions(brain, session_id, {s: "accept"})
 
@@ -171,7 +171,7 @@ def test_accept_promotes_and_diffuses(brain, model, session_id):
 def test_accept_with_edit(brain, model, session_id):
     s = insert_session(brain, model, session_id, SUPPORTS_S)
     edited = "The auth race condition comes from unordered refresh and cache clear"
-    with patch("ec.diffuser.call_llm",
+    with patch("reverie.diffuser.call_llm",
                return_value=classifications_response("unrelated")):
         result = apply_review_decisions(
             brain, session_id,
@@ -185,7 +185,7 @@ def test_accept_with_edit(brain, model, session_id):
     assert edit_meta["original_cognition"] == SUPPORTS_S
     assert edit_meta["edited_at"]
     # re-embedded: the stored embedding matches the edited text, not the original
-    from ec.embeddings import from_blob
+    from reverie.embeddings import from_blob
     assert np.dot(from_blob(promoted["embedding"]),
                   m_encode(model, edited)) > 0.99
 
@@ -194,7 +194,7 @@ def test_accept_diffusion_failure_still_promotes(brain, model, session_id):
     # a similar canonical ECU forces the classification LLM call, which fails
     insert_canonical(brain, model, SUPPORTS_T, confidence=0.5)
     s = insert_session(brain, model, session_id, SUPPORTS_S)
-    with patch("ec.diffuser.call_llm", side_effect=LLMError("no key")):
+    with patch("reverie.diffuser.call_llm", side_effect=LLMError("no key")):
         result = apply_review_decisions(brain, session_id, {s: "accept"})
     assert result.accepted == [s]
     assert brain.get_ecu(s) is not None
@@ -219,7 +219,7 @@ def test_interactive_review_prints_diffusion_warning(brain, model, session_id):
     insert_canonical(brain, model, SUPPORTS_T, confidence=0.5)
     insert_session(brain, model, session_id, SUPPORTS_S)
     printed = []
-    with patch("ec.diffuser.call_llm", side_effect=LLMError("offline")):
+    with patch("reverie.diffuser.call_llm", side_effect=LLMError("offline")):
         result = interactive_review(
             brain, session_id,
             input_fn=lambda _prompt="": "a",
@@ -275,7 +275,7 @@ def test_pending_update_applied_with_exact_delta(brain, model, session_id):
     brain.update_ecu_metadata(target, has_pending_updates=True)
 
     # full diffuser classifies the pair unrelated → the pending path applies
-    with patch("ec.diffuser.call_llm",
+    with patch("reverie.diffuser.call_llm",
                return_value=classifications_response("unrelated")):
         result = apply_review_decisions(brain, session_id, {s: "accept"})
 
@@ -297,7 +297,7 @@ def test_pending_update_no_double_apply(brain, model, session_id):
     s = insert_session(brain, model, session_id, SUPPORTS_S, confidence=0.63)
     brain.add_pending_update(target, s, session_id, "supports", 0.0695)
 
-    with patch("ec.diffuser.call_llm",
+    with patch("reverie.diffuser.call_llm",
                return_value=classifications_response("supports")):
         result = apply_review_decisions(brain, session_id, {s: "accept"})
 
@@ -346,7 +346,7 @@ def test_contradiction_flag_both_high_confidence(brain, model, session_id):
     s = insert_session(brain, model, session_id, CONTRA_S, confidence=0.72)
 
     responses = [classifications_response("contradicts"), GENUINE]
-    with patch("ec.diffuser.call_llm", side_effect=responses):
+    with patch("reverie.diffuser.call_llm", side_effect=responses):
         result = apply_review_decisions(brain, session_id, {s: "accept"})
 
     kinds = [f["kind"] for f in result.flags]
@@ -372,7 +372,7 @@ def test_contradiction_flag_engineering_scope(brain, model, session_id):
         grounding={"files": ["auth/token_manager.py"]},
     )
     responses = [classifications_response("contradicts"), GENUINE]
-    with patch("ec.diffuser.call_llm", side_effect=responses):
+    with patch("reverie.diffuser.call_llm", side_effect=responses):
         result = apply_review_decisions(brain, session_id, {s: "accept"})
 
     kinds = [f["kind"] for f in result.flags]
@@ -393,7 +393,7 @@ def test_depends_on_chain_notification(brain, model, session_id):
     s = insert_session(brain, model, session_id, DEP_S, confidence=0.9)
 
     responses = [classifications_response("contradicts"), GENUINE]
-    with patch("ec.diffuser.call_llm", side_effect=responses):
+    with patch("reverie.diffuser.call_llm", side_effect=responses):
         result = apply_review_decisions(brain, session_id, {s: "accept"})
 
     # B dropped below theta_dep_reevaluate → propagation challenged A
@@ -412,7 +412,7 @@ def test_case3_sets_competing_since(brain, model, session_id):
     s = insert_session(brain, model, session_id, CASE3_S, confidence=0.5)
 
     responses = [classifications_response("contradicts"), GENUINE]
-    with patch("ec.diffuser.call_llm", side_effect=responses):
+    with patch("reverie.diffuser.call_llm", side_effect=responses):
         apply_review_decisions(brain, session_id, {s: "accept"}, now=T0)
 
     for ecu_id in (s, target):
@@ -427,7 +427,7 @@ def test_case3_competing_since_never_overwritten(brain, model, session_id):
     s = insert_session(brain, model, session_id, CASE3_S, confidence=0.5)
 
     responses = [classifications_response("contradicts"), GENUINE]
-    with patch("ec.diffuser.call_llm", side_effect=responses):
+    with patch("reverie.diffuser.call_llm", side_effect=responses):
         apply_review_decisions(brain, session_id, {s: "accept"}, now=T0)
 
     assert brain.get_ecu(target)["metadata"]["competing_since"] == first_seen
@@ -476,7 +476,7 @@ def test_review_closes_session_and_logs(brain, model, session_id):
     s2 = insert_session(brain, model, session_id, "Rejected conclusion")
     s3 = insert_session(brain, model, session_id, "Skipped conclusion")
 
-    with patch("ec.diffuser.call_llm",
+    with patch("reverie.diffuser.call_llm",
                return_value=classifications_response("unrelated")):
         result = apply_review_decisions(
             brain, session_id,
@@ -506,7 +506,7 @@ def test_interactive_review_driver(brain, model, session_id):
 
     answers = iter(["i", "y", "d", "n", "a"])  # group auth: i → y, d, n; queue: a
     printed = []
-    with patch("ec.diffuser.call_llm",
+    with patch("reverie.diffuser.call_llm",
                return_value=classifications_response("unrelated")):
         result = interactive_review(
             brain, session_id,

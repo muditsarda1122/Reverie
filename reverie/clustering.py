@@ -40,7 +40,7 @@ import logging
 
 import numpy as np
 
-log = logging.getLogger("ec.clustering")
+log = logging.getLogger("reverie.clustering")
 
 #: HDBSCAN's noise label — ECUs assigned it join no cluster.
 NOISE_LABEL = -1

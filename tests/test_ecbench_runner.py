@@ -1,6 +1,6 @@
 """EC-Bench runner tests — offline; the agent is a stub script, review=skip
 avoids all LLM calls. Real EC session CLI runs as subprocesses against the
-isolated EC_HOME (the same wiring the benchmark uses).
+isolated REVERIE_HOME (the same wiring the benchmark uses).
 
 Run: .venv/bin/python -m pytest tests/test_ecbench_runner.py -v
 """
@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from ec import run_ecbench
-from ec.install import MCP_CONSOLE_SCRIPT, server_command
-from ec.run_ecbench import BenchError, _runner_python
+from reverie import run_ecbench
+from reverie.install import MCP_CONSOLE_SCRIPT, server_command
+from reverie.run_ecbench import BenchError, _runner_python
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -30,7 +30,7 @@ print(json.dumps({
     "type": "text",
     "prompt": prompt,
     "opencode_config": os.environ.get("OPENCODE_CONFIG"),
-    "ec_home": os.environ.get("EC_HOME"),
+    "reverie_home": os.environ.get("REVERIE_HOME"),
     "cwd": os.getcwd(),
 }))
 """
@@ -97,38 +97,38 @@ def test_load_spec_validation(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_agent_config_ec_shape(tmp_path, monkeypatch):
-    ec_home = tmp_path / "ec_home"
-    monkeypatch.setattr("ec.install._is_pip_installed", lambda: False)
-    cfg = run_ecbench.build_agent_config("ec", ec_home, tmp_path / "wd", "main")
-    entry = cfg["mcp"]["ec"]
+    reverie_home = tmp_path / "reverie_home"
+    monkeypatch.setattr("reverie.install._is_pip_installed", lambda: False)
+    cfg = run_ecbench.build_agent_config("ec", reverie_home, tmp_path / "wd", "main")
+    entry = cfg["mcp"]["reverie"]
     python, args, _env = server_command()
     assert entry["command"] == [python, *args]
     assert Path(entry["command"][0]).is_absolute()
     assert entry["enabled"] is True
     env = entry["environment"]
     assert env["PYTHONPATH"] == str(ROOT)
-    assert env["EC_HOME"] == str(ec_home)
-    assert env["EC_REPO_PATH"] == str(tmp_path / "wd")
-    assert env["EC_BRANCH"] == "main"
-    assert cfg["instructions"] == [str(ec_home / "AGENTS.md")]
+    assert env["REVERIE_HOME"] == str(reverie_home)
+    assert env["REVERIE_REPO_PATH"] == str(tmp_path / "wd")
+    assert env["REVERIE_BRANCH"] == "main"
+    assert cfg["instructions"] == [str(reverie_home / "AGENTS.md")]
 
 
 def test_agent_config_ec_shape_console_script(tmp_path, monkeypatch):
-    """D45: pip-installed -> the MCP entry is just ["ec-mcp"]; EC_* env vars
+    """D45: pip-installed -> the MCP entry is just ["reverie-mcp"]; EC_* env vars
     are unaffected (they ride on `environment`, not PYTHONPATH)."""
-    monkeypatch.setattr("ec.install._is_pip_installed", lambda: True)
+    monkeypatch.setattr("reverie.install._is_pip_installed", lambda: True)
     cfg = run_ecbench.build_agent_config(
-        "ec", tmp_path / "ec_home", tmp_path / "wd", "main")
-    entry = cfg["mcp"]["ec"]
+        "ec", tmp_path / "reverie_home", tmp_path / "wd", "main")
+    entry = cfg["mcp"]["reverie"]
     assert entry["command"] == [MCP_CONSOLE_SCRIPT]
-    assert entry["environment"]["EC_HOME"] == str(tmp_path / "ec_home")
+    assert entry["environment"]["REVERIE_HOME"] == str(tmp_path / "reverie_home")
     assert entry["enabled"] is True
 
 
 def test_agent_config_baseline_disables_ec(tmp_path):
     cfg = run_ecbench.build_agent_config(
-        "baseline", tmp_path / "ec_home", tmp_path / "wd", "main")
-    assert cfg["mcp"]["ec"]["enabled"] is False
+        "baseline", tmp_path / "reverie_home", tmp_path / "wd", "main")
+    assert cfg["mcp"]["reverie"]["enabled"] is False
     assert "instructions" not in cfg
 
 
@@ -199,15 +199,15 @@ def test_end_to_end_stub_agent(spec, repo, tmp_path, stub_agent):
         assert "Bench session" in Path(s["start"]["log"]).read_text()
         assert "Review complete." in Path(s["stop"]["log"]).read_text()
         assert s["stop"]["diffusion_warning"] is False
-    # baseline: no brain, no EC_HOME in the agent env
+    # baseline: no brain, no REVERIE_HOME in the agent env
     base_first = json.loads(Path(
         json.loads((run_dir / "baseline" / "manifest.json").read_text())
         ["sessions"][0]["prompts"][0]["transcript"]).read_text().strip())
-    assert base_first["ec_home"] is None
-    assert not (run_dir / "baseline" / "ec_home" / "ec.db").exists()
+    assert base_first["reverie_home"] is None
+    assert not (run_dir / "baseline" / "reverie_home" / "reverie.db").exists()
     baseline_cfg = json.loads(
         (run_dir / "baseline" / "opencode_config.json").read_text())
-    assert baseline_cfg["mcp"]["ec"]["enabled"] is False
+    assert baseline_cfg["mcp"]["reverie"]["enabled"] is False
 
 
 def test_resume_skips_completed_prompts(spec, repo, tmp_path, stub_agent):

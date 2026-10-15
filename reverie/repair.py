@@ -1,13 +1,13 @@
-"""``ec repair`` — brain integrity check and safe recovery (§28.4, D51).
+"""``reverie repair`` — brain integrity check and safe recovery (§28.4, D51).
 
-The §28.4 database-locked error has told users to "run ``ec repair``" since
+The §28.4 database-locked error has told users to "run ``reverie repair``" since
 Phase 1; this module makes that command real. It checks structural health and
 performs only SAFE, NON-DESTRUCTIVE recovery:
 
   1. the database file exists and is valid SQLite
   2. every required table exists (missing ones are created — schema.sql is
      all CREATE TABLE IF NOT EXISTS, so re-executing it is additive-only)
-  3. the WAL is checkpointed into the main DB (consolidates ``ec.db-wal``)
+  3. the WAL is checkpointed into the main DB (consolidates ``reverie.db-wal``)
   4. orphan edges (edges whose source/target ECU no longer exists) are
      removed — they reference deleted ECUs and can never be traversed
   5. orphan session ECUs (session_ecus rows pointing at a deleted session)
@@ -18,7 +18,7 @@ It NEVER modifies ECU data — no cognition, confidence, status, metadata or
 session-ECU changes; no diffusion or maintenance is triggered. Data-level
 inconsistencies are left to the Maintainer and the review gate.
 
-CLI: ``ec-repair [--dry-run] [--db PATH]`` (console script in pyproject.toml;
+CLI: ``reverie repair [--dry-run] [--db PATH]`` (a ``reverie`` subcommand;
 ``--db`` exists for tests/ops against a non-default brain).
 """
 
@@ -200,8 +200,8 @@ def repair(brain_path=None, dry_run: bool = False) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="ec-repair",
-        description="Check EC brain integrity and perform safe, "
+        prog="reverie repair",
+        description="Check Reverie brain integrity and perform safe, "
                     "non-destructive recovery (§28.4).",
     )
     parser.add_argument(
@@ -210,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--db", default=None,
-        help="brain path (default: $EC_HOME/ec.db)",
+        help="brain path (default: $REVERIE_HOME/reverie.db)",
     )
     args = parser.parse_args(argv)
 

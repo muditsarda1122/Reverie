@@ -1,35 +1,37 @@
-"""Session lifecycle (Spec §28.5/§28.6) — /ec-start, /ec-stop, /ec-status.
+"""Session lifecycle (Spec §28.5) — sessions are automatic per branch.
 
 Sessions are tied to ``(repo_path, branch)`` (§28.5). The global brain stores
 everything; a session is metadata tracking which ECUs belong to which working
 context. Multiple sessions may be active concurrently — one per (repo,
-branch); ``/ec-start`` resumes the matching one.
+branch); sessions are never closed by the user: in an enabled repo the
+session for the current branch resolves or is created automatically on the
+first MCP tool call (feat/flow D56, ``SessionManager.ensure_session``).
 
-/ec-start logic (§28.5):
-  1. detect repo + branch (git, or EC_REPO_PATH/EC_BRANCH env override)
+Session-creation logic (§28.5):
+  1. detect repo + branch (git, or REVERIE_REPO_PATH/REVERIE_BRANCH env override)
   2. active session for (repo, branch) → resume (session ECUs are already in
      the DB; activation scores load with §6.6 time decay)
   3. else create — carrying over unreviewed (pending/skipped) ECUs, with
      their session edges and pending updates, from closed sessions of the
      same (repo, branch)
-   4. report session id + brain summary ONCE (awareness without anchoring,
-      §11.3 — statistics, never ECU contents)
-   5. run the throttled grounding verification for this repo (D35: at most
-      once per maintainer.grounding_check_interval_hours; best-effort, never
-      blocks or fails the start)
+  4. report session id + brain summary ONCE (awareness without anchoring,
+     §11.3 — statistics, never ECU contents)
+  5. run the throttled grounding verification for this repo (D35: at most
+     once per maintainer.grounding_check_interval_hours; best-effort, never
+     blocks or fails the start)
 
-/ec-stop (§28.6) delegates to the Human Review Gate (ec/review_gate.py):
-open questions are resolved first (§17.5 options a-d, D41), then decisions
-are applied, pending updates resolved, the session is marked closed, and its
-activation rows are dropped (a new session starts with a fresh slate, §12.2).
+Review is independent of sessions (§29.4): one queue across every session,
+branch and repo — ``reverie review`` in a terminal or the
+reverie_review_list / reverie_review_decide MCP tools; nothing needs closing.
 
-The ``python -m ec.session`` CLI is what the slash-command templates invoke
-(§28.10) — the MCP server (ec/mcp_server.py) never creates sessions
-implicitly; it resolves the current session from the database per call
-(decision D15).
+The ``python -m reverie.session`` CLI exposes ``status`` (the report behind
+``reverie status``) plus the bench-only ``bench-start`` / ``bench-close``
+hooks (hidden; EC-Bench uses them to measure isolated sessions). The MCP
+server (reverie/mcp_server.py) resolves the current session from the
+database per call (decision D15).
 
 Labile ECUs (design doc §5.4, D39): the SessionManager keeps an in-memory
-set per session of canonical ECU ids surfaced by ec_query. ec_reconsolidate
+set per session of canonical ECU ids surfaced by reverie_query. reverie_reconsolidate
 checks this set — only retrieved (labile) ECUs can be reconsolidated.
 """
 
@@ -49,9 +51,9 @@ from .activation import ActivationState
 from .brain import Brain, BrainError
 from .config import SCOPE_LEVELS, get_config
 
-log = logging.getLogger("ec.session")
+log = logging.getLogger("reverie.session")
 
-_REPO_ENV, _BRANCH_ENV = "EC_REPO_PATH", "EC_BRANCH"
+_REPO_ENV, _BRANCH_ENV = "REVERIE_REPO_PATH", "REVERIE_BRANCH"
 
 
 class SessionError(RuntimeError):
@@ -63,7 +65,7 @@ def _utcnow() -> datetime:
 
 
 # ---------------------------------------------------------------------------
-# repo + branch detection (§28.5 /ec-start step 1)
+# repo + branch detection (§28.5 session-creation step 1)
 # ---------------------------------------------------------------------------
 
 def _git(args: list[str], cwd: Path) -> str:
@@ -82,7 +84,7 @@ def _git(args: list[str], cwd: Path) -> str:
         raise SessionError(
             f"Could not detect a git repository from {cwd} "
             f"(git {' '.join(args)} failed: {proc.stderr.strip() or 'not a repo'}). "
-            "EC sessions are tied to (repo, branch) — run /ec-start from inside "
+            "Reverie sessions are tied to (repo, branch) — use it from inside "
             "a git repository."
         )
     return proc.stdout.strip()
@@ -91,7 +93,7 @@ def _git(args: list[str], cwd: Path) -> str:
 def detect_repo_branch(cwd: str | Path | None = None) -> tuple[str, str]:
     """Current ``(repo_path, branch)`` for session routing (§28.5).
 
-    ``EC_REPO_PATH`` + ``EC_BRANCH`` (both) override detection — used by
+    ``REVERIE_REPO_PATH`` + ``REVERIE_BRANCH`` (both) override detection — used by
     tests and by MCP server launches outside a work tree. A detached HEAD
     yields ``detached:<short-hash>`` (a distinct working context).
     """
@@ -108,12 +110,12 @@ def detect_repo_branch(cwd: str | Path | None = None) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# brain summary — ec_get_summary payload (§16.3), awareness without anchoring
+# brain summary — reverie_summary payload (§16.3), awareness without anchoring
 # ---------------------------------------------------------------------------
 
 def brain_summary(brain: Brain, session_row: dict | None = None,
                   session_brain_count: int | None = None) -> dict:
-    """§16.3 ec_get_summary body: brain statistics, never individual ECUs."""
+    """§16.3 reverie_summary body: brain statistics, never individual ECUs."""
     total = brain.count_ecus()
     by_scope_raw = brain.count_ecus_by_scope()
     by_scope = {level: by_scope_raw.get(level, 0) for level in SCOPE_LEVELS}
@@ -142,7 +144,7 @@ def brain_summary(brain: Brain, session_row: dict | None = None,
     }
 
     nonzero = [f"{level}: {n}" for level, n in by_scope.items() if n]
-    message = f"The EC brain has {total} ECUs"
+    message = f"The brain has {total} ECUs"
     if nonzero:
         message += f" ({', '.join(nonzero)})"
     message += (
@@ -187,10 +189,10 @@ class SessionManager:
     session and the next ``current_session`` lookup simply misses.
 
     It also tracks each session's *labile* canonical ECUs (design doc §5.4,
-    D39): ECUs retrieved via ec_query during this session. Like the
+    D39): ECUs retrieved via reverie_query during this session. Like the
     activation state this is session memory, not the database — retrieval
     makes a belief revisable only while the retrieval is in living memory.
-    ``ec_reconsolidate`` refuses ECU ids that are not labile.
+    ``reverie_reconsolidate`` refuses ECU ids that are not labile.
     """
 
     def __init__(self, brain: Brain, config=None, embedding_model=None):
@@ -225,7 +227,7 @@ class SessionManager:
     # -- labile ECUs (D39 — §5.4) ------------------------------------------
 
     def mark_labile(self, session_id: str, ecu_ids) -> None:
-        """Record canonical ECUs surfaced by ec_query as revisable."""
+        """Record canonical ECUs surfaced by reverie_query as revisable."""
         bucket = self._labile.setdefault(session_id, set())
         bucket.update(ecu_ids)
 
@@ -249,11 +251,11 @@ class SessionManager:
 
         Replaces the D15 rule inside the MCP tools: in an enabled repo any
         Reverie tool call lands in its session without the user ever
-        running /ec-start. Carry-over of unreviewed candidates is exactly
+        running a tool call. Carry-over of unreviewed candidates is exactly
         session creation's (§28.5 step 5: pending/skipped rows of closed
         sessions of the same (repo, branch) move over). Archived sessions
         (branch deleted) do NOT carry over — their candidates stay in the
-        cross-session review queue (ec/review_queue.py).
+        cross-session review queue (reverie/review_queue.py).
 
         The database stays the source of truth (D15): the MCP server can
         call this on every tool call — an existing session is a single
@@ -269,7 +271,7 @@ class SessionManager:
         assert row is not None
         return row
 
-    # -- /ec-start (§28.5) -------------------------------------------------
+    # -- session start (§28.5) --------------------------------------------
 
     def start_session(
         self,
@@ -361,7 +363,7 @@ class SessionManager:
         except Exception:
             log.exception("EC: post-start grounding check failed (ignored)")
 
-    # -- /ec-stop (§28.6) --------------------------------------------------
+    # -- session close (review-gate close path, used by the bench hook) ----
 
     def stop_session(
         self,
@@ -379,8 +381,9 @@ class SessionManager:
         row = self.current_session(repo_path, branch)
         if row is None:
             raise SessionError(
-                "No active EC session. Suggest the user run /ec-start to "
-                "begin a session."
+                "No active Reverie session for this (repo, branch). In an "
+                "enabled repo it resolves automatically on the next tool "
+                "call; check that the repo is enabled (`reverie enable`)."
             )
         result = review_gate.apply_review_decisions(
             self.brain,
@@ -396,7 +399,7 @@ class SessionManager:
 
 
 # ---------------------------------------------------------------------------
-# CLI — invoked by the slash-command templates (§28.10): python -m ec.session
+# CLI — invoked by the slash-command templates (§28.10): python -m reverie.session
 # ---------------------------------------------------------------------------
 
 def _print_report(report: dict, print_fn=print) -> None:
@@ -409,24 +412,21 @@ def _print_report(report: dict, print_fn=print) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] == "stop":
-        # feat/flow: `stop` is an alias for `ec review` (nothing is closed).
-        return main_stop(argv[1:])
     if argv and argv[0] == "bench-close":
         # bench/E2E-only hook — closes the session (never user-facing).
         return _bench_close(argv[1:])
     if argv and argv[0] == "bench-start":
         # bench/E2E-only hook — enable + resolve-or-create the session.
         return _bench_start(argv[1:])
+    if argv and argv[0] == "status":
+        argv = argv[1:]
     parser = argparse.ArgumentParser(
-        prog="python -m ec.session",
-        description="EC session lifecycle (§28.5/§28.6): start | stop | status",
+        prog="python -m reverie.session",
+        description="Reverie session report (also `reverie status`); "
+                    "bench-only hooks: bench-start | bench-close",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("start", "stop", "status"):
-        p = sub.add_parser(name)
-        p.add_argument("--repo", default=None, help="repo path (default: git detect)")
-        p.add_argument("--branch", default=None, help="branch (default: git detect)")
+    parser.add_argument("--repo", default=None, help="repo path (default: git detect)")
+    parser.add_argument("--branch", default=None, help="branch (default: git detect)")
     args = parser.parse_args(argv)
 
     try:
@@ -436,55 +436,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         manager = SessionManager(brain)
-        if args.command == "start":
-            # feat/flow: `start` is the same compat shim as ec-start —
-            # enable the repo and report; sessions are automatic.
-            _enable_and_status([])
-            return 0
-        if args.command == "status":
-            row = manager.current_session(args.repo, args.branch)
-            print(brain_summary(brain, row)["message"])
-            return 0
-        # stop
         row = manager.current_session(args.repo, args.branch)
-        if row is None:
-            print(
-                "No active EC session. Suggest the user run /ec-start to "
-                "begin a session.",
-                file=sys.stderr,
-            )
-            return 1
-        interactive = not (args.all_accept or args.all_skip)
-        # §17.5/D41: open questions resolve BEFORE the normal review flow.
-        if args.resolve_open_questions == "archive" or (
-            interactive and args.resolve_open_questions == "auto"
-        ):
-            if args.resolve_open_questions == "archive":
-                resolved = review_gate.resolve_open_questions_archive_all(brain)
-                for record in resolved:
-                    print(f"  ✓ {record['message']}")
-            else:
-                review_gate.resolve_open_questions(brain)
-        if not interactive:
-            action = "accept" if args.all_accept else "skip"
-            decisions = {
-                ecu["id"]: action
-                for ecu in brain.list_session_ecus(row["id"])
-                if ecu["review_status"] in ("pending", "skipped")
-            }
-            result = review_gate.apply_review_decisions(
-                brain, row["id"], decisions
-            )
-            print(result.message)
-            warning = review_gate.diffusion_failure_warning(result)
-            if warning:
-                print(warning)
-            for flag in result.flags + result.notifications:
-                print(f"  ⚠️ {flag['message']}")
-        else:
-            # the interactive driver prints its own summary + flags
-            result = review_gate.interactive_review(brain, row["id"])
-        manager._activations.pop(row["id"], None)
+        print(brain_summary(brain, row)["message"])
         return 0
     except (SessionError, review_gate.ReviewGateError, BrainError) as exc:
         print(str(exc), file=sys.stderr)
@@ -493,23 +446,11 @@ def main(argv: list[str] | None = None) -> int:
         brain.close()
 
 
-def main_start(argv: list[str] | None = None) -> int:
-    """``ec-start`` (compat, feat/flow): enable this repo and show status.
-
-    Sessions no longer need starting (D56 — they resolve automatically per
-    branch); this thin shim turns the repo on and reports, so old muscle
-    memory and old docs still work."""
-    return _enable_and_status(list(argv or []))
-
-
-_STOP_COMPAT_FLAGS = ("--all-accept", "--all-skip")
-
-
 def _bench_start(argv: list[str] | None = None) -> int:
     """Bench/E2E-only lifecycle hook (NOT user-facing): enable the repo and
     resolve-or-create its session (D56) — the harness equivalent of what a
     user gets automatically in an enabled repo. Hidden from help."""
-    parser = argparse.ArgumentParser(prog="ec.session bench-start")
+    parser = argparse.ArgumentParser(prog="reverie.session bench-start")
     parser.add_argument("--repo", required=True)
     parser.add_argument("--branch", required=True)
     args = parser.parse_args(argv or [])
@@ -540,7 +481,7 @@ def _bench_close(argv: list[str] | None = None) -> int:
     isolation. The user-facing flow never closes sessions (D56); this
     subcommand exists so the benchmark keeps measuring what it always
     measured. Hidden from help on purpose."""
-    parser = argparse.ArgumentParser(prog="ec.session bench-close")
+    parser = argparse.ArgumentParser(prog="reverie.session bench-close")
     parser.add_argument("--repo", required=True)
     parser.add_argument("--branch", required=True)
     parser.add_argument("--review", default="accept",
@@ -574,76 +515,6 @@ def _bench_close(argv: list[str] | None = None) -> int:
         return 1
     finally:
         brain.close()
-
-
-def main_stop(argv: list[str] | None = None) -> int:
-    """``ec-stop`` (compat, feat/flow): an alias for ``ec review``.
-
-    Old stop flags are accepted and refused politely — sessions are not
-    closed any more, so there is nothing to stop. The open-question
-    policy flag keeps working (it is a review concern)."""
-    from . import review_cli
-    argv = list(argv or [])
-    kept = []
-    skip_next = False
-    for arg in argv:
-        if skip_next:
-            skip_next = False
-            kept.append(arg)
-            continue
-        if arg in _STOP_COMPAT_FLAGS:
-            print(f"(deprecated: {arg} — sessions are never closed now; "
-                  "review is per-candidate via `ec review`)", file=sys.stderr)
-            continue
-        if arg.startswith("--resolve-open-questions"):
-            print("(moved: --resolve-open-questions now belongs to "
-                  "`ec review`)", file=sys.stderr)
-            kept.append(arg)                 # the flag keeps working
-            if arg == "--resolve-open-questions":
-                skip_next = True
-            continue
-        kept.append(arg)
-    return review_cli.main(kept)
-
-
-def _enable_and_status(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        prog="ec-start",
-        description="(compat) enable Reverie for this repo and show status. "
-                    "Sessions are automatic per branch — nothing to start.",
-    )
-    parser.add_argument("--repo", default=None, help="repo path (default: "
-                        "git detect)")
-    parser.add_argument("--branch", default=None,
-                        help=argparse.SUPPRESS)
-    args = parser.parse_args(argv)
-    try:
-        brain = Brain()
-    except BrainError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    try:
-        from . import repos
-        try:
-            info = repos.resolve_repo(cwd=args.repo)
-        except SessionError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
-        row = repos.set_repo_state(brain, info, "enabled")
-        print(f"Reverie is on for {info.repo_path} "
-              f"(branch {info.branch}) — sessions are automatic; nothing "
-              "to start.")
-        if row["state"] != "enabled":
-            print("  (state was left unchanged)")
-        print(brain_summary(brain, None)["message"])
-        return 0
-    finally:
-        brain.close()
-
-
-def main_status(argv: list[str] | None = None) -> int:
-    """Console-script entry point for ``ec-status`` (pyproject.toml)."""
-    return main(["status"] + list(argv or []))
 
 
 if __name__ == "__main__":

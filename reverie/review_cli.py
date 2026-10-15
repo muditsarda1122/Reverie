@@ -1,4 +1,4 @@
-"""``ec review`` — the terminal review UI (feat/flow, D57).
+"""``reverie review`` — the terminal review UI (feat/flow, D57).
 
 Review is independent of sessions: one queue across every branch and repo.
 The TUI shows one candidate at a time — conclusion text prominent, the
@@ -709,7 +709,7 @@ def _apply_flag_decisions(brain: Brain, queue: list[dict],
         warning = diffusion_failure_warning(result)
         if warning:
             print(warning)
-    # diffusion failures are soft (promotion stands; `ec-retry --rediffuse`
+    # diffusion failures are soft (promotion stands; `reverie retry --rediffuse`
     # recovers) — only undecidable candidates fail the command.
     return 1 if missing else 0
 

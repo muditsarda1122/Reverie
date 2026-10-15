@@ -10,7 +10,7 @@ in place (§11, D2), two-stage contradiction handling (§12), supersession
 (both §15.5 conditions), and bounded propagation (§15.7).
 
 ``_diffuse_against_brain`` — the same pipeline as one reusable block (D38):
-``diffuse_ecu`` calls it with a stored ECU; ``ec.reconsolidation.reconsolidate``
+``diffuse_ecu`` calls it with a stored ECU; ``reverie.reconsolidation.reconsolidate``
 calls it with an ephemeral pseudo-ECU built from agent evidence
 (``store_edges=False`` — an unstored source cannot own edges, and without a
 stored replacement §15.5's second supersession condition is unmet).
@@ -41,7 +41,7 @@ from .brain import _now_iso
 from .config import RETRIEVABLE_STATUSES, get_config
 from .llm import LLMError, call_llm, extract_json, model_for
 
-log = logging.getLogger("ec.diffuser")
+log = logging.getLogger("reverie.diffuser")
 
 # Max ECU pairs per classification LLM call. find_similar top_k should not
 # exceed this so classification stays a single batched call (§4.4 step 3).
@@ -471,7 +471,7 @@ def _diffuse_against_brain(
 
     ``source_ecu`` is a full ECU dict — a real stored ECU (``store_edges=True``
     from ``diffuse_ecu``) or an ephemeral pseudo-ECU built from reconsolidation
-    evidence (``store_edges=False``, ec/reconsolidation.py). Edges always run
+    evidence (``store_edges=False``, reverie/reconsolidation.py). Edges always run
     source→existing, so an ephemeral source cannot persist them:
     ``brain.add_edge`` requires both endpoints to exist (no dangling edges),
     and with no stored replacement ECU the §15.5 supersession condition 2 is

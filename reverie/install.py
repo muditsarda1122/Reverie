@@ -1,23 +1,23 @@
-"""``ec install`` — one command configures EC for all detected coding agents.
+"""``reverie install`` — one command configures Reverie for all detected coding agents.
 
 Spec §28.8 (detection + per-agent installation logic + LLM provider step),
-§28.9 (``~/.ec/AGENTS.md``, written verbatim), §28.10 (command templates),
-§28.2 (the ``~/.ec/`` directory structure).
+§28.9 (``~/.reverie/AGENTS.md``, written verbatim), §28.10 (command templates),
+§28.2 (the ``~/.reverie/`` directory structure).
 
-Safety contract: the installer writes ONLY inside the EC home (``~/.ec`` or
-``$EC_HOME``) and the four agents' own config locations. Existing agent
-config is merged, never overwritten (only the ``ec`` entry is
+Safety contract: the installer writes ONLY inside the Reverie home (``~/.reverie`` or
+``$REVERIE_HOME``) and the four agents' own config locations. Existing agent
+config is merged, never overwritten (only the ``reverie`` entry is
 added/replaced). ``--dry-run`` prints every planned write with its full
 resulting content and writes nothing. API keys are NEVER written to disk —
 the installer only reads the environment to detect what is available.
 
-Entry points: ``python -m ec.install`` or the ``ec`` console script. When
-the package is pip-installed (D45), agent configs carry the ``ec`` console
+Entry points: ``python -m reverie.install`` or the ``reverie`` console script. When
+the package is pip-installed (D45), agent configs carry the ``reverie`` console
 script; otherwise the absolute venv-python form is written (B2/D28).
 
 LLM provider step (feat/providers): the installer detects provider keys in
-the environment (registry in ``ec/providers.py``), offers the detected one
-as the default, merges the resolved ``llm`` block into ``~/.ec/config.yaml``
+the environment (registry in ``reverie/providers.py``), offers the detected one
+as the default, merges the resolved ``llm`` block into ``~/.reverie/config.yaml``
 (D42-style), and verifies with one cheap live ping (``--no-verify`` skips).
 Ollama remains the offline fallback (D42).
 """
@@ -40,27 +40,28 @@ import yaml
 from . import providers
 from .brain import Brain
 from .config import DEFAULT_CONFIG, load_config
-from .config import ec_home as _default_ec_home
+from .config import reverie_home as _default_reverie_home
 from .llm import call_llm
 
 # ---------------------------------------------------------------------------
 # Verbatim spec texts (§28.9, §28.10) — tests assert equality with SPEC.md
 # ---------------------------------------------------------------------------
 
-AGENTS_MD = """# Engineering Cognition — Agent Instructions
+AGENTS_MD = """# Reverie — Agent Instructions
 
-EC is an MCP server providing engineering memory for your codebase.
-It stores Engineering Cognition Units (ECUs) — conclusions, not facts —
-and retrieves them when you need them.
+Reverie is an MCP server providing engineering memory for your codebase.
+It stores engineering conclusions (the internal record is an Engineering
+Cognition Unit, ECU) — conclusions, not facts — and retrieves them when
+you need them.
 
-EC provides seven MCP tools:
-- ec_observe: Extract engineering conclusions from your reasoning
-- ec_query: Retrieve relevant engineering cognition
-- ec_get_summary: Get brain statistics at session start
-- ec_reconsolidate: Update a retrieved ECU with new evidence
-- ec_set_repo_state: Record the user's enablement answer for a repo
-- ec_review_list: Show the user's pending review candidates
-- ec_review_decide: Apply review decisions the user stated
+Reverie provides seven MCP tools:
+- reverie_observe: Extract engineering conclusions from your reasoning
+- reverie_query: Retrieve relevant engineering cognition
+- reverie_summary: Get brain statistics at session start
+- reverie_reconsolidate: Update a retrieved conclusion with new evidence
+- reverie_set_repo_state: Record the user's enablement answer for a repo
+- reverie_review_list: Show the user's pending review candidates
+- reverie_review_decide: Apply review decisions the user stated
 
 ## Repo Path — Pass It on Every Call
 
@@ -76,15 +77,15 @@ a tool call reports that a repo is undecided, ask the user exactly:
 Reverie isn't on for this repo. Turn it on? (yes / not now / never)
 
 Ask this question AT MOST ONCE per conversation. Record the answer with
-ec_set_repo_state:
+reverie_set_repo_state:
 - "yes" -> state="enabled"
 - "not now" -> state="not_now" (stays off for now; do not ask again in
   this conversation)
 - "never" -> state="disabled" (fully off for this repo: nothing is
   captured, retrieved, or injected; existing memory is kept)
 
-If a tool response reports the repo is disabled, do nothing with EC in
-that repo and do not ask again.
+If a tool response reports the repo is disabled, do nothing with
+Reverie in that repo and do not ask again.
 
 ## Sessions Are Automatic
 
@@ -92,13 +93,11 @@ In an enabled repo, every branch has a session that is created
 automatically on the first tool call and never needs closing. Switching
 branches mid-conversation switches session memory; long-term memory
 stays shared across branches. Never suggest starting or stopping a
-session. (For compatibility, `ec-start` enables the repo and shows
-status, and `ec-stop` is an alias for `ec review` — do not suggest
-either unless the user asks.)
+session — there is nothing to start or stop.
 
-## When to Call ec_observe
+## When to Call reverie_observe
 
-Call ec_observe AFTER you:
+Call reverie_observe AFTER you:
 - Discover a non-obvious invariant or dependency
 - Debug a tricky issue and find the root cause
 - Make an architectural decision with rationale
@@ -108,20 +107,20 @@ Call ec_observe AFTER you:
 Pass your reasoning trace (your thinking, decisions, and rationale) — not
 just the final code output. The Extractor lifts observations into conclusions.
 
-Do NOT call ec_observe for:
+Do NOT call reverie_observe for:
 - Simple code changes with no insight
-- Things already captured in existing ECUs
+- Things already captured in existing conclusions
 - Pure factual observations (e.g., "this function returns a string")
 - Every single response — only when you have engineering insight worth saving
 
-## When to Call ec_query
+## When to Call reverie_query
 
-Call ec_query when you recognize a gap that past engineering cognition might fill.
-Read the relevant code files FIRST. Do NOT call ec_query before you have grounded
-yourself in the repository. EC cognition is a supplement to your understanding,
-not a replacement for reading the code.
+Call reverie_query when you recognize a gap that past engineering cognition might fill.
+Read the relevant code files FIRST. Do NOT call reverie_query before you have grounded
+yourself in the repository. Reverie's memory is a supplement to your
+understanding, not a replacement for reading the code.
 
-Call ec_query AFTER reading the code, when:
+Call reverie_query AFTER reading the code, when:
 - You're about to make a decision between multiple approaches
 - You're debugging and the cause isn't obvious from the code alone
 - You see a pattern in the code you don't recognise
@@ -131,7 +130,7 @@ Call ec_query AFTER reading the code, when:
 - You're planning an architectural change and want to check for existing
   architectural decisions or constraints
 
-Do NOT call ec_query:
+Do NOT call reverie_query:
 - Before you have read the relevant code files (this causes anchoring bias)
 - For simple code changes with no engineering insight needed
 - On every single response — only when you genuinely need past context
@@ -147,62 +146,63 @@ Pass a natural language query describing what you want to know. Be specific.
 than "dependency injection." The query is embedded and compared semantically —
 precise engineering questions retrieve better than single keywords.
 
-If ec_query returns no results, proceed normally — this means EC has no relevant
-cognition yet. EC starts empty and builds up over sessions.
+If reverie_query returns no results, proceed normally — this means Reverie
+has no relevant memory yet. It starts empty and builds up over sessions.
 
-## When to Call ec_reconsolidate
+## When to Call reverie_reconsolidate
 
-Call ec_reconsolidate when you discover that a previously retrieved ECU needs
-updating based on what you've found in the current codebase. This is how EC
-stays current — beliefs that are no longer accurate get corrected.
+Call reverie_reconsolidate when you discover that a previously retrieved
+conclusion needs updating based on what you've found in the current
+codebase. This is how Reverie stays current — beliefs that are no longer
+accurate get corrected.
 
-Call ec_reconsolidate when:
-- You verified a retrieved ECU against the code and found it's no longer accurate
-- You discovered new evidence that strengthens a retrieved ECU
-- You discovered new evidence that contradicts a retrieved ECU
-- The code an ECU is grounded in has changed, and the conclusion needs updating
+Call reverie_reconsolidate when:
+- You verified a retrieved conclusion against the code and found it's no longer accurate
+- You discovered new evidence that strengthens a retrieved conclusion
+- You discovered new evidence that contradicts a retrieved conclusion
+- The code a conclusion is grounded in has changed, and the conclusion needs updating
 
-Pass the ECU ID (from the ec_query result), your evidence (your reasoning about
+Pass the ECU ID (from the reverie_query result), your evidence (your reasoning about
 what changed), and optionally the relationship (supports/contradicts/supersedes).
 
-Do NOT call ec_reconsolidate for:
-- New insights unrelated to a previously retrieved ECU (use ec_observe)
-- ECUs you haven't retrieved in this session (ec_query first)
+Do NOT call reverie_reconsolidate for:
+- New insights unrelated to a previously retrieved conclusion (use reverie_observe)
+- Conclusions you haven't retrieved in this session (reverie_query first)
 - Simple code changes with no impact on engineering conclusions
 
-If ec_reconsolidate is not available (older EC version), use ec_observe to record
+If reverie_reconsolidate is not available, use reverie_observe to record
 the new finding — the Diffuser will handle the relationship at review time.
 
-## When to Call ec_get_summary
+## When to Call reverie_summary
 
-Call ec_get_summary ONCE at session start to see what EC already knows.
-This helps you decide whether to ec_query for specific context before
-starting work. Returns brain statistics, not individual ECUs.
+Call reverie_summary ONCE at session start to see what Reverie already
+knows. This helps you decide whether to reverie_query for specific context
+before starting work. Returns brain statistics, not individual conclusions.
 
 If the response contains a pending-review backlog line (counts only),
 mention it to the user AT MOST ONCE per conversation and offer two ways
-to review: run `ec review` in a terminal, or say "show my Reverie
+to review: run `reverie review` in a terminal, or say "show my Reverie
 candidates" here. Counts only — never candidate contents.
 
 ## Review — The Human Decides
 
 Observations are stored as review candidates, never promoted
 automatically. The user reviews them:
-- in a terminal with `ec review`, or
+- in a terminal with `reverie review`, or
 - through you: when the user asks to see their Reverie candidates, call
-  ec_review_list and show EVERY candidate's full conclusion text before
+  reverie_review_list and show EVERY candidate's full conclusion text before
   asking what they want to do.
 
 Rules for review through you:
-- Relay ONLY the decisions the user actually states, via ec_review_decide.
+- Relay ONLY the decisions the user actually states, via reverie_review_decide.
 - NEVER decide on the user's behalf.
 - NEVER bulk-accept unless the user explicitly asked for that group.
 - Be honest about the limits: Reverie cannot verify who made a decision;
   every decision is recorded with its channel (tui, agent, or cli).
 
-## Reading EC Output
+## Reading Reverie Output
 
-When ec_query returns ECUs, interpret them as follows:
+When reverie_query returns conclusions, interpret them as follows:
 
 ### Confidence levels:
 - High (>0.7): Reliable, act on this. Verify grounding if the decision is critical.
@@ -213,108 +213,138 @@ When ec_query returns ECUs, interpret them as follows:
 ### Status indicators:
 - active: Normal, current belief. Safe to use.
 - challenged: Contradicting evidence exists. Be careful — this belief
-  may be wrong. Check for a newer ECU that might supersede it.
+  may be wrong. Check for a newer conclusion that might supersede it.
 - open_question: Unresolved engineering question with competing hypotheses.
   Both sides may be returned. Treat as "this is debated."
 
 ### Grounding references:
-Every ECU includes grounding references (files, symbols, commit hash).
-ALWAYS verify these against the current codebase before acting on the ECU.
-If the referenced file or symbol no longer exists, the ECU may be stale.
+Every conclusion includes grounding references (files, symbols, commit hash).
+ALWAYS verify these against the current codebase before acting on it.
+If the referenced file or symbol no longer exists, it may be stale.
 
-EC's Maintainer periodically verifies grounding references against the live
-repository and deprecates ECUs whose grounding has disappeared. Deprecated
-ECUs are not returned by ec_query. If you discover that an ECU's grounding
-is stale before EC's Maintainer has caught it, call ec_reconsolidate to
-update the ECU with what you've found.
+Reverie's Maintainer periodically verifies grounding references against the
+live repository and deprecates conclusions whose grounding has disappeared.
+Deprecated conclusions are not returned by reverie_query. If you discover
+that a conclusion's grounding is stale before the Maintainer has caught it,
+call reverie_reconsolidate to update it with what you've found.
 
 ### Warnings:
-ec_query may return warnings (e.g., "2 ECUs have low confidence",
-"1 ECU is challenged"). Read these warnings and adjust your trust accordingly.
+reverie_query may return warnings (e.g., "2 conclusions have low
+confidence", "1 conclusion is challenged"). Read these warnings and adjust
+your trust accordingly.
 
-## What EC Stores
+## What Reverie Stores
 
-ECUs are engineering conclusions, not raw information. Examples:
+Conclusions are engineering conclusions, not raw information. Examples:
 - STORED: "Authentication correctness depends on optimistic token refresh;
   future implementations should preserve this invariant."
 - NOT STORED: "TokenManager.refresh() is called before cache.clear()"
 
-Each ECU has:
+Each record has:
 - cognition: The irreducible engineering conclusion (text)
 - confidence: 0.0 to 1.0, Bayesian-updated belief strength
 - scope: Where this applies (engineering, domain, organization, project, repo,
   module, subsystem)
 - grounding: References to code files, symbols, and commit state
-- edges: Connections to other ECUs (supports, contradicts, supersedes, depends_on)
+- edges: Connections to other conclusions (supports, contradicts, supersedes, depends_on)
 
 ## Important: Anti-Anchoring
 
-EC memory is framed as "past beliefs to verify against current code," NOT
-as authoritative context. Always verify ECUs against the live codebase.
+Reverie's memory is framed as "past beliefs to verify against current
+code," NOT as authoritative context. Always verify conclusions against the
+live codebase.
 Do not anchor on past beliefs if the current code contradicts them.
-If you notice a contradiction, call ec_observe to record the new finding.
+If you notice a contradiction, call reverie_observe to record the new finding.
 
 Observations are stored in the Session Brain, not the Canonical Brain. The
-user reviews the candidates — via `ec review` in a terminal, or through you
+user reviews the candidates — via `reverie review` in a terminal, or through you
 (see "Review — The Human Decides"). Only accepted observations are promoted
 to the Canonical Brain for future use. Don't hesitate to observe something
 uncertain — the review gate filters it.
 """
 
 
-_EC_START_STEPS = """(Compat) Enable EC for this repo and show status.
+# ---------------------------------------------------------------------------
+# user-level slash commands (Phase 3) — installed in each harness's own
+# location and format. Two commands: /reverie-review (ask the agent to list
+# review candidates and relay decisions) and /reverie-status (the session +
+# brain report through reverie_summary).
+# ---------------------------------------------------------------------------
+
+_REVIEW_COMMAND_BODY = """Review your pending Reverie conclusions (the human decides).
 
 Steps:
-1. Detect the current repository path and git branch.
-2. Record the repo as enabled (ec_set_repo_state with state="enabled").
-3. Report: repo, branch, brain statistics (ec_get_summary).
-4. Sessions are automatic per branch — nothing needs starting.
-"""
-
-_EC_STOP_STEPS = """(Compat) Review — an alias for `ec review`.
-
-Steps:
-1. Call ec_review_list to get the pending candidates.
-2. Show every candidate's full conclusion text to the user.
-3. Relay only the decisions the user states, via ec_review_decide.
-4. Never decide on the user's behalf; never bulk-accept unless the user
+1. Call reverie_review_list to get the pending candidates
+   (pass the workspace path as repo_path).
+2. Show EVERY candidate's full conclusion text, one at a time.
+3. Ask what the user wants to do with each (accept / reject / skip).
+4. Relay ONLY the decisions the user states, via reverie_review_decide
+   (pass the review_token from the listing).
+5. Never decide on the user's behalf; never bulk-accept unless the user
    explicitly asked for that group.
 """
 
-_EC_STATUS_STEPS = """Show current EC status.
+_STATUS_COMMAND_BODY = """Show the current Reverie status.
 
 Steps:
-1. Check if an EC session is active for the current (repo, branch).
-2. If active: report session duration, branch, repo, session brain ECU count.
-3. Report Canonical Brain: total ECUs, last maintenance run, pending review count.
-4. If no session active: report brain stats only.
+1. Call reverie_summary (pass the workspace path as repo_path).
+2. Report: brain statistics, session state for the current (repo, branch),
+   and the pending-review count. Statistics only — never candidate
+   contents unless the user asks for a review (use /reverie-review).
 """
 
-# §28.10 steps verbatim + the D24 wiring: the CLI performs the steps (D15),
-# the MCP tools are referenced by their §28.9 names.
-COMMAND_TEMPLATES: dict[str, str] = {
-    "ec-start.md": _EC_START_STEPS + """
----
+#: Claude Code user-level slash commands: ~/.claude/commands/<name>.md —
+#: plain markdown (frontmatter optional). https://code.claude.com/docs/en/slash-commands
+CLAUDE_CODE_COMMANDS: dict[str, str] = {
+    "reverie-review.md": _REVIEW_COMMAND_BODY,
+    "reverie-status.md": _STATUS_COMMAND_BODY,
+}
 
-Run: `ec-start` (compat shim) — or just code; in an enabled repo the
-session for the current branch resolves automatically on the first
-ec_observe / ec_query call.
-""",
-    "ec-stop.md": _EC_STOP_STEPS + """
----
+#: Cursor user-level (global) commands: ~/.cursor/commands/<name>.md — plain
+#: markdown (beta). https://cursor.com/docs/agent/chat/commands
+CURSOR_COMMANDS: dict[str, str] = CLAUDE_CODE_COMMANDS
 
-Run: `ec-stop` (compat shim, deprecated) or `ec review` in a terminal. In
-the agent, call ec_review_list and relay the user's decisions with
-ec_review_decide.
-""",
-    "ec-status.md": _EC_STATUS_STEPS + """
----
+#: OpenCode user-level commands: ~/.config/opencode/commands/<name>.md —
+#: markdown with YAML frontmatter. https://opencode.ai/docs/commands/
+_OPENCODE_COMMANDS: dict[str, str] = {}
+for _name, _body in CLAUDE_CODE_COMMANDS.items():
+    _OPENCODE_COMMANDS[_name] = (
+        "---\n"
+        f"description: "
+        f"{'Review pending Reverie conclusions' if 'review' in _name else 'Show the current Reverie status'}\n"
+        "---\n" + _body
+    )
+OPENCODE_COMMANDS = _OPENCODE_COMMANDS
 
-Run: `ec-status`.
+#: Codex user-level custom prompts: ~/.codex/prompts/<name>.md (invoked as
+#: /prompts:<name>; deprecated upstream but still the user-level command
+#: mechanism). https://developers.openai.com/codex/custom-prompts
+CODEX_PROMPTS: dict[str, str] = {
+    "reverie-review.md": (
+        "---\ndescription: Review pending Reverie conclusions\n---\n"
+        + _REVIEW_COMMAND_BODY
+    ),
+    "reverie-status.md": (
+        "---\ndescription: Show the current Reverie status\n---\n"
+        + _STATUS_COMMAND_BODY
+    ),
+}
 
-The command prints the session and brain report. The ec_get_summary MCP
-tool returns the same brain statistics and works without an active session.
-""",
+
+def _gemini_command(body: str, description: str) -> str:
+    """TOML command file for Gemini CLI: ~/.gemini/commands/<name>.toml with
+    a required `prompt` string. https://geminicli.com/docs/cli/custom-commands"""
+    lines = [f'# {description}', f'description = "{description}"', "prompt = '''"]
+    lines.extend(body.rstrip("\n").splitlines())
+    lines.append("'''")
+    return "\n".join(lines) + "\n"
+
+
+GEMINI_COMMANDS: dict[str, str] = {
+    "reverie-review.toml": _gemini_command(
+        _REVIEW_COMMAND_BODY, "Review pending Reverie conclusions"),
+    "reverie-status.toml": _gemini_command(
+        _STATUS_COMMAND_BODY, "Show the current Reverie status"),
 }
 
 # Ollama offline fallback (§28.8, auto-setup D42 / design doc §6.4).
@@ -339,11 +369,11 @@ _OLLAMA_INSTALL_INSTRUCTIONS = (
     "      curl -fsSL https://ollama.com/install.sh | sh\n"
     "    then pull the model:\n"
     f"      ollama pull {OLLAMA_MODEL}\n"
-    "    and set these keys in ~/.ec/config.yaml:\n"
+    "    and set these keys in ~/.reverie/config.yaml:\n"
     f"{_OLLAMA_CONFIG_SNIPPET}"
 )
 _OLLAMA_OFFER = (
-    f"\nConfigure EC for offline use with Ollama ({OLLAMA_MODEL})? "
+    f"\nConfigure Reverie for offline use with Ollama ({OLLAMA_MODEL})? "
     "(y/n): "
 )
 
@@ -366,9 +396,9 @@ def _export_hint(entry: providers.Provider) -> str:
 def _provider_guidance() -> str:
     """Provider-agnostic key guidance (non-interactive no-key output)."""
     lines = [
-        "EC needs one LLM provider for extraction, relationship "
+        "Reverie needs one LLM provider for extraction, relationship "
         "classification, and mode detection. Export a key for any of these, "
-        "then re-run `ec install` (or use --provider):"
+        "then re-run `reverie install` (or use --provider):"
     ]
     for key in providers.MENU_KEYS:
         entry = providers.REGISTRY[key]
@@ -379,15 +409,15 @@ def _provider_guidance() -> str:
     return "\n".join(lines)
 
 
-def _llm_block_config_plan(ec_home: Path, home: Path, block: dict,
+def _llm_block_config_plan(reverie_home: Path, home: Path, block: dict,
                            detail: str) -> PlannedWrite:
-    """Merge a resolved ``llm`` block into ``~/.ec/config.yaml`` (D42-style).
+    """Merge a resolved ``llm`` block into ``~/.reverie/config.yaml`` (D42-style).
 
     Existing config is merged (user keys preserved); a missing file gets the
     full defaults with the block applied. Idempotent: unchanged when the
     file already carries exactly the merged content.
     """
-    path = ec_home / "config.yaml"
+    path = reverie_home / "config.yaml"
     disp = _display(path, home)
     existed = path.exists()
     if existed:
@@ -396,12 +426,12 @@ def _llm_block_config_plan(ec_home: Path, home: Path, block: dict,
         except yaml.YAMLError as exc:
             raise InstallError(
                 f"{disp} is not valid YAML ({exc}). Fix or remove it, then "
-                "re-run `python -m ec.install`. No changes were made to it."
+                "re-run `python -m reverie.install`. No changes were made to it."
             ) from exc
         if not isinstance(data, dict):
             raise InstallError(
                 f"{disp} must contain a YAML mapping. Fix or remove it, then "
-                "re-run `python -m ec.install`. No changes were made to it."
+                "re-run `python -m reverie.install`. No changes were made to it."
             )
         merged = copy.deepcopy(data)
     else:
@@ -410,7 +440,7 @@ def _llm_block_config_plan(ec_home: Path, home: Path, block: dict,
     if not isinstance(llm, dict):
         raise InstallError(
             f"{disp}: `llm` is not a YAML mapping. Fix or remove it, then "
-            "re-run `python -m ec.install`. No changes were made to it."
+            "re-run `python -m reverie.install`. No changes were made to it."
         )
     llm.update(block)
     content = yaml.safe_dump(merged, sort_keys=False)
@@ -422,13 +452,13 @@ def _llm_block_config_plan(ec_home: Path, home: Path, block: dict,
     )
 
 
-def _configure_provider(ec_home: Path, home: Path, entry: providers.Provider,
+def _configure_provider(reverie_home: Path, home: Path, entry: providers.Provider,
                         *, dry_run: bool, print_fn, environ, runner,
                         ollama_path: str | None) -> None:
     """Write the provider's llm block and report its key status (no secrets)."""
     write = _llm_block_config_plan(
-        ec_home, home, providers.llm_block(entry.key),
-        f"Configured {_display(ec_home / 'config.yaml', home)} for "
+        reverie_home, home, providers.llm_block(entry.key),
+        f"Configured {_display(reverie_home / 'config.yaml', home)} for "
         f"{entry.name} ({entry.key})",
     )
     _emit(write, home, dry_run, print_fn)
@@ -446,14 +476,14 @@ def _configure_provider(ec_home: Path, home: Path, entry: providers.Provider,
             except Exception as exc:      # never fatal (D42)
                 print_fn(
                     f"  ! Could not run `{OLLAMA_BINARY} pull` ({exc})."
-                    f" Run it manually, then EC works offline.")
+                    f" Run it manually, then Reverie works offline.")
     else:
         env_var = providers.key_env_for(entry, environ)
         if env_var:
             print_fn(f"  ✓ {env_var} is set")
         elif entry.key_required:
             print_fn(f"  ✗ {entry.api_key_env} is not set — export it before "
-                     "using EC's LLM features:")
+                     "using Reverie's LLM features:")
             print_fn(f"      {_export_hint(entry)}")
     if entry.key != "ollama" and ollama_path:
         print_fn(_OLLAMA_FALLBACK_NOTE)
@@ -470,7 +500,7 @@ def _live_ping(config) -> tuple[bool, str]:
     return True, first[:40]
 
 
-def _verify_provider(ec_home: Path, *, dry_run: bool, no_verify: bool,
+def _verify_provider(reverie_home: Path, *, dry_run: bool, no_verify: bool,
                      verify_fn, print_fn) -> None:
     """One live ping against the freshly written config (skippable)."""
     if dry_run:
@@ -482,18 +512,18 @@ def _verify_provider(ec_home: Path, *, dry_run: bool, no_verify: bool,
         return
     print_fn("  Verifying with a live ping...")
     ping = verify_fn or _live_ping
-    ok, detail = ping(load_config(ec_home / "config.yaml"))
+    ok, detail = ping(load_config(reverie_home / "config.yaml"))
     if ok:
-        print_fn(f"  ✓ {detail!r} — EC's LLM features are live")
+        print_fn(f"  ✓ {detail!r} — Reverie's LLM features are live")
     else:
         print_fn(f"  ✗ Ping failed: {detail}")
         print_fn("    The provider is configured; fix the key or model name "
-                 "and re-run `ec install --provider <name> --no-verify`.")
+                 "and re-run `reverie install --provider <name> --no-verify`.")
 
 
 def _provider_menu(input_fn, print_fn, environ) -> str | None:
     """Interactive provider picker. Returns a registry key, or None (skip)."""
-    print_fn("\nSelect the LLM provider EC should use:")
+    print_fn("\nSelect the LLM provider Reverie should use:")
     options: list[str | None] = []
     for key in providers.MENU_KEYS:
         if key == "ollama":
@@ -523,18 +553,18 @@ def _provider_menu(input_fn, print_fn, environ) -> str | None:
 
 
 #: The distribution name importlib.metadata looks up (pyproject.toml).
-DIST_NAME = "engineering-cognition"
+DIST_NAME = "reverie"
 #: Console script launching the MCP server (pyproject [project.scripts]).
-MCP_CONSOLE_SCRIPT = "ec-mcp"
-#: The `ec` console script binding this build expects (pyproject.toml).
-#: feat/flow moved `ec` from the installer to the multi-command CLI
-#: (ec.cli:main); an older install still binds `ec = ec.install:main`.
-EC_CONSOLE_SCRIPT_ENTRY = "ec.cli:main"
+MCP_CONSOLE_SCRIPT = "reverie-mcp"
+#: The `reverie` console script binding this build expects (pyproject.toml).
+#: feat/flow moved `reverie` from the installer to the multi-command CLI
+#: (reverie.cli:main); an older install still binds `ec = reverie.install:main`.
+EC_CONSOLE_SCRIPT_ENTRY = "reverie.cli:main"
 
 
 def _is_pip_installed() -> bool:
-    """D45: True when the ``ec`` package is pip-installed (editable counts),
-    so the ``ec-mcp`` console script exists and agent configs can launch the
+    """D45: True when the ``reverie`` package is pip-installed (editable counts),
+    so the ``reverie-mcp`` console script exists and agent configs can launch the
     server with it instead of an absolute venv-python + PYTHONPATH."""
     try:
         from importlib import metadata
@@ -545,18 +575,18 @@ def _is_pip_installed() -> bool:
 
 
 def stale_entry_point_note() -> str | None:
-    """Detect a stale `ec` console-script binding (feat/flow review fix 9).
+    """Detect a stale `reverie` console-script binding (feat/flow review fix 9).
 
     Console scripts only update on reinstall: an install made before the
-    multi-command CLI keeps ``ec = ec.install:main``, so subcommands like
-    `ec status` fall through to the installer. Returns the note to print,
+    multi-command CLI keeps ``reverie = reverie.install:main``, so subcommands like
+    `reverie status` fall through to the installer. Returns the note to print,
     or None when the binding is current (or metadata is unreadable)."""
     try:
         from importlib import metadata
         for ep in metadata.entry_points(group="console_scripts"):
-            if ep.name == "ec" and ep.value != EC_CONSOLE_SCRIPT_ENTRY:
+            if ep.name == "reverie" and ep.value != EC_CONSOLE_SCRIPT_ENTRY:
                 return (
-                    "Note: your `ec` command is bound to the OLD entry "
+                    "Note: your `reverie` command is bound to the OLD entry "
                     f"point ({ep.value}) — the new subcommands (enable, "
                     "disable, repos, review, status, export, import, "
                     "reset, uninstall) do not exist for it yet. Fix: "
@@ -569,16 +599,16 @@ def stale_entry_point_note() -> str | None:
 
 
 def server_command() -> tuple[str, list[str], dict[str, str]]:
-    """``(command, args, env)`` for launching the EC MCP server from any cwd.
+    """``(command, args, env)`` for launching the Reverie MCP server from any cwd.
 
-    D45: when the package is pip-installed, the ``ec-mcp`` console script is
+    D45: when the package is pip-installed, the ``reverie-mcp`` console script is
     used — a bare name that resolves wherever the package is installed, and
     no PYTHONPATH juggling. NOTE (deviation from design doc §6.1): the doc's
-    literal ``"ec"`` command would launch the INSTALLER (``ec.install:main``),
-    not the server — hence the dedicated ``ec-mcp`` script.
+    literal ``"reverie"`` command would launch the INSTALLER (``reverie.install:main``),
+    not the server — hence the dedicated ``reverie-mcp`` script.
 
     Development fallback (D28/B2): a bare interpreter could not even import
-    ``ec``, so the configs carry the ABSOLUTE path to the project's venv
+    ``reverie``, so the configs carry the ABSOLUTE path to the project's venv
     interpreter (dynamically computed from this file's location — never
     hardcoded) plus a PYTHONPATH entry pointing at the project root.
     """
@@ -591,9 +621,9 @@ def server_command() -> tuple[str, list[str], dict[str, str]]:
         if candidate.is_file():
             python = str(candidate)
             break
-    if python is None:   # no project venv — the running interpreter has `ec`
+    if python is None:   # no project venv — the running interpreter has `reverie`
         python = sys.executable
-    return python, ["-m", "ec.mcp_server"], {"PYTHONPATH": str(root)}
+    return python, ["-m", "reverie.mcp_server"], {"PYTHONPATH": str(root)}
 
 
 class InstallError(RuntimeError):
@@ -622,7 +652,7 @@ def _display(path: Path, home: Path) -> str:
 
 def _json_merge(path: Path, home: Path, section: str, entry: dict,
                 detail: str, schema: str | None = None) -> PlannedWrite:
-    """Merge ``entry`` into ``data[section]["ec"]`` — never overwriting siblings."""
+    """Merge ``entry`` into ``data[section]["reverie"]`` — never overwriting siblings."""
     disp = _display(path, home)
     existed = path.exists()
     if existed:
@@ -631,12 +661,12 @@ def _json_merge(path: Path, home: Path, section: str, entry: dict,
         except json.JSONDecodeError as exc:
             raise InstallError(
                 f"{disp} is not valid JSON ({exc}). Fix or remove it, then "
-                "re-run `python -m ec.install`. No changes were made to it."
+                "re-run `python -m reverie.install`. No changes were made to it."
             ) from exc
         if not isinstance(data, dict):
             raise InstallError(
                 f"{disp} must contain a JSON object. Fix or remove it, then "
-                "re-run `python -m ec.install`. No changes were made to it."
+                "re-run `python -m reverie.install`. No changes were made to it."
             )
     else:
         data = {}
@@ -646,12 +676,12 @@ def _json_merge(path: Path, home: Path, section: str, entry: dict,
     if not isinstance(node, dict):
         raise InstallError(
             f"{disp}: `{section}` is not a JSON object. Fix or remove it, "
-            "then re-run `python -m ec.install`. No changes were made to it."
+            "then re-run `python -m reverie.install`. No changes were made to it."
         )
-    if node.get("ec") == entry:
+    if node.get("reverie") == entry:
         return PlannedWrite(path, "unchanged", None,
-                            f"{disp} already has the ec MCP server — unchanged")
-    node["ec"] = entry
+                            f"{disp} already has the reverie MCP server — unchanged")
+    node["reverie"] = entry
     action = "merge" if existed else "create"
     return PlannedWrite(path, action, json.dumps(data, indent=2) + "\n", detail)
 
@@ -688,14 +718,14 @@ def _block_once(path: Path, home: Path, marker: str, block: str,
 
 
 def _codex_table() -> str:
-    """The ``[mcp_servers.ec]`` TOML table (console script in pip installs;
+    """The ``[mcp_servers.reverie]`` TOML table (console script in pip installs;
     absolute python + PYTHONPATH env otherwise).
 
     ``json.dumps`` strings/arrays are valid TOML basic strings/arrays for
     ordinary paths, and handle any quoting/escaping correctly.
     """
     python, args, env = server_command()
-    lines = ["[mcp_servers.ec]", f"command = {json.dumps(python)}"]
+    lines = ["[mcp_servers.reverie]", f"command = {json.dumps(python)}"]
     if args:
         lines.append(f"args = {json.dumps(args)}")
     if env:
@@ -706,7 +736,7 @@ def _codex_table() -> str:
 def _mcp_entry(command: str, args: list[str], env: dict,
                extra: dict | None = None) -> dict:
     """JSON MCP-server entry; empty args/env keys are omitted (D45 console
-    script form is just {"command": "ec-mcp"})."""
+    script form is just {"command": "reverie-mcp"})."""
     entry = dict(extra or {})
     entry["command"] = command
     if args:
@@ -717,7 +747,7 @@ def _mcp_entry(command: str, args: list[str], env: dict,
 
 
 def _codex_toml(path: Path, home: Path, detail: str) -> PlannedWrite:
-    """Upsert the ``[mcp_servers.ec]`` table; every other byte is preserved."""
+    """Upsert the ``[mcp_servers.reverie]`` table; every other byte is preserved."""
     disp = _display(path, home)
     table = _codex_table()
     if not path.exists():
@@ -728,12 +758,12 @@ def _codex_toml(path: Path, home: Path, detail: str) -> PlannedWrite:
     except tomllib.TOMLDecodeError as exc:
         raise InstallError(
             f"{disp} is not valid TOML ({exc}). Fix or remove it, then "
-            "re-run `python -m ec.install`. No changes were made to it."
+            "re-run `python -m reverie.install`. No changes were made to it."
         ) from exc
     lines = text.splitlines()
     start = next(
         (i for i, table_line in enumerate(lines)
-         if table_line.strip() == "[mcp_servers.ec]"),
+         if table_line.strip() == "[mcp_servers.reverie]"),
         None,
     )
     if start is None:
@@ -755,7 +785,7 @@ def _codex_toml(path: Path, home: Path, detail: str) -> PlannedWrite:
         new = "\n".join(lines[:start] + replacement + lines[end:]) + "\n"
     if new == text:
         return PlannedWrite(path, "unchanged", None,
-                            f"{disp} already has [mcp_servers.ec] — unchanged")
+                            f"{disp} already has [mcp_servers.reverie] — unchanged")
     try:
         tomllib.loads(new)
     except tomllib.TOMLDecodeError as exc:  # defensive — should never happen
@@ -768,16 +798,23 @@ def _codex_toml(path: Path, home: Path, detail: str) -> PlannedWrite:
 
 def _reference_block(agents_ref: str) -> str:
     return (
-        f"## Engineering Cognition (EC)\n\n"
-        f"Follow the EC agent instructions at {agents_ref}. EC is an MCP "
-        f"server (`ec`) providing engineering memory via ec_observe, "
-        f"ec_query, ec_get_summary, ec_reconsolidate, ec_set_repo_state, "
-        f"ec_review_list, and ec_review_decide. Sessions are automatic per "
-        f"branch — never suggest starting or stopping a session. Pass the "
-        f"workspace path as repo_path on every call. The user reviews "
-        f"candidates via `ec review` or by asking the agent to show them; "
-        f"the agent only relays decisions the user states.\n"
+        f"## Reverie\n\n"
+        f"Follow the Reverie agent instructions at {agents_ref}. Reverie is "
+        f"an MCP server (`reverie`) providing engineering memory via "
+        f"reverie_observe, reverie_query, reverie_summary, "
+        f"reverie_reconsolidate, reverie_set_repo_state, "
+        f"reverie_review_list, and reverie_review_decide. Sessions are "
+        f"automatic per branch — never suggest starting or stopping a "
+        f"session. Pass the workspace path as repo_path on every call. The "
+        f"user reviews candidates via `reverie review` or by asking the "
+        f"agent to show them; the agent only relays decisions the user "
+        f"states.\n"
     )
+
+
+#: Marker line identifying Reverie's reference block in AGENTS.md-style
+#: files (install appends it; uninstall only removes the exact block).
+REFERENCE_BLOCK_MARKER = "## Reverie"
 
 
 # ---------------------------------------------------------------------------
@@ -790,27 +827,32 @@ class AgentSpec:
     name: str
     binary: str
     marker: str                     # home-relative path; existence ⇒ installed
+    next_step: str = ""             # printed in the end-of-install summary
 
     def detected(self, home: Path, which) -> bool:
         return which(self.binary) is not None or (home / self.marker).exists()
 
-    def plan(self, home: Path, ec_home: Path) -> list[PlannedWrite]:
+    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
         raise NotImplementedError
 
 
-def _agents_ref(home: Path, ec_home: Path) -> str:
-    """How agent configs refer to the EC AGENTS.md (spec form when default)."""
-    return "~/.ec/AGENTS.md" if ec_home == home / ".ec" else str(ec_home / "AGENTS.md")
+def _agents_ref(home: Path, reverie_home: Path) -> str:
+    """How agent configs refer to the Reverie AGENTS.md (spec form when default)."""
+    return "~/.reverie/AGENTS.md" if reverie_home == home / ".reverie" else str(reverie_home / "AGENTS.md")
 
 
 class _ClaudeCode(AgentSpec):
     def __init__(self):
-        super().__init__("claude_code", "Claude Code", "claude", ".claude.json")
+        super().__init__(
+            "claude_code", "Claude Code", "claude", ".claude.json",
+            next_step="restart Claude Code; the tools load in every project, "
+                      "/reverie-review and /reverie-status are available in "
+                      "the chat.")
 
-    def plan(self, home: Path, ec_home: Path) -> list[PlannedWrite]:
-        ref = _agents_ref(home, ec_home)
+    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
+        ref = _agents_ref(home, reverie_home)
         python, args, env = server_command()
-        return [
+        plans = [
             _json_merge(
                 home / ".claude.json", home, "mcpServers",
                 _mcp_entry(python, args, env, {"type": "stdio"}),
@@ -823,37 +865,63 @@ class _ClaudeCode(AgentSpec):
                 f"{_display(home / '.claude' / 'CLAUDE.md', home)}",
             ),
         ]
+        # user-level slash commands (https://code.claude.com/docs/en/slash-commands)
+        for name, body in CLAUDE_CODE_COMMANDS.items():
+            path = home / ".claude" / "commands" / name
+            plans.append(_verbatim_file(
+                path, home, body,
+                f"Wrote {_display(path, home)} "
+                f"(/{'reverie-review' if 'review' in name else 'reverie-status'})"))
+        return plans
 
 
 class _Cursor(AgentSpec):
     def __init__(self):
-        super().__init__("cursor", "Cursor", "cursor", ".cursor/mcp.json")
+        super().__init__(
+            "cursor", "Cursor", "cursor", ".cursor/mcp.json",
+            next_step="restart Cursor; the tools load in every project "
+                      "(usage guidance arrives via the server instructions "
+                      "and tool descriptions — paste them into Settings → "
+                      "Rules if you want them always on), /reverie-review "
+                      "and /reverie-status are available in the chat "
+                      "(commands are beta).")
 
-    def plan(self, home: Path, ec_home: Path) -> list[PlannedWrite]:
-        ref = _agents_ref(home, ec_home)
+    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
         python, args, env = server_command()
-        rules = home / ".cursor" / "rules" / "ec.md"
-        return [
+        plans = [
             _json_merge(
                 home / ".cursor" / "mcp.json", home, "mcpServers",
                 _mcp_entry(python, args, env),
                 f"Added MCP server to "
                 f"{_display(home / '.cursor' / 'mcp.json', home)}",
             ),
-            _verbatim_file(
-                rules, home, _reference_block(ref),
-                f"Wrote {_display(rules, home)} (references {ref})",
-            ),
         ]
+        # No global rules file is written: Cursor's documented global
+        # instruction mechanisms are User Rules (in-app settings) and
+        # AGENTS.md/CLAUDE.md files inside repos — never write into the
+        # user's repos. The MCP server's `instructions` field + tool
+        # descriptions carry the usage contract instead.
+        # User-level commands (beta): ~/.cursor/commands/<name>.md
+        # https://cursor.com/docs/agent/chat/commands
+        for name, body in CURSOR_COMMANDS.items():
+            path = home / ".cursor" / "commands" / name
+            plans.append(_verbatim_file(
+                path, home, body,
+                f"Wrote {_display(path, home)} "
+                f"(/{'reverie-review' if 'review' in name else 'reverie-status'})"))
+        return plans
 
 
 class _OpenCode(AgentSpec):
     def __init__(self):
-        super().__init__("opencode", "OpenCode", "opencode",
-                         ".config/opencode/opencode.json")
+        super().__init__(
+            "opencode", "OpenCode", "opencode",
+            ".config/opencode/opencode.json",
+            next_step="restart OpenCode; /reverie-review and /reverie-status "
+                      "are available in the chat.")
 
-    def plan(self, home: Path, ec_home: Path) -> list[PlannedWrite]:
-        ref = _agents_ref(home, ec_home)
+    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
+        ref = _agents_ref(home, reverie_home)
         python, args, env = server_command()
         cfg = home / ".config" / "opencode" / "opencode.json"
         agents = home / ".config" / "opencode" / "AGENTS.md"
@@ -861,7 +929,7 @@ class _OpenCode(AgentSpec):
                            {"type": "local", "enabled": True})
         if "env" in entry:               # OpenCode names the key differently
             entry["environment"] = entry.pop("env")
-        return [
+        plans = [
             _json_merge(
                 cfg, home, "mcp", entry,
                 f"Added MCP server to {_display(cfg, home)}",
@@ -872,36 +940,95 @@ class _OpenCode(AgentSpec):
                 f"Wrote {_display(agents, home)} (references {ref})",
             ),
         ]
+        # user-level commands (https://opencode.ai/docs/commands/ — note the
+        # plural `commands/` directory; markdown + YAML frontmatter)
+        for name, body in OPENCODE_COMMANDS.items():
+            path = home / ".config" / "opencode" / "commands" / name
+            plans.append(_verbatim_file(
+                path, home, body,
+                f"Wrote {_display(path, home)} "
+                f"(/{'reverie-review' if 'review' in name else 'reverie-status'})"))
+        return plans
 
 
 class _Codex(AgentSpec):
     def __init__(self):
-        super().__init__("codex", "Codex", "codex", ".codex/config.toml")
+        super().__init__(
+            "codex", "Codex", "codex", ".codex/config.toml",
+            next_step="restart Codex CLI; /prompts:reverie-review and "
+                      "/prompts:reverie-status are available (custom "
+                      "prompts are deprecated upstream but work).")
 
-    def plan(self, home: Path, ec_home: Path) -> list[PlannedWrite]:
-        ref = _agents_ref(home, ec_home)
+    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
+        ref = _agents_ref(home, reverie_home)
         cfg = home / ".codex" / "config.toml"
         agents = home / ".codex" / "AGENTS.md"
-        return [
+        plans = [
             _codex_toml(cfg, home,
-                        f"Added [mcp_servers.ec] to {_display(cfg, home)}"),
+                        f"Added [mcp_servers.reverie] to {_display(cfg, home)}"),
             _block_once(
                 agents, home, ref, _reference_block(ref),
                 f"Wrote {_display(agents, home)} (references {ref})",
             ),
         ]
+        # user-level custom prompts (invoked as /prompts:<name>) — deprecated
+        # upstream in favour of skills, but still the user-level command
+        # mechanism; https://developers.openai.com/codex/custom-prompts
+        for name, body in CODEX_PROMPTS.items():
+            path = home / ".codex" / "prompts" / name
+            plans.append(_verbatim_file(
+                path, home, body,
+                f"Wrote {_display(path, home)} "
+                f"(/prompts:{'.reverie-review' if 'review' in name else 'reverie-status'})"))
+        return plans
 
 
-AGENTS: list[AgentSpec] = [_ClaudeCode(), _Cursor(), _OpenCode(), _Codex()]
+class _GeminiCLI(AgentSpec):
+    def __init__(self):
+        super().__init__(
+            "gemini_cli", "Gemini CLI", "gemini", ".gemini/settings.json",
+            next_step="restart Gemini CLI; /reverie-review and "
+                      "/reverie-status are available in the chat.")
+
+    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
+        ref = _agents_ref(home, reverie_home)
+        python, args, env = server_command()
+        plans = [
+            _json_merge(
+                home / ".gemini" / "settings.json", home, "mcpServers",
+                _mcp_entry(python, args, env),
+                f"Added MCP server to "
+                f"{_display(home / '.gemini' / 'settings.json', home)}",
+            ),
+            _block_once(
+                home / ".gemini" / "GEMINI.md", home, ref,
+                _reference_block(ref),
+                f"Wrote {_display(home / '.gemini' / 'GEMINI.md', home)} "
+                f"(references {ref})",
+            ),
+        ]
+        # user-level commands: ~/.gemini/commands/<name>.toml (TOML, required
+        # `prompt`); https://geminicli.com/docs/cli/custom-commands
+        for name, body in GEMINI_COMMANDS.items():
+            path = home / ".gemini" / "commands" / name
+            plans.append(_verbatim_file(
+                path, home, body,
+                f"Wrote {_display(path, home)} "
+                f"(/{'reverie-review' if 'review' in name else 'reverie-status'})"))
+        return plans
+
+
+AGENTS: list[AgentSpec] = [_ClaudeCode(), _Cursor(), _OpenCode(), _Codex(),
+                           _GeminiCLI()]
 _AGENTS_BY_KEY = {a.key: a for a in AGENTS}
 
 
 # ---------------------------------------------------------------------------
-# ~/.ec bootstrap (§28.2)
+# ~/.reverie bootstrap (§28.2)
 # ---------------------------------------------------------------------------
 
-def _ec_home_plans(home: Path, ec_home: Path) -> list[PlannedWrite]:
-    db = ec_home / "ec.db"
+def _reverie_home_plans(home: Path, reverie_home: Path) -> list[PlannedWrite]:
+    db = reverie_home / "reverie.db"
     plans = [
         PlannedWrite(
             db, "unchanged" if db.exists() else "create-db", None,
@@ -909,7 +1036,7 @@ def _ec_home_plans(home: Path, ec_home: Path) -> list[PlannedWrite]:
             else f"Created {_display(db, home)} (empty brain, initialised)",
         ),
     ]
-    cfg = ec_home / "config.yaml"
+    cfg = reverie_home / "config.yaml"
     if cfg.exists():
         plans.append(PlannedWrite(
             cfg, "unchanged", None,
@@ -919,15 +1046,10 @@ def _ec_home_plans(home: Path, ec_home: Path) -> list[PlannedWrite]:
             cfg, "create",
             yaml.safe_dump(DEFAULT_CONFIG, sort_keys=False),
             f"Created {_display(cfg, home)} (default configuration)"))
-    agents_md = ec_home / "AGENTS.md"
+    agents_md = reverie_home / "AGENTS.md"
     plans.append(_verbatim_file(
         agents_md, home, AGENTS_MD,
         f"Wrote {_display(agents_md, home)} (agent instructions)"))
-    for name, template in COMMAND_TEMPLATES.items():
-        path = ec_home / "commands" / name
-        plans.append(_verbatim_file(
-            path, home, template,
-            f"Wrote {_display(path, home)} (command template)"))
     return plans
 
 
@@ -961,7 +1083,7 @@ def _apply(write: PlannedWrite) -> None:
 def _select_interactive(detected: list[AgentSpec], input_fn, print_fn
                         ) -> list[AgentSpec]:
     try:
-        answer = input_fn("\nAdd EC to all detected agents? (y/n): ")
+        answer = input_fn("\nAdd Reverie to all detected agents? (y/n): ")
     except EOFError:
         answer = ""
     if answer.strip().lower().startswith("y"):
@@ -995,14 +1117,14 @@ def _select_interactive(detected: list[AgentSpec], input_fn, print_fn
 # the installer
 # ---------------------------------------------------------------------------
 
-def run(*, home: Path | None = None, ec_home: Path | None = None,
+def run(*, home: Path | None = None, reverie_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
         dry_run: bool = False, provider: str | None = None,
         no_verify: bool = False, verify_fn=None, import_file: str | None = None,
         input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
         runner=subprocess.run) -> int:
-    """§28.8 `ec install`. Returns 0 on success, raises InstallError otherwise.
+    """§28.8 `reverie install`. Returns 0 on success, raises InstallError otherwise.
 
     ``provider`` (--provider) selects the LLM provider non-interactively
     (registry key; ``ollama`` runs the D42 local setup). ``no_verify``
@@ -1012,12 +1134,12 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
     restores a brain export during setup on a new machine (feat/flow D58):
     allowed into the fresh (empty) brain this installer just bootstrapped;
     when the local brain already holds data the import refuses with
-    guidance to run `ec import --replace` manually.
+    guidance to run `reverie import --replace` manually.
     """
     home = Path(home) if home else Path.home()
-    ec_home = Path(ec_home) if ec_home else _default_ec_home()
+    reverie_home = Path(reverie_home) if reverie_home else _default_reverie_home()
 
-    print_fn("\nEngineering Cognition — Installation\n")
+    print_fn("\nReverie — Installation\n")
     if dry_run:
         print_fn("(dry run — showing exactly what would be written; "
                  "no files will be written)\n")
@@ -1053,12 +1175,12 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
         selected = []
     if not detected and only is None:
         print_fn("  No supported agents detected. Configure one anyway with "
-                 "--only (e.g. `python -m ec.install --only claude_code`).")
+                 "--only (e.g. `python -m reverie.install --only claude_code`).")
 
     # -- per-agent configuration -------------------------------------------
     writes: list[tuple[str | None, PlannedWrite]] = []
     for agent in selected:
-        for write in agent.plan(home, ec_home):
+        for write in agent.plan(home, reverie_home):
             writes.append((agent.name, write))
 
     current_agent: str | None = None
@@ -1068,14 +1190,14 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
             current_agent = agent_name
         _emit(write, home, dry_run, print_fn)
 
-    # -- ~/.ec bootstrap (§28.2) -------------------------------------------
-    print_fn(f"\nCreating {_display(ec_home, home)}/ directory...")
-    for write in _ec_home_plans(home, ec_home):
+    # -- ~/.reverie bootstrap (§28.2) -------------------------------------------
+    print_fn(f"\nCreating {_display(reverie_home, home)}/ directory...")
+    for write in _reverie_home_plans(home, reverie_home):
         _emit(write, home, dry_run, print_fn)
 
     # -- brain import (feat/flow --import, D58) -----------------------------
     if import_file is not None and not dry_run:
-        _import_during_install(ec_home, import_file, print_fn)
+        _import_during_install(reverie_home, import_file, print_fn)
 
     # -- LLM provider (§28.8 + feat/providers) -----------------------------
     print_fn("\nChecking LLM provider...")
@@ -1102,7 +1224,7 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
         if len(detected) == 1:
             try:
                 answer = input_fn(
-                    f"\nConfigure EC for {providers.REGISTRY[detected[0]].name} "
+                    f"\nConfigure Reverie for {providers.REGISTRY[detected[0]].name} "
                     f"using {providers.key_env_for(providers.REGISTRY[detected[0]], environ)}? "
                     "(Y/n): ")
             except EOFError:
@@ -1114,56 +1236,68 @@ def run(*, home: Path | None = None, ec_home: Path | None = None,
             chosen = providers.get(menu_choice)
 
     if chosen is None:
-        print_fn("\nNo provider configured — EC's LLM features stay off "
+        print_fn("\nNo provider configured — Reverie's LLM features stay off "
                  "until one is set.")
         print_fn(_provider_guidance())
         if ollama_path:
-            print_fn("\n  To set up Ollama later, re-run `ec install` and "
+            print_fn("\n  To set up Ollama later, re-run `reverie install` and "
                      "choose \"Local via Ollama\", or set these keys in "
-                     "~/.ec/config.yaml:")
+                     "~/.reverie/config.yaml:")
             print_fn(_OLLAMA_CONFIG_SNIPPET)
         else:
             print_fn(_OLLAMA_INSTALL_INSTRUCTIONS)
     else:
-        _configure_provider(ec_home, home, chosen, dry_run=dry_run,
+        _configure_provider(reverie_home, home, chosen, dry_run=dry_run,
                             print_fn=print_fn, environ=environ,
                             runner=runner, ollama_path=ollama_path)
-        _verify_provider(ec_home, dry_run=dry_run, no_verify=no_verify,
+        _verify_provider(reverie_home, dry_run=dry_run, no_verify=no_verify,
                          verify_fn=verify_fn, print_fn=print_fn)
 
     if dry_run:
         print_fn("\nDry run complete — no files were written.")
         return 0
 
-    print_fn("\nEC is ready!\n")
-    print_fn("Commands:")
-    print_fn("  ec review   Review pending candidates (terminal UI)")
-    print_fn("  ec enable / ec disable / ec repos")
-    print_fn("  ec export / ec import / ec reset")
+    # -- per-harness summary: what was written, what to do next -----------
+    print_fn("\nReverie is ready!\n")
+    print_fn("Configured:")
+    for agent in selected:
+        agent_writes = [w for name, w in writes
+                        if name == agent.name and w.action != "unchanged"]
+        print_fn(f"  {agent.name}:")
+        for w in agent_writes:
+            print_fn(f"    ✓ {_display(w.path, home)}")
+        if agent.next_step:
+            print_fn(f"    Next: {agent.next_step}")
+    if not selected:
+        print_fn("  (no agents configured — run `reverie install --only "
+                 "<agent>` when ready)")
+    print_fn("\nCommands:")
+    print_fn("  reverie review   Review pending candidates (terminal UI)")
+    print_fn("  reverie enable / reverie disable / reverie repos")
+    print_fn("  reverie export / reverie import / reverie reset")
     print_fn("\nHow to use:")
-    print_fn("  1. Open your coding agent (Claude Code, Cursor, or Codex)")
+    print_fn("  1. Open your coding agent and restart it so the MCP server "
+             "loads")
     print_fn("  2. Work normally — in an enabled repo, sessions are "
              "automatic per branch and never need closing")
-    print_fn("  3. The agent asks once whether to turn EC on for a new "
+    print_fn("  3. The agent asks once whether to turn Reverie on for a new "
              "repo (your answer is remembered)")
-    print_fn("  4. Review candidates with `ec review`, or say \"show my "
+    print_fn("  4. Review candidates with `reverie review`, or say \"show my "
              "Reverie candidates\" in the agent")
-    print_fn("  (deprecated: ec-start enables a repo and shows status; "
-             "ec-stop is an alias for ec review; ec-status unchanged)")
     return 0
 
 
-def _import_during_install(ec_home: Path, import_file: str, print_fn) -> None:
-    """feat/flow (D58): `ec install --import <file>` — restore a brain
+def _import_during_install(reverie_home: Path, import_file: str, print_fn) -> None:
+    """feat/flow (D58): `reverie install --import <file>` — restore a brain
     export during setup on a new machine. Only an empty brain (the fresh
     bootstrap) accepts it; anything else refuses with guidance."""
     from . import transport
-    brain = Brain(ec_home / "ec.db")
+    brain = Brain(reverie_home / "reverie.db")
     try:
         if not transport._brain_is_empty(brain):
             raise InstallError(
                 "The local brain already holds data, so `--import` would "
-                "replace it. Run `ec import <file> --replace` explicitly "
+                "replace it. Run `reverie import <file> --replace` explicitly "
                 "(it takes an automatic backup first).")
         transport.import_brain(brain, import_file, print_fn=print_fn)
     except transport.TransportError as exc:
@@ -1193,9 +1327,9 @@ def _emit(write: PlannedWrite, home: Path, dry_run: bool, print_fn) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m ec.install",
-        description="EC installation (§28.8): configure detected coding "
-                    "agents and create the ~/.ec directory.",
+        prog="python -m reverie.install",
+        description="Reverie installation (§28.8): configure detected coding "
+                    "agents and create the ~/.reverie directory.",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--all", action="store_true",

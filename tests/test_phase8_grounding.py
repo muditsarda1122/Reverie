@@ -25,15 +25,15 @@ from unittest.mock import patch
 
 import pytest
 
-from ec import grounding, maintainer, mcp_server
-from ec.brain import Brain
-from ec.config import DEFAULT_CONFIG, AttrDict, _to_attrdict
-from ec.grounding import (
+from reverie import grounding, maintainer, mcp_server
+from reverie.brain import Brain
+from reverie.config import DEFAULT_CONFIG, AttrDict, _to_attrdict
+from reverie.grounding import (
     COMMIT_STALENESS_COMMITS,
     evaluate_ecu,
     should_deprecate,
 )
-from ec.session import SessionManager
+from reverie.session import SessionManager
 
 # ---------------------------------------------------------------------------
 # fixtures + helpers
@@ -53,7 +53,7 @@ def config():
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -572,15 +572,15 @@ class TestSessionStartWiring:
 
 class TestMCPServerRepoResolution:
     def test_env_override_wins(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("EC_REPO_PATH", str(tmp_path))
-        monkeypatch.setenv("EC_BRANCH", "main")
+        monkeypatch.setenv("REVERIE_REPO_PATH", str(tmp_path))
+        monkeypatch.setenv("REVERIE_BRANCH", "main")
         monkeypatch.chdir(tmp_path)
         assert mcp_server.resolve_maintainer_repo_path(None) == \
             str(tmp_path.resolve())
 
     def test_cwd_git_toplevel(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("EC_REPO_PATH", raising=False)
-        monkeypatch.delenv("EC_BRANCH", raising=False)
+        monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+        monkeypatch.delenv("REVERIE_BRANCH", raising=False)
         subprocess.run(["git", "init"], cwd=str(tmp_path), check=True,
                        capture_output=True)
         monkeypatch.chdir(tmp_path)
@@ -589,8 +589,8 @@ class TestMCPServerRepoResolution:
 
     def test_falls_back_to_last_active_session(self, monkeypatch, tmp_path,
                                                brain):
-        monkeypatch.delenv("EC_REPO_PATH", raising=False)
-        monkeypatch.delenv("EC_BRANCH", raising=False)
+        monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+        monkeypatch.delenv("REVERIE_BRANCH", raising=False)
         outside = tmp_path / "plain-dir"
         outside.mkdir()
         monkeypatch.chdir(outside)              # not a git repo
@@ -599,8 +599,8 @@ class TestMCPServerRepoResolution:
             "/repos/session-repo"
 
     def test_none_when_nothing_resolves(self, monkeypatch, tmp_path, brain):
-        monkeypatch.delenv("EC_REPO_PATH", raising=False)
-        monkeypatch.delenv("EC_BRANCH", raising=False)
+        monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+        monkeypatch.delenv("REVERIE_BRANCH", raising=False)
         outside = tmp_path / "plain-dir-2"
         outside.mkdir()
         monkeypatch.chdir(outside)
@@ -610,8 +610,8 @@ class TestMCPServerRepoResolution:
                                                    tmp_path):
         """The startup path threads the resolved repo into
         start_maintenance (D35 end-to-end)."""
-        monkeypatch.setenv("EC_REPO_PATH", str(tmp_path))
-        monkeypatch.setenv("EC_BRANCH", "main")
+        monkeypatch.setenv("REVERIE_REPO_PATH", str(tmp_path))
+        monkeypatch.setenv("REVERIE_BRANCH", "main")
         captured = {}
 
         class FakeServer:
@@ -633,7 +633,7 @@ class TestMCPServerRepoResolution:
                 pass
 
         fake = FakeServer()
-        with patch.object(mcp_server, "ECServer", lambda: fake), \
+        with patch.object(mcp_server, "ReverieServer", lambda: fake), \
                 patch.object(mcp_server.sys, "stdin", io.StringIO("")), \
                 patch.object(mcp_server.sys, "stdout", io.StringIO()):
             mcp_server.main()

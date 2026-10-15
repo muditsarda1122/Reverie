@@ -7,7 +7,7 @@ existed; these tests cover the new one-hop bounded expansion.
 
 Run: .venv/bin/python -m pytest tests/test_phase13_structural_proximity.py -v
 Offline: real Brain + real MiniLM embeddings for semantic seeding, mocked
-classification LLM (ec.diffuser.call_llm).
+classification LLM (reverie.diffuser.call_llm).
 """
 
 import os
@@ -19,8 +19,8 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.brain import Brain
-from ec.diffuser import (
+from reverie.brain import Brain
+from reverie.diffuser import (
     MAX_CLASSIFY_BATCH,
     STRUCTURAL_PROXIMITY_MAX_EXTRA,
     _expand_with_structural_proximity,
@@ -36,13 +36,13 @@ FAR_TEXT = ("PostgreSQL autovacuum scale factors must be tuned per table "
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -185,7 +185,7 @@ def test_structural_neighbor_reaches_classification(brain, model):
             {"pair": 2, "relationship": "supports"},    # far  (structural)
         ]})
 
-    with patch("ec.diffuser.call_llm", side_effect=fake_call_llm):
+    with patch("reverie.diffuser.call_llm", side_effect=fake_call_llm):
         result = diffuse_ecu(brain, near)
 
     # The structurally-reachable-but-semantically-far ECU was classified…
@@ -216,7 +216,7 @@ def test_unrelated_structural_neighbor_discarded(brain, model):
             {"pair": 2, "relationship": "unrelated"},
         ]})
 
-    with patch("ec.diffuser.call_llm", side_effect=fake_call_llm):
+    with patch("reverie.diffuser.call_llm", side_effect=fake_call_llm):
         result = diffuse_ecu(brain, near)
 
     # classified (candidates include the structural extra) but harmless:

@@ -1,8 +1,8 @@
-"""feat/flow tests — export / import / reset (D58) + the `ec` CLI
+"""feat/flow tests — export / import / reset (D58) + the `reverie` CLI
 subcommands (enable / disable / repos).
 
 Run: .venv/bin/python -m pytest tests/test_flow_transport.py -v
-All offline, everything under tmp_path (EC_HOME redirected).
+All offline, everything under tmp_path (REVERIE_HOME redirected).
 """
 
 import os
@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
-from ec import cli, repos, transport
-from ec.brain import Brain
-from ec.config import SCHEMA_VERSION
-from ec.transport import (
+from reverie import cli, repos, transport
+from reverie.brain import Brain
+from reverie.config import SCHEMA_VERSION
+from reverie.transport import (
     TransportError,
     export_brain,
     import_brain,
@@ -32,15 +32,15 @@ T0 = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture()
-def ec_home(tmp_path, monkeypatch):
-    home = tmp_path / "ec_home"
-    monkeypatch.setenv("EC_HOME", str(home))
+def reverie_home(tmp_path, monkeypatch):
+    home = tmp_path / "reverie_home"
+    monkeypatch.setenv("REVERIE_HOME", str(home))
     return home
 
 
 @pytest.fixture()
-def brain(ec_home):
-    b = Brain(ec_home / "ec.db")
+def brain(reverie_home):
+    b = Brain(reverie_home / "reverie.db")
     yield b
     b.close()
 
@@ -117,7 +117,7 @@ def test_import_into_empty_brain(brain, tmp_path):
     out = tmp_path / "export.zip"
     export_brain(brain, out)
 
-    fresh = Brain(tmp_path / "other" / "ec.db")
+    fresh = Brain(tmp_path / "other" / "reverie.db")
     try:
         result = import_brain(fresh, out)
         assert result["manifest"]["counts"]["ecus"] == 1
@@ -161,7 +161,7 @@ def test_import_replace_takes_backup_first(brain, tmp_path):
 
 def _rezip(tmp_path, manifest_updates: dict) -> Path:
     """Take a valid export, patch the manifest, re-zip."""
-    brain = Brain(tmp_path / "src" / "ec.db")
+    brain = Brain(tmp_path / "src" / "reverie.db")
     seed(brain, "content")
     out = tmp_path / "src.zip"
     export_brain(brain, out)
@@ -250,7 +250,7 @@ def test_import_failure_leaves_brain_untouched(brain, tmp_path):
     sid = session_with_candidate(brain)
     brain.upsert_repo("/git/a/.git", state="enabled")
 
-    incoming = Brain(tmp_path / "incoming" / "ec.db")
+    incoming = Brain(tmp_path / "incoming" / "reverie.db")
     try:
         seed(incoming, "incoming one")
         seed(incoming, "incoming two")
@@ -283,7 +283,7 @@ def test_import_fk_violation_rolls_back(brain, tmp_path):
     seed(brain, "precious local")
     sid = session_with_candidate(brain)
 
-    incoming = Brain(tmp_path / "incoming" / "ec.db")
+    incoming = Brain(tmp_path / "incoming" / "reverie.db")
     try:
         seed(incoming, "incoming one")
         s2 = session_with_candidate(incoming)
@@ -313,7 +313,7 @@ def test_import_from_previous_schema_without_new_tables(brain, tmp_path):
     export = tmp_path / "export.zip"
     export_brain(brain, export)
 
-    incoming = Brain(tmp_path / "incoming" / "ec.db")
+    incoming = Brain(tmp_path / "incoming" / "reverie.db")
     try:
         seed(incoming, "from the old schema")
         other = tmp_path / "old.zip"
@@ -344,7 +344,7 @@ def test_import_survives_altered_column_order(brain, tmp_path):
     export = tmp_path / "export.zip"
     export_brain(brain, export)
 
-    incoming = Brain(tmp_path / "incoming" / "ec.db")
+    incoming = Brain(tmp_path / "incoming" / "reverie.db")
     try:
         seed(incoming, "from altered schema")
         incoming._conn.execute(
@@ -492,9 +492,9 @@ def test_reset_repo_keeps_long_term_memory(brain, tmp_path):
     assert not brain.list_queue_candidates(repo_path="/repos/a")
 
 
-def test_reset_repo_covers_worktrees(brain, ec_home, tmp_path, capsys):
+def test_reset_repo_covers_worktrees(brain, reverie_home, tmp_path, capsys):
     """Fix 7: sessions are keyed by worktree path while repo identity is
-    the git common dir — `ec reset --repo` must wipe every worktree
+    the git common dir — `reverie reset --repo` must wipe every worktree
     belonging to the repo and say which paths were included."""
     main_wt = real_repo(tmp_path, "main-wt")
     subprocess.run(["git", "commit", "--allow-empty", "-m", "init"],
@@ -547,7 +547,7 @@ def test_reset_cli_yes_still_backs_up(brain, tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
-# the `ec` CLI — enable / disable / repos
+# the `reverie` CLI — enable / disable / repos
 # ---------------------------------------------------------------------------
 
 def real_repo(tmp_path, name="repo"):
@@ -558,15 +558,15 @@ def real_repo(tmp_path, name="repo"):
     return r
 
 
-def test_cli_enable_disable_roundtrip(ec_home, tmp_path, capsys,
+def test_cli_enable_disable_roundtrip(reverie_home, tmp_path, capsys,
                                       monkeypatch):
     repo = real_repo(tmp_path)
-    monkeypatch.delenv("EC_REPO_PATH", raising=False)
-    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+    monkeypatch.delenv("REVERIE_BRANCH", raising=False)
     assert cli.main(["enable", str(repo)]) == 0
     out = capsys.readouterr().out
     assert f"Reverie is on for {repo.resolve()}" in out
-    brain = Brain(ec_home / "ec.db")
+    brain = Brain(reverie_home / "reverie.db")
     try:
         assert repos.state_of(brain, repos.resolve_repo(
             cwd=repo)) == "enabled"
@@ -576,7 +576,7 @@ def test_cli_enable_disable_roundtrip(ec_home, tmp_path, capsys,
     out = capsys.readouterr().out
     assert "Fully off" in out
     assert "Existing memory is kept" in out
-    brain = Brain(ec_home / "ec.db")
+    brain = Brain(reverie_home / "reverie.db")
     try:
         assert repos.state_of(brain, repos.resolve_repo(
             cwd=repo)) == "disabled"
@@ -584,17 +584,17 @@ def test_cli_enable_disable_roundtrip(ec_home, tmp_path, capsys,
         brain.close()
 
 
-def test_cli_enable_outside_repo_fails(ec_home, tmp_path, capsys,
+def test_cli_enable_outside_repo_fails(reverie_home, tmp_path, capsys,
                                        monkeypatch):
     plain = tmp_path / "plain"
     plain.mkdir()
-    monkeypatch.delenv("EC_REPO_PATH", raising=False)
-    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+    monkeypatch.delenv("REVERIE_BRANCH", raising=False)
     assert cli.main(["enable", str(plain)]) == 1
     assert "Not a git repository" in capsys.readouterr().err
 
 
-def test_cli_repos_listing(ec_home, tmp_path, capsys, brain):
+def test_cli_repos_listing(reverie_home, tmp_path, capsys, brain):
     seed(brain)
     session_with_candidate(brain, repo="/repos/a", branch="main")
     brain.upsert_repo("/git/a/.git", path="/repos/a",
@@ -607,13 +607,13 @@ def test_cli_repos_listing(ec_home, tmp_path, capsys, brain):
     assert "https://x/a.git" in out
 
 
-def test_cli_repos_empty(ec_home, capsys):
+def test_cli_repos_empty(reverie_home, capsys):
     assert cli.main(["repos"]) == 0
     assert "No repos known" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
-# the `ec` CLI dispatch (feat/flow review fix 6)
+# the `reverie` CLI dispatch (feat/flow review fix 6)
 # ---------------------------------------------------------------------------
 
 def test_cli_bare_ec_prints_multi_command_help(capsys):
@@ -628,46 +628,39 @@ def test_cli_mistyped_subcommand_errors_with_hint(capsys):
     assert cli.main(["reveiw"]) == 2
     err = capsys.readouterr().err
     assert "Unknown command: 'reveiw'" in err
-    assert "Did you mean 'ec review'?" in err
+    assert "Did you mean 'reverie review'?" in err
 
 
 def test_cli_mistyped_subcommand_without_hint(capsys):
     assert cli.main(["frobnicate"]) == 2
     err = capsys.readouterr().err
     assert "Unknown command: 'frobnicate'" in err
-    assert "ec --help" in err
+    assert "reverie --help" in err
 
 
-def test_cli_dash_flags_still_go_to_install(monkeypatch, ec_home):
-    """Backwards compatibility: `ec --all`, `ec --only ...` reach the
-    installer (never an 'unknown command' error)."""
-    captured: dict = {}
-
-    def fake_run(**kwargs):
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr("ec.install.run", fake_run)
-    assert cli.main(["--all"]) == 0
-    assert captured["all_agents"] is True
-    assert cli.main(["--only", "claude_code"]) == 0
-    assert captured["only"] == ["claude_code"]
+def test_cli_dash_flags_are_unknown_commands(capsys):
+    """`reverie --all` / `reverie --only ...` are NOT shortcuts for the
+    installer — flags belong after the subcommand (`reverie install --all`)."""
+    assert cli.main(["--all"]) == 2
+    assert cli.main(["--only", "claude_code"]) == 2
+    err = capsys.readouterr().err
+    assert "Unknown command" in err
 
 
-def test_cli_review_forwards_flags(ec_home, capsys, monkeypatch):
-    """`ec review --list` reaches the review CLI (the generic argparse
+def test_cli_review_forwards_flags(reverie_home, capsys, monkeypatch):
+    """`reverie review --list` reaches the review CLI (the generic argparse
     pass used to reject its flags before review_cli ever saw them)."""
-    monkeypatch.setenv("EC_REPO_PATH", "/repos/a")
-    monkeypatch.setenv("EC_BRANCH", "main")
+    monkeypatch.setenv("REVERIE_REPO_PATH", "/repos/a")
+    monkeypatch.setenv("REVERIE_BRANCH", "main")
     assert cli.main(["review", "--list"]) == 0
     assert "No candidates in this scope." in capsys.readouterr().out
 
 
-def test_cli_status_shares_logic_with_ec_status(ec_home, capsys,
+def test_cli_status_shares_logic_with_ec_status(reverie_home, capsys,
                                                 monkeypatch):
-    """Fix 9: `ec status` exists and prints the ec-status report."""
-    monkeypatch.setenv("EC_REPO_PATH", "/repos/a")
-    monkeypatch.setenv("EC_BRANCH", "main")
+    """Fix 9: `reverie status` exists and prints the ec-status report."""
+    monkeypatch.setenv("REVERIE_REPO_PATH", "/repos/a")
+    monkeypatch.setenv("REVERIE_BRANCH", "main")
     assert cli.main(["status"]) == 0
     assert "No active session" in capsys.readouterr().out
     assert cli.main(["status", "--repo", "/repos/a", "--branch", "dev"]) == 0
@@ -678,9 +671,9 @@ def test_cli_status_shares_logic_with_ec_status(ec_home, capsys,
 # ec install --import
 # ---------------------------------------------------------------------------
 
-def test_install_import_during_setup(ec_home, tmp_path, capsys):
-    from ec import install
-    source = Brain(tmp_path / "src" / "ec.db")
+def test_install_import_during_setup(reverie_home, tmp_path, capsys):
+    from reverie import install
+    source = Brain(tmp_path / "src" / "reverie.db")
     seed(source, "shipped on the old machine")
     source.upsert_repo("/git/a/.git", url="https://x/a.git",
                        state="enabled")
@@ -690,13 +683,13 @@ def test_install_import_during_setup(ec_home, tmp_path, capsys):
 
     home = tmp_path / "fakehome"
     home.mkdir()
-    install.run(home=home, ec_home=ec_home, all_agents=True, no_verify=True,
+    install.run(home=home, reverie_home=reverie_home, all_agents=True, no_verify=True,
                 import_file=str(export),
                 which=lambda _b: None,
                 input_fn=lambda _p="": "",
                 print_fn=capsys.write_line if False else (lambda s: None),
                 environ={})
-    brain = Brain(ec_home / "ec.db")
+    brain = Brain(reverie_home / "reverie.db")
     try:
         assert brain.count_ecus() == 1
         assert brain.list_ecus()[0]["cognition"] == \
@@ -706,16 +699,16 @@ def test_install_import_during_setup(ec_home, tmp_path, capsys):
         brain.close()
 
 
-def test_install_import_refuses_nonempty_brain(ec_home, tmp_path, capsys,
+def test_install_import_refuses_nonempty_brain(reverie_home, tmp_path, capsys,
                                                brain):
-    from ec import install
+    from reverie import install
     seed(brain, "already here")
     export = tmp_path / "carry.zip"
     export_brain(brain, export)
     home = tmp_path / "fakehome"
     home.mkdir()
     with pytest.raises(install.InstallError, match="--replace"):
-        install.run(home=home, ec_home=ec_home, all_agents=True,
+        install.run(home=home, reverie_home=reverie_home, all_agents=True,
                     no_verify=True, import_file=str(export),
                     which=lambda _b: None, input_fn=lambda _p="": "",
                     print_fn=lambda s: None, environ={})

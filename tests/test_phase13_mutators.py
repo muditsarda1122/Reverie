@@ -21,19 +21,19 @@ import json
 
 import pytest
 
-from ec.brain import Brain, BrainError
-from ec.reconsolidation import reconsolidate
+from reverie.brain import Brain, BrainError
+from reverie.reconsolidation import reconsolidate
 
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 

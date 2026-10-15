@@ -1,8 +1,8 @@
 """Phase 4 tests — MCP server (§28.3/§28.4, §16.3 shapes, D14/D15/D17/D22).
 
 Run: .venv/bin/python -m pytest tests/ -v
-Offline: in-process dispatch with mocked LLM calls (ec.extractor.call_llm /
-ec.diffuser.call_llm), plus one real-subprocess stdio test. A live test skips
+Offline: in-process dispatch with mocked LLM calls (reverie.extractor.call_llm /
+reverie.diffuser.call_llm), plus one real-subprocess stdio test. A live test skips
 unless OPENCODE_ZEN_API_KEY is set.
 """
 
@@ -18,17 +18,17 @@ from unittest.mock import patch
 
 import pytest
 
-from ec.brain import Brain
-from ec.llm import LLMError, api_key
-from ec.mcp_server import (
+from reverie.brain import Brain
+from reverie.llm import LLMError, api_key
+from reverie.mcp_server import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
     NO_REPO_ERROR,
     PARSE_ERROR,
     PROTOCOL_VERSION,
-    ECServer,
+    ReverieServer,
 )
-from ec.session import SessionManager
+from reverie.session import SessionManager
 
 ROOT = Path(__file__).resolve().parent.parent
 REPO, BRANCH = "/repos/mcp-repo", "main"
@@ -59,13 +59,13 @@ EXTRACT_PAYLOAD = json.dumps({
 
 @pytest.fixture(autouse=True)
 def _repo_env(monkeypatch):
-    monkeypatch.setenv("EC_REPO_PATH", REPO)
-    monkeypatch.setenv("EC_BRANCH", BRANCH)
+    monkeypatch.setenv("REVERIE_REPO_PATH", REPO)
+    monkeypatch.setenv("REVERIE_BRANCH", BRANCH)
 
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
@@ -79,15 +79,15 @@ def manager(brain):
 def server(brain, manager):
     """feat/flow: the repo starts ENABLED (the tests below use the
     auto-session flow); undecided/disabled gating has its own tests."""
-    s = ECServer(brain=brain, manager=manager)
-    payload, _r = call_tool(s, "ec_set_repo_state", {"state": "enabled"})
+    s = ReverieServer(brain=brain, manager=manager)
+    payload, _r = call_tool(s, "reverie_set_repo_state", {"state": "enabled"})
     assert payload["status"] == "ok"
     return s
 
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
@@ -136,7 +136,7 @@ def test_initialize_handshake(server):
     result = r["result"]
     assert result["protocolVersion"] == PROTOCOL_VERSION
     assert "tools" in result["capabilities"]
-    assert result["serverInfo"]["name"] == "ec"
+    assert result["serverInfo"]["name"] == "reverie"
     assert r["id"] == 1
 
 
@@ -150,10 +150,10 @@ def test_tools_list(server):
     tools = r["result"]["tools"]
     # §28.3 four + feat/flow three (enablement + agent review)
     assert [t["name"] for t in tools][:4] == [
-        "ec_observe", "ec_query", "ec_get_summary", "ec_reconsolidate"]
+        "reverie_observe", "reverie_query", "reverie_summary", "reverie_reconsolidate"]
     observe = tools[0]
     assert observe["inputSchema"]["required"] == ["user_prompt", "reasoning_trace"]
-    assert "Do NOT call ec_observe" in observe["description"]  # §28.12 verbatim
+    assert "Do NOT call reverie_observe" in observe["description"]  # §28.12 verbatim
     query = tools[1]
     assert query["inputSchema"]["required"] == ["query"]
     assert set(query["inputSchema"]["properties"]["mode"]["enum"]) == {
@@ -182,7 +182,7 @@ def test_protocol_errors(server):
         "jsonrpc": "2.0", "id": 4, "method": "tools/call",
         "params": {"name": "ec_delete_everything", "arguments": {}}})
     assert r["error"]["code"] == INVALID_PARAMS
-    assert "ec_observe" in r["error"]["message"]
+    assert "reverie_observe" in r["error"]["message"]
     r = server.handle_line("this is not json {{{")
     assert r["error"]["code"] == PARSE_ERROR
 
@@ -195,8 +195,8 @@ def test_tools_list_includes_flow_tools(server):
     r = server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in r["result"]["tools"]]
     assert names == [
-        "ec_observe", "ec_query", "ec_get_summary", "ec_reconsolidate",
-        "ec_set_repo_state", "ec_review_list", "ec_review_decide",
+        "reverie_observe", "reverie_query", "reverie_summary", "reverie_reconsolidate",
+        "reverie_set_repo_state", "reverie_review_list", "reverie_review_decide",
     ]
     for tool in r["result"]["tools"][:5]:
         assert "repo_path" in tool["inputSchema"]["properties"]
@@ -205,7 +205,7 @@ def test_tools_list_includes_flow_tools(server):
 def test_observe_auto_creates_session(server, brain):
     """D56: in an enabled repo, observe resolves-or-creates the session —
     the D15 'no active session' error is gone."""
-    payload, result = call_tool(server, "ec_observe", {
+    payload, result = call_tool(server, "reverie_observe", {
         "user_prompt": "fix the bug", "reasoning_trace": "..."}, msg_id=77)
     assert payload["status"] == "error"        # no real LLM in this test —
     assert payload["session_active"] is True   # but the session exists
@@ -215,7 +215,7 @@ def test_observe_auto_creates_session(server, brain):
 
 def test_query_auto_creates_session(server, brain, model):
     make_canonical(brain, model, "Token refresh must be optimistic")
-    payload, result = call_tool(server, "ec_query", {"query": "token refresh"})
+    payload, result = call_tool(server, "reverie_query", {"query": "token refresh"})
     assert payload["status"] == "ok"
     assert payload["session_active"] is True
     sessions = brain.list_sessions(REPO, BRANCH, status="active")
@@ -225,15 +225,15 @@ def test_query_auto_creates_session(server, brain, model):
 def test_undecided_repo_returns_ask_user(brain, manager):
     """D55: an undecided repo gets the structured first-time question
     instead of action."""
-    s = ECServer(brain=brain, manager=manager)
-    payload, result = call_tool(s, "ec_observe", {
+    s = ReverieServer(brain=brain, manager=manager)
+    payload, result = call_tool(s, "reverie_observe", {
         "user_prompt": "fix the bug", "reasoning_trace": "..."})
     assert result["isError"] is True
     assert payload["status"] == "needs_consent"
     assert payload["state"] == "undecided"
     assert payload["question"] == (
         "Reverie isn't on for this repo. Turn it on? (yes / not now / never)")
-    assert "ec_set_repo_state" in payload["instructions"]
+    assert "reverie_set_repo_state" in payload["instructions"]
     # the ask is recorded (undecided-but-asked)
     row = brain.get_repo(REPO)
     assert row is not None and row["asked_at"] is not None
@@ -241,45 +241,45 @@ def test_undecided_repo_returns_ask_user(brain, manager):
 
 
 def test_not_now_records_asked_and_stays_off(brain, manager):
-    s = ECServer(brain=brain, manager=manager)
-    payload, _ = call_tool(s, "ec_set_repo_state", {"state": "not_now"})
+    s = ReverieServer(brain=brain, manager=manager)
+    payload, _ = call_tool(s, "reverie_set_repo_state", {"state": "not_now"})
     assert payload["status"] == "ok"
     assert payload["state"] == "undecided"
     assert brain.get_repo(REPO)["asked_at"] is not None
     # every tool still refuses to act
-    for name, args in (("ec_observe", {"user_prompt": "x",
+    for name, args in (("reverie_observe", {"user_prompt": "x",
                                        "reasoning_trace": "y"}),
-                       ("ec_query", {"query": "q"})):
+                       ("reverie_query", {"query": "q"})):
         payload, _ = call_tool(s, name, args)
         assert payload["status"] == "needs_consent"
 
 
 def test_never_maps_to_disabled(brain, manager):
-    s = ECServer(brain=brain, manager=manager)
-    payload, _ = call_tool(s, "ec_set_repo_state", {"state": "disabled"})
+    s = ReverieServer(brain=brain, manager=manager)
+    payload, _ = call_tool(s, "reverie_set_repo_state", {"state": "disabled"})
     assert payload["status"] == "ok"
     assert brain.get_repo(REPO)["state"] == "disabled"
-    payload, _ = call_tool(s, "ec_observe", {
+    payload, _ = call_tool(s, "reverie_observe", {
         "user_prompt": "x", "reasoning_trace": "y"})
     assert payload["status"] == "disabled"
     assert "kept" in payload["error"]
-    payload, _ = call_tool(s, "ec_query", {"query": "q"})
+    payload, _ = call_tool(s, "reverie_query", {"query": "q"})
     assert payload["status"] == "disabled"
 
 
 def test_disabled_repo_can_re_enable(brain, manager):
-    s = ECServer(brain=brain, manager=manager)
-    call_tool(s, "ec_set_repo_state", {"state": "disabled"})
-    call_tool(s, "ec_set_repo_state", {"state": "enabled"})
-    payload, _ = call_tool(s, "ec_query", {"query": "anything"})
+    s = ReverieServer(brain=brain, manager=manager)
+    call_tool(s, "reverie_set_repo_state", {"state": "disabled"})
+    call_tool(s, "reverie_set_repo_state", {"state": "enabled"})
+    payload, _ = call_tool(s, "reverie_query", {"query": "anything"})
     assert payload["status"] == "ok"
 
 
 def test_no_repo_error_when_detection_fails(server, monkeypatch, tmp_path):
-    monkeypatch.delenv("EC_REPO_PATH", raising=False)
-    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+    monkeypatch.delenv("REVERIE_BRANCH", raising=False)
     monkeypatch.chdir(tmp_path)             # not a git repo
-    payload, result = call_tool(server, "ec_observe", {
+    payload, result = call_tool(server, "reverie_observe", {
         "user_prompt": "x", "reasoning_trace": "y"}, msg_id=91)
     assert result["isError"] is True
     assert payload["status"] == "error"
@@ -291,18 +291,18 @@ def test_no_repo_error_when_detection_fails(server, monkeypatch, tmp_path):
 def test_repo_path_argument_resolves(monkeypatch, tmp_path, brain, manager):
     """D55: an explicit repo_path beats cwd (harnesses launch global MCP
     servers in the home folder)."""
-    monkeypatch.delenv("EC_REPO_PATH", raising=False)
-    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+    monkeypatch.delenv("REVERIE_BRANCH", raising=False)
     monkeypatch.chdir(tmp_path)             # cwd is NOT a repo
     repo_dir = tmp_path / "workrepo"
     repo_dir.mkdir()
     subprocess.run(["git", "init", "-b", "main"], cwd=repo_dir, check=True,
                    capture_output=True)
-    s = ECServer(brain=brain, manager=manager)
-    payload, _ = call_tool(s, "ec_set_repo_state", {
+    s = ReverieServer(brain=brain, manager=manager)
+    payload, _ = call_tool(s, "reverie_set_repo_state", {
         "state": "enabled", "repo_path": str(repo_dir)})
     assert payload["status"] == "ok"
-    payload, _ = call_tool(s, "ec_query", {
+    payload, _ = call_tool(s, "reverie_query", {
         "query": "q", "repo_path": str(repo_dir)})
     assert payload["status"] == "ok"
     sessions = brain.list_sessions(str(repo_dir.resolve()), "main")
@@ -310,7 +310,7 @@ def test_repo_path_argument_resolves(monkeypatch, tmp_path, brain, manager):
 
 
 def test_summary_with_enabled_repo_auto_session(server):
-    payload, result = call_tool(server, "ec_get_summary")
+    payload, result = call_tool(server, "reverie_summary")
     assert payload["status"] == "ok"
     assert result["isError"] is False
     assert payload["session"]["active"] is True
@@ -322,43 +322,43 @@ def test_summary_with_enabled_repo_auto_session(server):
 
 
 def test_summary_repo_less_still_works(server, monkeypatch):
-    monkeypatch.delenv("EC_REPO_PATH", raising=False)
-    monkeypatch.delenv("EC_BRANCH", raising=False)
+    monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+    monkeypatch.delenv("REVERIE_BRANCH", raising=False)
     monkeypatch.chdir(Path("/"))            # no repo anywhere near
-    payload, result = call_tool(server, "ec_get_summary")
+    payload, result = call_tool(server, "reverie_summary")
     assert payload["status"] == "ok"
     assert payload["session"]["active"] is False
 
 
 def test_observe_missing_params(server, active_session):
-    payload, _ = call_tool(server, "ec_observe", {"user_prompt": "x"})
+    payload, _ = call_tool(server, "reverie_observe", {"user_prompt": "x"})
     assert payload["status"] == "error"
     assert payload["session_active"] is True
     assert "reasoning_trace" in payload["error"]
 
 
 def test_query_invalid_params(server, active_session):
-    payload, _ = call_tool(server, "ec_query", {"query": "  "})
+    payload, _ = call_tool(server, "reverie_query", {"query": "  "})
     assert payload["status"] == "error" and "query" in payload["error"]
-    payload, _ = call_tool(server, "ec_query",
+    payload, _ = call_tool(server, "reverie_query",
                            {"query": "auth", "scope": "galactic"})
     assert payload["status"] == "error"
     assert "valid scopes" in payload["error"].lower()
-    payload, _ = call_tool(server, "ec_query",
+    payload, _ = call_tool(server, "reverie_query",
                            {"query": "auth", "mode": "lounging"})
     assert payload["status"] == "error"
     assert "Valid modes" in payload["error"]
 
 
 # ---------------------------------------------------------------------------
-# ec_observe (§28.13) + ec_query (§11.3) with an active session
+# reverie_observe (§28.13) + reverie_query (§11.3) with an active session
 # ---------------------------------------------------------------------------
 
 def test_observe_extracts_into_session_brain(server, brain, active_session, model):
-    with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
-         patch("ec.diffuser.call_llm",
+    with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
+         patch("reverie.diffuser.call_llm",
                return_value=json.dumps({"classifications": []})):
-        payload, result = call_tool(server, "ec_observe", {
+        payload, result = call_tool(server, "reverie_observe", {
             "user_prompt": "why do sessions drop?",
             "reasoning_trace": "I traced it to the token refresh race...",
             "final_output": "fixed by making refresh optimistic",
@@ -374,8 +374,8 @@ def test_observe_extracts_into_session_brain(server, brain, active_session, mode
 
 
 def test_observe_extraction_failure_guidance(server, active_session):
-    with patch("ec.extractor.call_llm", side_effect=LLMError("no key")):
-        payload, result = call_tool(server, "ec_observe", {
+    with patch("reverie.extractor.call_llm", side_effect=LLMError("no key")):
+        payload, result = call_tool(server, "reverie_observe", {
             "user_prompt": "x", "reasoning_trace": "y"})
     assert payload["status"] == "error"
     assert result["isError"] is True
@@ -386,9 +386,9 @@ def test_observe_extraction_failure_guidance(server, active_session):
 
 def test_observe_lightweight_diffusion_failure_is_soft(server, brain,
                                                        active_session, model):
-    with patch("ec.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
-         patch("ec.diffuser.call_llm", side_effect=LLMError("offline")):
-        payload, _ = call_tool(server, "ec_observe", {
+    with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
+         patch("reverie.diffuser.call_llm", side_effect=LLMError("offline")):
+        payload, _ = call_tool(server, "reverie_observe", {
             "user_prompt": "p", "reasoning_trace": "r"})
     assert payload["status"] == "ok"
     assert payload["ecus_extracted"] == 2
@@ -403,7 +403,7 @@ def test_query_returns_groups_and_writes_metadata(server, brain, manager,
                         "The auth cache must be cleared after refresh failures")
     brain.add_edge(c1, c2, "supports", weight=0.9)
 
-    payload, result = call_tool(server, "ec_query", {
+    payload, result = call_tool(server, "reverie_query", {
         "query": "how does auth token refresh work?", "mode": "implementation"})
     assert result["isError"] is False
     assert payload["status"] == "ok"
@@ -425,7 +425,7 @@ def test_query_returns_groups_and_writes_metadata(server, brain, manager,
             assert meta["retrieval_count"] == 1
     assert stamped >= 1
     # second query increments
-    call_tool(server, "ec_query", {
+    call_tool(server, "reverie_query", {
         "query": "how does auth token refresh work?", "mode": "implementation"})
     for ecu_id in (c1, c2):
         meta = brain.get_ecu(ecu_id)["metadata"]
@@ -437,7 +437,7 @@ def test_query_returns_groups_and_writes_metadata(server, brain, manager,
 
 
 def test_query_no_results_message(server, active_session):
-    payload, _ = call_tool(server, "ec_query", {
+    payload, _ = call_tool(server, "reverie_query", {
         "query": "obscure topic with no cognition", "mode": "investigation"})
     assert payload["status"] == "ok"
     assert payload["groups_retrieved"] == 0
@@ -451,13 +451,13 @@ def test_query_no_results_message(server, active_session):
 
 def test_stdio_server_subprocess(tmp_path):
     env = dict(os.environ)
-    env["EC_HOME"] = str(tmp_path / "ec_home")
-    env["EC_REPO_PATH"] = REPO
-    env["EC_BRANCH"] = BRANCH
+    env["REVERIE_HOME"] = str(tmp_path / "reverie_home")
+    env["REVERIE_REPO_PATH"] = REPO
+    env["REVERIE_BRANCH"] = BRANCH
     env["PYTHONPATH"] = str(ROOT)
     env["HF_HUB_OFFLINE"] = "1"
     proc = subprocess.Popen(
-        [sys.executable, "-m", "ec.mcp_server"],
+        [sys.executable, "-m", "reverie.mcp_server"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, env=env, cwd=ROOT,
     )
@@ -469,19 +469,19 @@ def test_stdio_server_subprocess(tmp_path):
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
         # feat/flow: an undecided repo asks instead of acting
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-         "params": {"name": "ec_observe",
+         "params": {"name": "reverie_observe",
                     "arguments": {"user_prompt": "x", "reasoning_trace": "y"}}},
         # record the user's yes
         {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-         "params": {"name": "ec_set_repo_state",
+         "params": {"name": "reverie_set_repo_state",
                     "arguments": {"state": "enabled"}}},
         # now the session auto-exists and observe acts (extract fails on
         # the missing key, but the session side of the flow runs)
         {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
-         "params": {"name": "ec_observe",
+         "params": {"name": "reverie_observe",
                     "arguments": {"user_prompt": "x", "reasoning_trace": "y"}}},
         {"jsonrpc": "2.0", "id": 6, "method": "tools/call",
-         "params": {"name": "ec_get_summary", "arguments": {}}},
+         "params": {"name": "reverie_summary", "arguments": {}}},
     ]
     try:
         for req in requests:
@@ -495,7 +495,7 @@ def test_stdio_server_subprocess(tmp_path):
             msg = json.loads(line)
             responses[msg["id"]] = msg
 
-        assert responses[1]["result"]["serverInfo"]["name"] == "ec"
+        assert responses[1]["result"]["serverInfo"]["name"] == "reverie"
         assert len(responses[2]["result"]["tools"]) == 7  # +reconsolidate, flow
         first_observe = json.loads(
             responses[3]["result"]["content"][0]["text"])
@@ -521,7 +521,7 @@ def test_stdio_server_subprocess(tmp_path):
 
 @pytest.mark.skipif(not api_key(), reason="OPENCODE_ZEN_API_KEY not set")
 def test_live_observe_and_query(server, brain, active_session, model):
-    payload, _ = call_tool(server, "ec_observe", {
+    payload, _ = call_tool(server, "reverie_observe", {
         "user_prompt": "Why do webhook retries double-charge customers?",
         "reasoning_trace": (
             "I read src/webhook.py and found the handler charges the card "
@@ -534,7 +534,7 @@ def test_live_observe_and_query(server, brain, active_session, model):
     assert payload["status"] == "ok"
     assert payload["ecus_extracted"] >= 1
 
-    payload, _ = call_tool(server, "ec_query", {
+    payload, _ = call_tool(server, "reverie_query", {
         "query": "webhook idempotency and retry handling"})
     assert payload["status"] == "ok"
     assert payload["groups_retrieved"] >= 1

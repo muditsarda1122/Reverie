@@ -13,7 +13,7 @@ import numpy as np
 
 from .config import get_config
 
-log = logging.getLogger("ec.embeddings")
+log = logging.getLogger("reverie.embeddings")
 
 
 class EmbeddingError(RuntimeError):

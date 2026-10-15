@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 
 from .config import get_config
 
-log = logging.getLogger("ec.activation")
+log = logging.getLogger("reverie.activation")
 
 
 def _utcnow() -> datetime:

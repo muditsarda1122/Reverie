@@ -2,7 +2,7 @@
 
 Run: .venv/bin/python -m pytest tests/test_phase10_reconsolidation.py -v
 Offline: real embeddings (HF cache), LLM calls mocked via
-ec.diffuser.call_llm (the classifier's namespace). No live API tests needed —
+reverie.diffuser.call_llm (the classifier's namespace). No live API tests needed —
 the reconsolidation path shares the Diffuser's already-live-tested LLM calls.
 """
 
@@ -16,10 +16,10 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from ec import confidence as conf
-from ec.brain import Brain
-from ec.diffuser import DiffuserError
-from ec.reconsolidation import (
+from reverie import confidence as conf
+from reverie.brain import Brain
+from reverie.diffuser import DiffuserError
+from reverie.reconsolidation import (
     ACTION_CHALLENGED,
     ACTION_CONFIDENCE_UPDATED,
     ACTION_NO_CHANGE,
@@ -39,14 +39,14 @@ def classifications_response(*rels: str) -> str:
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
@@ -104,7 +104,7 @@ class TestReconsolidateTargetPair:
         notes = updated["metadata"]["reconsolidations"]
         assert len(notes) == 1
         assert notes[0]["relationship"] == "supports"
-        assert notes[0]["via"] == "ec_reconsolidate"
+        assert notes[0]["via"] == "reverie_reconsolidate"
         assert notes[0]["confidence_delta"] == pytest.approx(delta, abs=1e-6)
         assert brain.edge_count(old) == 0
         assert result.edges_created == 0
@@ -119,7 +119,7 @@ class TestReconsolidateTargetPair:
             "auth/token.py now acquires a fresh token lazily per request — "
             "the pessimistic-refresh claim no longer holds")
 
-        with patch("ec.diffuser.call_llm") as m:   # nothing should need the LLM
+        with patch("reverie.diffuser.call_llm") as m:   # nothing should need the LLM
             result = reconsolidate(brain, old, evidence,
                                    relationship="contradicts",
                                    embedding_model=model)
@@ -192,7 +192,7 @@ class TestReconsolidateTargetPair:
     def test_explicit_relationship_skips_classification(self, brain, model):
         """#7 Agent passes relationship → no classification call."""
         old = insert_ecu(brain, model, "Retry storms need jittered backoff")
-        with patch("ec.diffuser.call_llm") as m:
+        with patch("reverie.diffuser.call_llm") as m:
             reconsolidate(brain, old, "Backoff jitter verified in client code",
                           relationship="supports", embedding_model=model)
         m.assert_not_called()
@@ -206,7 +206,7 @@ class TestReconsolidateTargetPair:
         evidence = (
             "The race disappears only when cache invalidation follows token "
             "refresh — more evidence the ordering invariant matters")
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("supports")) as m:
             result = reconsolidate(brain, old, evidence,
                                    embedding_model=model)
@@ -223,7 +223,7 @@ class TestReconsolidateTargetPair:
             "Cache invalidation must follow token refresh or stale auth persists",
             confidence=0.62)
         evidence = "Completely unrelated observation about CSS grid layouts"
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("unrelated")):
             result = reconsolidate(brain, old, evidence,
                                    embedding_model=model)
@@ -238,7 +238,7 @@ class TestReconsolidateTargetPair:
         exactly the ECUs it held before."""
         old = insert_ecu(brain, model, "Webhook handlers must be idempotent")
         before = brain.count_ecus()
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("supports")):
             reconsolidate(brain, old, "Duplicate deliveries observed and "
                                        "deduplicated by event id",
@@ -271,7 +271,7 @@ class TestReconsolidateRelatedAndValidation:
                       "The rate limiter applies a token bucket algorithm per "
                       "client") > 0.6
 
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("supports")):
             result = reconsolidate(brain, target, evidence,
                                    relationship="supports",
@@ -321,7 +321,7 @@ class TestReconsolidateRelatedAndValidation:
 
     def test_classification_failure_propagates(self, brain, model):
         old = insert_ecu(brain, model, "Some invariant")
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    side_effect=DiffuserError("offline")):
             with pytest.raises(DiffuserError):
                 reconsolidate(brain, old, "evidence text",
@@ -349,18 +349,18 @@ REPO, BRANCH = "/repos/labile-repo", "main"
 
 @pytest.fixture(autouse=True)
 def _repo_env(monkeypatch):
-    monkeypatch.setenv("EC_REPO_PATH", REPO)
-    monkeypatch.setenv("EC_BRANCH", BRANCH)
+    monkeypatch.setenv("REVERIE_REPO_PATH", REPO)
+    monkeypatch.setenv("REVERIE_BRANCH", BRANCH)
 
 
 @pytest.fixture()
 def manager(brain):
-    from ec.session import SessionManager
+    from reverie.session import SessionManager
     return SessionManager(brain)
 
 
 def canned_query_result(canonical_ids, session_ecu_id=None):
-    """A §16.3-shaped ec_query result for metadata/labile tests."""
+    """A §16.3-shaped reverie_query result for metadata/labile tests."""
     groups = [{
         "core_ecu": {"id": canonical_ids[0], "brain": "canonical"},
         "supporting_evidence": [],
@@ -407,7 +407,7 @@ class TestLabileTracking:
 
     def test_record_retrieval_metadata_marks_labile(self, brain, model,
                                                     manager):
-        """ec_query's metadata write marks surfaced canonical ECUs labile;
+        """reverie_query's metadata write marks surfaced canonical ECUs labile;
         session-brain ECUs never become labile (§5.5: canonical only)."""
         sid = manager.start_session()["session_id"]
         canon_a = insert_ecu(brain, model, "Invariant one for the query")
@@ -435,9 +435,9 @@ class TestLabileTracking:
 
 
 def _server_for(brain, manager):
-    from ec import repos
-    from ec.mcp_server import ECServer
-    server = ECServer(brain=brain, manager=manager)
+    from reverie import repos
+    from reverie.mcp_server import ReverieServer
+    server = ReverieServer(brain=brain, manager=manager)
     # feat/flow: these tests exercise the labile/reconsolidation mechanics,
     # so the env-detected repo starts enabled (auto-session flow).
     repos.set_repo_state(brain, repos.resolve_repo(), "enabled")
@@ -445,7 +445,7 @@ def _server_for(brain, manager):
 
 
 # ---------------------------------------------------------------------------
-# MCP tool ec_reconsolidate (§12.7 #5/#6/#11/#12)
+# MCP tool reverie_reconsolidate (§12.7 #5/#6/#11/#12)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
@@ -468,12 +468,12 @@ class TestMcpReconsolidateTool:
         response = server.handle_message({
             "jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         tools = {t["name"]: t for t in response["result"]["tools"]}
-        assert "ec_reconsolidate" in tools
-        schema = tools["ec_reconsolidate"]["inputSchema"]
+        assert "reverie_reconsolidate" in tools
+        schema = tools["reverie_reconsolidate"]["inputSchema"]
         assert schema["required"] == ["ecu_id", "evidence"]
         assert schema["properties"]["relationship"]["enum"] == \
             ["supports", "contradicts", "supersedes"]
-        assert "labile" in tools["ec_reconsolidate"]["description"]
+        assert "labile" in tools["reverie_reconsolidate"]["description"]
 
     def test_mcp_reconsolidate_tool_ok(self, brain, model, manager, server):
         """#11 Valid call → §5.2 structured response + brain updated."""
@@ -484,7 +484,7 @@ class TestMcpReconsolidateTool:
             confidence=0.6)
         manager.mark_labile(sid, [old])
 
-        payload, result = call_tool(server, "ec_reconsolidate", {
+        payload, result = call_tool(server, "reverie_reconsolidate", {
             "ecu_id": old,
             "evidence": "Verified auth/token.py: refresh() runs before any "
                         "dependent request — the invariant holds",
@@ -506,43 +506,43 @@ class TestMcpReconsolidateTool:
         manager.start_session()
         orphan = insert_ecu(brain, model, "Never retrieved invariant")
 
-        payload, _ = call_tool(server, "ec_reconsolidate", {
+        payload, _ = call_tool(server, "reverie_reconsolidate", {
             "ecu_id": orphan, "evidence": "some finding"})
 
         assert payload["status"] == "error"
         assert payload["session_active"] is True
-        assert "ec_query" in payload["error"]
+        assert "reverie_query" in payload["error"]
         # nothing changed
         assert brain.get_ecu(orphan)["confidence"] == pytest.approx(0.5)
 
     def test_unretrieved_ecu_refused_with_query_guidance(self, brain, manager,
                                                          server):
         """#12 (feat/flow D56: sessions are automatic) — reconsolidating an
-        ECU that was never retrieved is refused with ec_query guidance."""
-        payload, _ = call_tool(server, "ec_reconsolidate", {
+        ECU that was never retrieved is refused with reverie_query guidance."""
+        payload, _ = call_tool(server, "reverie_reconsolidate", {
             "ecu_id": "whatever", "evidence": "finding"})
         assert payload["status"] == "error"
         assert payload["session_active"] is True
-        assert "ec_query" in payload["error"]
+        assert "reverie_query" in payload["error"]
 
     def test_full_flow_query_then_reconsolidate(self, brain, model, manager,
                                                 server):
-        """#6 ec_query marks the ECU labile; a following ec_reconsolidate
+        """#6 reverie_query marks the ECU labile; a following reverie_reconsolidate
         succeeds without any manual bookkeeping."""
         sid = manager.start_session()["session_id"]
         target = insert_ecu(
             brain, model,
             "Cache invalidation must follow token refresh or stale auth persists")
 
-        with patch("ec.mcp_server.retrieval.retrieve",
+        with patch("reverie.mcp_server.retrieval.retrieve",
                    return_value=canned_query_result([target])):
-            query_payload, _ = call_tool(server, "ec_query", {
+            query_payload, _ = call_tool(server, "reverie_query", {
                 "query": "how does cache invalidation interact with tokens?"})
 
         assert query_payload.get("groups_retrieved") == 1
         assert manager.is_labile(sid, target)
 
-        payload, _ = call_tool(server, "ec_reconsolidate", {
+        payload, _ = call_tool(server, "reverie_reconsolidate", {
             "ecu_id": target,
             "evidence": "token.py invalidates the cache after refresh, "
                         "confirming the ordering",
@@ -555,7 +555,7 @@ class TestMcpReconsolidateTool:
                                                     server):
         sid = manager.start_session()["session_id"]
         manager.mark_labile(sid, ["ghost-id"])
-        payload, _ = call_tool(server, "ec_reconsolidate", {
+        payload, _ = call_tool(server, "reverie_reconsolidate", {
             "ecu_id": "ghost-id", "evidence": "finding",
             "relationship": "supports"})
         assert payload["status"] == "error"
@@ -566,7 +566,7 @@ class TestMcpReconsolidateTool:
         sid = manager.start_session()["session_id"]
         old = insert_ecu(brain, model, "An invariant")
         manager.mark_labile(sid, [old])
-        payload, _ = call_tool(server, "ec_reconsolidate", {
+        payload, _ = call_tool(server, "reverie_reconsolidate", {
             "ecu_id": old, "evidence": "finding", "relationship": "hates"})
         assert payload["status"] == "error"
         assert "relationship" in payload["error"]
@@ -576,9 +576,9 @@ class TestMcpReconsolidateTool:
         sid = manager.start_session()["session_id"]
         old = insert_ecu(brain, model, "An invariant")
         manager.mark_labile(sid, [old])
-        with patch("ec.diffuser.call_llm",
+        with patch("reverie.diffuser.call_llm",
                    side_effect=DiffuserError("no API key")):
-            payload, _ = call_tool(server, "ec_reconsolidate", {
+            payload, _ = call_tool(server, "reverie_reconsolidate", {
                 "ecu_id": old, "evidence": "some finding"})   # no relationship
         assert payload["status"] == "error"
         assert "explicit relationship" in payload["error"]
@@ -591,13 +591,14 @@ class TestMcpReconsolidateTool:
 
 class TestInstallerAgentsMd:
     def test_agents_md_documents_reconsolidate(self):
-        from ec.install import AGENTS_MD
+        from reverie.install import AGENTS_MD
         # §7.3 four-tool list
-        assert "ec_reconsolidate: Update a retrieved ECU with new evidence" \
+        assert "reverie_reconsolidate: Update a retrieved conclusion with new evidence" \
             in AGENTS_MD
         # §7.1 usage section
-        assert "## When to Call ec_reconsolidate" in AGENTS_MD
-        assert "ECUs you haven't retrieved in this session (ec_query first)" \
+        assert "## When to Call reverie_reconsolidate" in AGENTS_MD
+        assert "Conclusions you haven't retrieved in this session (reverie_query first)" \
             in AGENTS_MD
         # §7.2 grounding-awareness update
-        assert "call ec_reconsolidate to\nupdate the ECU" in AGENTS_MD
+        assert "call reverie_reconsolidate to update it with what you've found." \
+            in AGENTS_MD

@@ -6,8 +6,8 @@ Covers design doc §12.8 #1-#10:
   #9      Ollama auto-setup (D42)                       -> TestOllamaAutoSetup
   #10     console-script detection (D45)                -> TestConsoleScriptDetection
 
-All offline: tmp_path brains, real HF-cache embeddings, ec.diffuser.call_llm /
-ec.install subprocess work mocked or injected.
+All offline: tmp_path brains, real HF-cache embeddings, reverie.diffuser.call_llm /
+reverie.install subprocess work mocked or injected.
 """
 
 import json
@@ -16,9 +16,9 @@ from unittest.mock import patch
 
 import pytest
 
-from ec import install, review_gate
-from ec.brain import Brain
-from ec.diffuser import (
+from reverie import install, review_gate
+from reverie.brain import Brain
+from reverie.diffuser import (
     PREFILTER_SIMILARITY_FLOOR,
     _contradiction_prefilter,
     diffuse_ecu,
@@ -50,14 +50,14 @@ def classifications_response(*rels: str) -> str:
 
 @pytest.fixture()
 def brain(tmp_path):
-    b = Brain(tmp_path / "ec.db")
+    b = Brain(tmp_path / "reverie.db")
     yield b
     b.close()
 
 
 @pytest.fixture(scope="session")
 def model():
-    from ec.embeddings import get_embedding_model
+    from reverie.embeddings import get_embedding_model
     return get_embedding_model()
 
 
@@ -139,7 +139,7 @@ class TestPrefilterFix:
             classifications_response("contradicts"),
             json.dumps({"verdict": "genuine_contradiction", "differentiator": ""}),
         ]
-        with patch("ec.diffuser.call_llm", side_effect=responses) as m:
+        with patch("reverie.diffuser.call_llm", side_effect=responses) as m:
             result = diffuse_ecu(brain, new, embedding_model=model)
         # classification + Stage-2 adjudication: the pair survived Stage 1
         assert m.call_count == 2
@@ -209,8 +209,8 @@ class TestOpenQuestionResolution:
         winner = brain.get_ecu(id_a)
         loser = brain.get_ecu(id_b)
 
-        from ec.confidence import to_log_odds, to_probability
-        from ec.config import get_config
+        from reverie.confidence import to_log_odds, to_probability
+        from reverie.config import get_config
         expected = to_probability(
             to_log_odds(0.45) + get_config().confidence.alpha_retrieval)
         assert winner["confidence"] == pytest.approx(expected)
@@ -306,27 +306,26 @@ class TestOpenQuestionResolution:
 
     def test_cli_stop_archive_and_skip_policies(self, tmp_path, monkeypatch,
                                                 model):
-        """#8 end-to-end through `ec review` (the feat/flow review CLI,
-        reached via the ec-stop alias): archive resolves every open
-        question before the review flow; skip leaves them parked. Sessions
-        are never closed any more (D56) — the review is independent."""
-        from ec.session import SessionManager
-        from ec.session import main as session_main
+        """#8 end-to-end through `reverie review` (the review CLI):
+        archive resolves every open question before the review flow; skip
+        leaves them parked. Sessions are never closed any more (D56) — the
+        review is independent."""
+        from reverie.session import SessionManager
+        from reverie import review_cli
 
         for policy, expected_status in (("archive", "archived"),
                                         ("skip", "open_question")):
-            ec_home = tmp_path / f"ec_{policy}"
-            monkeypatch.setenv("EC_HOME", str(ec_home))
-            monkeypatch.delenv("EC_REPO_PATH", raising=False)
-            monkeypatch.delenv("EC_BRANCH", raising=False)
+            reverie_home = tmp_path / f"ec_{policy}"
+            monkeypatch.setenv("REVERIE_HOME", str(reverie_home))
+            monkeypatch.delenv("REVERIE_REPO_PATH", raising=False)
+            monkeypatch.delenv("REVERIE_BRANCH", raising=False)
             seeder = Brain()
             id_a, id_b = _seed_open_pair(seeder, model)
             SessionManager(seeder).start_session("/repo-cli", "main")
             seeder.close()
 
-            rc = session_main(["stop", "--repo", "/repo-cli", "--branch",
-                               "main", "--all-skip",
-                               "--resolve-open-questions", policy])
+            rc = review_cli.main(["--repo", "/repo-cli", "--branch",
+                                  "main", "--resolve-open-questions", policy])
             assert rc == 0
 
             checker = Brain()
@@ -387,7 +386,7 @@ def scripted(answers):
     return lambda _prompt="": next(it)
 
 
-def run_install(home, ec_home, *, input_answers=(), environ=None,
+def run_install(home, reverie_home, *, input_answers=(), environ=None,
                 which_fn=None, runner=None, dry_run=False, all_agents=False,
                 input_fn=None, provider=None, no_verify=True, verify_fn=None):
     """install.run() fully sandboxed; returns the printed transcript.
@@ -410,7 +409,7 @@ def run_install(home, ec_home, *, input_answers=(), environ=None,
         return subprocess.CompletedProcess(cmd, 0)
 
     install.run(
-        home=home, ec_home=ec_home, all_agents=all_agents,
+        home=home, reverie_home=reverie_home, all_agents=all_agents,
         which=which_fn or _which,
         input_fn=input_fn or scripted(list(input_answers)),
         print_fn=out.append,
@@ -427,15 +426,15 @@ def run_install(home, ec_home, *, input_answers=(), environ=None,
 class TestOllamaAutoSetup:
     def test_ollama_detected_offered(self, tmp_path):
         """#9 (menu form): choosing 'Local via Ollama' pulls the model and
-        writes the Ollama LLM block into ~/.ec/config.yaml."""
+        writes the Ollama LLM block into ~/.reverie/config.yaml."""
         home = tmp_path / "h1"
         home.mkdir()
-        ec_home = home / ".ec"
-        out = run_install(home, ec_home, all_agents=True,
+        reverie_home = home / ".reverie"
+        out = run_install(home, reverie_home, all_agents=True,
                           input_answers=["6"])
         assert "Ollama detected" in out
         assert f"Pulling {install.OLLAMA_MODEL}" in out
-        cfg = ec_home / "config.yaml"
+        cfg = reverie_home / "config.yaml"
         assert cfg.exists()
         import yaml
         data = yaml.safe_load(cfg.read_text())
@@ -453,7 +452,7 @@ class TestOllamaAutoSetup:
             calls.append(cmd)
             return subprocess.CompletedProcess(cmd, 0)
 
-        run_install(home, home / ".ec", all_agents=True,
+        run_install(home, home / ".reverie", all_agents=True,
                     input_answers=["6"], runner=runner)
         assert calls == [["/usr/local/bin/ollama", "pull",
                           install.OLLAMA_MODEL]]
@@ -461,20 +460,20 @@ class TestOllamaAutoSetup:
     def test_ollama_offer_declined(self, tmp_path):
         home = tmp_path / "h3"
         home.mkdir()
-        ec_home = home / ".ec"
-        out = run_install(home, ec_home, all_agents=True,
+        reverie_home = home / ".reverie"
+        out = run_install(home, reverie_home, all_agents=True,
                           input_answers=["7"])
         assert "No provider configured" in out
         assert 'provider: "ollama"' in out          # manual keys shown
         import yaml
-        data = yaml.safe_load((ec_home / "config.yaml").read_text())
+        data = yaml.safe_load((reverie_home / "config.yaml").read_text())
         # bootstrap default config untouched by the declined offer
         assert data["llm"]["provider"] != "ollama"
 
     def test_ollama_not_installed_prints_instructions(self, tmp_path):
         home = tmp_path / "h4"
         home.mkdir()
-        out = run_install(home, home / ".ec", all_agents=True,
+        out = run_install(home, home / ".reverie", all_agents=True,
                           which_fn=lambda _b: None, input_answers=["7"])
         assert "curl -fsSL https://ollama.com/install.sh | sh" in out
         assert "provider: \"ollama\"" in out
@@ -483,7 +482,7 @@ class TestOllamaAutoSetup:
         home = tmp_path / "h5"
         home.mkdir()
         out = run_install(
-            home, home / ".ec", all_agents=True,
+            home, home / ".reverie", all_agents=True,
             environ={install.ZEN_KEY_ENV: "sk-test"},
             input_answers=[""])
         assert "detected (OpenCode Zen)" in out
@@ -493,12 +492,12 @@ class TestOllamaAutoSetup:
     def test_existing_config_yaml_merged(self, tmp_path):
         home = tmp_path / "h6"
         home.mkdir()
-        ec_home = home / ".ec"
-        ec_home.mkdir()
-        (ec_home / "config.yaml").write_text("ranking:\n  w_relevance: 0.99\n")
-        run_install(home, ec_home, all_agents=True, input_answers=["6"])
+        reverie_home = home / ".reverie"
+        reverie_home.mkdir()
+        (reverie_home / "config.yaml").write_text("ranking:\n  w_relevance: 0.99\n")
+        run_install(home, reverie_home, all_agents=True, input_answers=["6"])
         import yaml
-        data = yaml.safe_load((ec_home / "config.yaml").read_text())
+        data = yaml.safe_load((reverie_home / "config.yaml").read_text())
         assert data["ranking"]["w_relevance"] == 0.99      # user keys preserved
         assert data["llm"]["provider"] == "ollama"
 
@@ -510,11 +509,11 @@ class TestOllamaAutoSetup:
         def runner(cmd, *a, **k):                # must never be called
             calls.append(cmd)
 
-        out = run_install(home, home / ".ec", all_agents=True,
+        out = run_install(home, home / ".reverie", all_agents=True,
                           input_answers=["6"], runner=runner, dry_run=True)
         assert calls == []
         assert "[dry-run] would pull" in out
-        assert not (home / ".ec" / "config.yaml").exists()
+        assert not (home / ".reverie" / "config.yaml").exists()
 
 # ---------------------------------------------------------------------------
 # §12.8 #10 — console-script detection (D45, design doc §6.1)
@@ -522,7 +521,7 @@ class TestOllamaAutoSetup:
 
 class TestConsoleScriptDetection:
     def test_console_script_detected(self, monkeypatch):
-        """#10: pip-installed package -> the ec-mcp console script, no args,
+        """#10: pip-installed package -> the reverie-mcp console script, no args,
         no env (D45)."""
         monkeypatch.setattr(install, "_is_pip_installed", lambda: True)
         assert install.server_command() == (install.MCP_CONSOLE_SCRIPT, [], {})
@@ -531,7 +530,7 @@ class TestConsoleScriptDetection:
         """Not installed -> the D28 absolute-venv-python + PYTHONPATH form."""
         monkeypatch.setattr(install, "_is_pip_installed", lambda: False)
         python, args, env = install.server_command()
-        assert args == ["-m", "ec.mcp_server"]
+        assert args == ["-m", "reverie.mcp_server"]
         assert env == {"PYTHONPATH": str(install.Path(
             install.__file__).resolve().parent.parent)}
         from pathlib import Path
@@ -547,29 +546,29 @@ class TestConsoleScriptDetection:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
         monkeypatch.setattr(install, "_is_pip_installed", lambda: True)
-        run_install(home, home / ".ec", all_agents=True,
+        run_install(home, home / ".reverie", all_agents=True,
                           environ={install.ZEN_KEY_ENV: "sk-test"},
                           input_answers=[""])
         claude = json.loads((home / ".claude.json").read_text())
-        assert claude["mcpServers"]["ec"] == {
-            "type": "stdio", "command": "ec-mcp"}
+        assert claude["mcpServers"]["reverie"] == {
+            "type": "stdio", "command": "reverie-mcp"}
         cursor = json.loads((home / ".cursor" / "mcp.json").read_text())
-        assert cursor["mcpServers"]["ec"] == {"command": "ec-mcp"}
+        assert cursor["mcpServers"]["reverie"] == {"command": "reverie-mcp"}
         opencode = json.loads(
             (home / ".config" / "opencode" / "opencode.json").read_text())
-        assert opencode["mcp"]["ec"] == {
-            "type": "local", "command": ["ec-mcp"], "enabled": True}
+        assert opencode["mcp"]["reverie"] == {
+            "type": "local", "command": ["reverie-mcp"], "enabled": True}
         import tomllib
         codex = tomllib.loads((home / ".codex" / "config.toml").read_text())
-        assert codex["mcp_servers"]["ec"] == {"command": "ec-mcp"}
+        assert codex["mcp_servers"]["reverie"] == {"command": "reverie-mcp"}
 
     def test_entry_point_registered_and_launches(self, tmp_path, monkeypatch):
         """The console script exists in the installed distribution and its
-        entry point resolves to ec.mcp_server:main."""
+        entry point resolves to reverie.mcp_server:main."""
         from importlib import metadata
         eps = metadata.entry_points()
         group = (eps.select(group="console_scripts")
                  if hasattr(eps, "select") else eps.get("console_scripts", []))
-        matches = [ep for ep in group if ep.name == "ec-mcp"]
-        assert matches, "ec-mcp console script missing — rerun `pip install -e .`"
-        assert matches[0].value == "ec.mcp_server:main"
+        matches = [ep for ep in group if ep.name == "reverie-mcp"]
+        assert matches, "reverie-mcp console script missing — rerun `pip install -e .`"
+        assert matches[0].value == "reverie.mcp_server:main"

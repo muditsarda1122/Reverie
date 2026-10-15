@@ -14,9 +14,9 @@ trail behave exactly as the §28.6 stop-path gate — nothing is duplicated.
 - **Expiry:** candidates unreviewed for ``review.expire_after_days``
   (default 21; 0 disables) become ``expired`` — kept, never deleted,
   still usable in session memory, never promoted until the user revives
-  them (``ec review --expired``).
+  them (``reverie review --expired``).
 - **Nudge:** counts only, never contents (§11.3 anti-anchoring) —
-  ``nudge_line`` renders the single summary line for ec_get_summary.
+  ``nudge_line`` renders the single summary line for reverie_summary.
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ def revive(
     channel: str = "cli",
     now: datetime | None = None,
 ) -> dict:
-    """Bring an expired candidate back as pending (``ec review --expired``).
+    """Bring an expired candidate back as pending (``reverie review --expired``).
 
     Revived candidates re-enter the normal queue. Nothing else is
     promoted implicitly."""
@@ -231,12 +231,12 @@ def queue_stats(brain: Brain, config=None, now: datetime | None = None,
 
 def nudge_line(brain: Brain, config=None, now: datetime | None = None,
                repo_path: str | None = None) -> str | None:
-    """The one-line ec_get_summary nudge, or None (nothing to say).
+    """The one-line reverie_summary nudge, or None (nothing to say).
 
     Fires when the backlog exceeds ``review.nudge_threshold`` OR the oldest
     unreviewed candidate is older than ``review.nudge_age_days``. Counts
     only — never candidate contents (§11.3). With a known repo the line
-    splits the count (``ec_review_list`` defaults to the current repo, so
+    splits the count (``reverie_review_list`` defaults to the current repo, so
     the numbers must match what the agent will list); outside a repo it
     stays global-only."""
     cfg = config or get_config()

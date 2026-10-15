@@ -17,7 +17,7 @@ deliberately:
   repo with the same URL adopts its state and re-keys onto the new path
   (D58). Ambiguous matches (several known repos share the URL) and
   key-less remotes (e.g. a local clone with no origin) start fresh as
-  ``undecided`` — a plain ``ec enable`` inside the repo resolves it.
+  ``undecided`` — a plain ``reverie enable`` inside the repo resolves it.
 - **Session identity is separate:** sessions stay tied to the worktree
   toplevel path + branch (§28.5), because grounding verification and commit
   provenance must run against the *actual working tree* the agent is
@@ -29,7 +29,7 @@ injected. Existing data is kept; re-enabling resumes with everything
 intact.
 
 This module is policy; storage lives in ``Brain`` (repos table), session
-resolution in ``ec/session.py``, MCP gating in ``ec/mcp_server.py``.
+resolution in ``reverie/session.py``, MCP gating in ``reverie/mcp_server.py``.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ from .brain import Brain
 from .session import _git
 
 #: The exact first-time question (feat/flow). Shown to the user once per
-#: conversation; the agent records the answer via ``ec_set_repo_state``.
+#: conversation; the agent records the answer via ``reverie_set_repo_state``.
 FIRST_TIME_QUESTION = (
     "Reverie isn't on for this repo. Turn it on? (yes / not now / never)"
 )
@@ -59,7 +59,7 @@ class RepoInfo:
     branch: str
     repo_key: str             # git common directory — enablement identity
     url: str | None = None    # origin remote URL (rematching, D58)
-    via_git: bool = True      # False under EC_REPO_PATH/EC_BRANCH override
+    via_git: bool = True      # False under REVERIE_REPO_PATH/REVERIE_BRANCH override
                               # (synthetic paths — archiving must not run)
 
 
@@ -91,12 +91,12 @@ def common_dir(toplevel: str | Path) -> str:
 def resolve_repo(cwd: str | Path | None = None) -> RepoInfo:
     """Locate the repo for this call: worktree path, branch, identity, URL.
 
-    ``EC_REPO_PATH`` + ``EC_BRANCH`` env overrides win when both are set
+    ``REVERIE_REPO_PATH`` + ``REVERIE_BRANCH`` env overrides win when both are set
     (test/launch escape hatch, §28.5): the env repo path *is* the identity
     (no git is consulted). Otherwise git detection applies.
     """
-    env_repo = os.environ.get("EC_REPO_PATH")
-    env_branch = os.environ.get("EC_BRANCH")
+    env_repo = os.environ.get("REVERIE_REPO_PATH")
+    env_branch = os.environ.get("REVERIE_BRANCH")
     if env_repo and env_branch:
         repo_path = str(Path(env_repo).expanduser().resolve())
         return RepoInfo(repo_path=repo_path, branch=env_branch,

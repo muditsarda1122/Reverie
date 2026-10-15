@@ -1,7 +1,7 @@
 """EC brain — SQLite storage for ECUs, edges, and sessions.
 
-One global database for all projects (§28.1), default ``~/.ec/ec.db``
-(override the directory with the ``EC_HOME`` env var). Two brains in one
+One global database for all projects (§28.1), default ``~/.reverie/reverie.db``
+(override the directory with the ``REVERIE_HOME`` env var). Two brains in one
 database (§4): the Canonical Brain (``ecus`` + ``edges`` tables) and the
 Session Brain (``session_ecus`` + ``session_edges`` tables).
 
@@ -38,7 +38,7 @@ from .config import (
 )
 from .embeddings import from_blob, to_blob
 
-log = logging.getLogger("ec.brain")
+log = logging.getLogger("reverie.brain")
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
@@ -66,7 +66,7 @@ class Brain:
     Parameters
     ----------
     db_path:
-        Path to the SQLite file. Defaults to ``$EC_HOME/ec.db`` (``~/.ec/ec.db``).
+        Path to the SQLite file. Defaults to ``$REVERIE_HOME/reverie.db`` (``~/.reverie/reverie.db``).
         The database (and parent directory) are created automatically with the
         full schema if they do not exist.
     """
@@ -596,8 +596,8 @@ class Brain:
 
     # ------------------------------------------------------------------
     # Sessions — minimal storage helpers.
-    # Lifecycle logic (resume, carry-over of skipped ECUs, /ec-stop cleanup)
-    # is Phase 4 (ec/session.py, ec/review_gate.py).
+    # Lifecycle logic (resume, carry-over of skipped ECUs, review cleanup)
+    # is Phase 4 (reverie/session.py, reverie/review_gate.py).
     # ------------------------------------------------------------------
 
     def create_session(
@@ -919,7 +919,7 @@ class Brain:
 
     # ------------------------------------------------------------------
     # Session activation persistence (§6.6). Storage only — decay and
-    # resume semantics live in ec/activation.py (Phase 3).
+    # resume semantics live in reverie/activation.py (Phase 3).
     # ------------------------------------------------------------------
 
     def save_activation(self, session_id: str, scores: dict) -> None:
@@ -953,7 +953,7 @@ class Brain:
 
     # ------------------------------------------------------------------
     # Session lifecycle helpers (§28.5/§28.6) — storage only; the lifecycle
-    # logic lives in ec/session.py and ec/review_gate.py (Phase 4).
+    # logic lives in reverie/session.py and reverie/review_gate.py (Phase 4).
     # ------------------------------------------------------------------
 
     _REVIEW_STATUSES = ("pending", "accepted", "rejected", "skipped", "expired")
@@ -1085,7 +1085,7 @@ class Brain:
     # ------------------------------------------------------------------
     # Pending extractions (feat/providers): interactions whose extraction
     # LLM call failed after retries. Storage only — retry policy lives in
-    # ec/pending.py; the MCP server persists and auto-retries.
+    # reverie/pending.py; the MCP server persists and auto-retries.
     # ------------------------------------------------------------------
 
     def add_pending_extraction(
@@ -1180,7 +1180,7 @@ class Brain:
 
     # ------------------------------------------------------------------
     # Undiffused ECUs (feat/providers): promoted-but-undiffused canonical
-    # ECUs are marked in metadata by the review gate; `ec-retry --rediffuse`
+    # ECUs are marked in metadata by the review gate; `reverie retry --rediffuse`
     # clears the flag after a successful diffusion.
     # ------------------------------------------------------------------
 
@@ -1199,7 +1199,7 @@ class Brain:
     def reassign_session_rows(
         self, from_session_ids: list[str], to_session_id: str
     ) -> list[str]:
-        """Carry unreviewed ECUs over to a new session (§28.5 /ec-start step 5).
+        """Carry unreviewed ECUs over to a new session (§28.5 creation step 5).
 
         Moves session_ecus with review_status pending|skipped from the given
         (closed) sessions into ``to_session_id``, along with their session
@@ -1250,7 +1250,7 @@ class Brain:
         self._conn.commit()
 
     # ------------------------------------------------------------------
-    # Brain statistics — ec_get_summary (§16.3) + maintenance log.
+    # Brain statistics — reverie_summary (§16.3) + maintenance log.
     # ------------------------------------------------------------------
 
     def count_ecus_by_scope(self) -> dict[str, int]:
@@ -1297,7 +1297,7 @@ class Brain:
     # ------------------------------------------------------------------
     # Repo enablement (feat/flow, D55): three states per repo, keyed by
     # git common directory. Storage only — identity/rematching policy
-    # lives in ec/repos.py.
+    # lives in reverie/repos.py.
     # ------------------------------------------------------------------
 
     def get_repo(self, repo_key: str) -> dict | None:
@@ -1513,7 +1513,7 @@ class Brain:
 
     def delete_repo_data(self, repo_path: str | list[str]) -> dict:
         """Delete one repo's sessions, candidates and pending extractions
-        (feat/flow `ec reset --repo`). Long-term memory — canonical ECUs,
+        (feat/flow `reverie reset --repo`). Long-term memory — canonical ECUs,
         edges — and the enablement row are kept. Sessions are keyed by
         worktree path while repo identity is the git common dir (§29.2), so
         callers pass EVERY worktree path belonging to the repo (a str is
