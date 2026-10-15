@@ -246,7 +246,7 @@ def test_brain_summary_stats(brain):
     assert canonical["last_ecu_added"] is not None
     assert canonical["last_maintenance_run"] is None
     assert summary["session"]["active"] is False
-    assert "The brain has 3 ECUs" in summary["message"]
+    assert "The brain holds 3 conclusions" in summary["message"]
 
 
 def test_brain_summary_with_session(brain, manager):
@@ -279,7 +279,7 @@ def test_cli_status_subprocess(tmp_path):
     status = subprocess.run(base + ["status"], env=env, cwd=ROOT,
                             capture_output=True, text=True, timeout=60)
     assert status.returncode == 0
-    assert "The brain has 0 ECUs" in status.stdout
+    assert "The brain holds 0 conclusions" in status.stdout
     assert "No active session." in status.stdout
 
     # a mistyped word is an error (the start/stop shims are gone)

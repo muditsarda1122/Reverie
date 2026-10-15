@@ -207,7 +207,7 @@ class TestSummaryIntegration:
         summary = brain_summary(brain, row)
 
         assert summary["canonical_brain"]["pending_review_count"] == 3
-        assert "3 ECU(s) awaiting review" in summary["message"]
+        assert "3 conclusion(s) awaiting review" in summary["message"]
 
     def test_zero_pending_adds_no_sentence(self, brain):
         brain.create_session(REPO_A, BRANCH)
@@ -228,7 +228,7 @@ class TestSummaryIntegration:
         summary = brain_summary(brain, None)      # no active session
 
         assert summary["canonical_brain"]["pending_review_count"] == 3
-        assert "3 ECU(s) awaiting review" in summary["message"]
+        assert "3 conclusion(s) awaiting review" in summary["message"]
 
     def test_status_cli_prints_pending_line(self, tmp_path, monkeypatch,
                                             capsys):
@@ -247,4 +247,4 @@ class TestSummaryIntegration:
         out = capsys.readouterr().out
 
         assert code == 0
-        assert "2 ECU(s) awaiting review" in out
+        assert "2 conclusion(s) awaiting review" in out
