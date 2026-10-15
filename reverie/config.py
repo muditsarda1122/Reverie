@@ -195,6 +195,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # max_completion_tokens instead of max_tokens); None = auto-detect by
         # a conservative model-name rule (reverie.llm._is_openai_reasoning_model).
         "openai_reasoning": None,
+        # True/False force omitting the sampling parameters for Claude
+        # models; None = auto-detect by a conservative model-name rule
+        # (reverie.llm._claude_rejects_sampling). Anthropic models released
+        # after Claude Opus 4.6 (Opus 4.7/4.8/5/5.5, Sonnet 5/5.5, Haiku
+        # 5.5) return HTTP 400 for any non-default temperature/top_p/top_k;
+        # the documented fix is to omit all three. For those models on the
+        # Anthropic wire format the request also carries the cheapest valid
+        # thinking configuration (thinking disabled/between_tools at effort
+        # "low" — adaptive thinking is on by default and its tokens are
+        # billed as output). Source checked 2026-10-15:
+        # https://platform.claude.com/docs/en/build-with-claude/thinking
+        # https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide
+        "claude_no_sampling": None,
         # Retry policy for transient failures (429 / 5xx / timeouts).
         "retry_attempts": 3,            # total attempts (1 = no retry)
         "retry_backoff": 0.5,           # seconds before first retry

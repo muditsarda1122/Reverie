@@ -24,6 +24,16 @@ inject time by patching ``reverie.llm._sleep`` / ``reverie.llm._jitter``.
 
 Temperature: 0.3 for extraction/diffusion, 0.0 for mode detection
 (config keys llm.temperature / llm.temperature_mode_detection).
+
+Per-model request shapes (both auto-detected by conservative model-name
+rules, both forceable from config):
+
+- OpenAI reasoning models (o-series, gpt-5): no ``temperature``, ``max_tokens``
+  becomes ``max_completion_tokens`` (``llm.openai_reasoning``).
+- Claude models released after Opus 4.6 (the 5.5 generation and friends): no
+  ``temperature``/``top_p``/``top_k`` (HTTP 400 otherwise); on the Anthropic
+  wire format the cheapest valid thinking configuration is added
+  (``llm.claude_no_sampling``).
 """
 
 from __future__ import annotations
@@ -132,6 +142,77 @@ def _reasoning_params(cfg, model: str) -> bool:
     if flag is None:
         return _is_openai_reasoning_model(model)
     return bool(flag)
+
+
+# ---------------------------------------------------------------------------
+# post-Opus-4.6 Claude models: sampling parameters are rejected (Phase 3)
+# ---------------------------------------------------------------------------
+
+#: Anthropic models released after Claude Opus 4.6 return HTTP 400 for any
+#: non-default ``temperature``, ``top_p`` or ``top_k`` — the documented fix
+#: is "omit all three" and guide the model with prompting instead. The
+#: documented model set (Anthropic docs, checked 2026-10-15:
+#: platform.claude.com/docs/en/build-with-claude/thinking and the Haiku 5.5
+#: migration guide): Claude Opus 4.7/4.8/5/5.5, Sonnet 5/5.5, Haiku 5.5.
+#: Slugs use dashes on the Anthropic API (``claude-haiku-5-5``) and dots in
+#: OpenRouter's vendor-prefixed form (``anthropic/claude-haiku-5.5``) — a
+#: vendor prefix is stripped first, and dated suffixes
+#: (``claude-sonnet-5-5-20261007``) are tolerated. Deliberately does NOT
+#: match claude-haiku-4-5 / sonnet-4-x (those accept ``temperature``).
+#: Users can force either behaviour with ``llm.claude_no_sampling``.
+_CLAUDE_NO_SAMPLING_RE = re.compile(
+    r"^claude-(?:opus-4[.-][78]|opus-5|sonnet-5|haiku-5)(?:[.-]\d+)*$"
+)
+
+
+def _claude_rejects_sampling(model: str) -> bool:
+    """True for the post-Opus-4.6 Claude family (``temperature`` → HTTP 400)."""
+    name = model.rsplit("/", 1)[-1]          # strip a vendor/ prefix
+    return bool(_CLAUDE_NO_SAMPLING_RE.match(name))
+
+
+def _no_sampling_params(cfg, model: str) -> bool:
+    """Whether the request must omit ``temperature`` (and never send top_p).
+
+    Config ``llm.claude_no_sampling``: True/False force; None = auto by name.
+    """
+    flag = getattr(cfg.llm, "claude_no_sampling", None)
+    if flag is None:
+        return _claude_rejects_sampling(model)
+    return bool(flag)
+
+
+def _claude_thinking_config(model: str) -> dict | None:
+    """Cheapest valid thinking configuration for the Claude 5.5 family.
+
+    These models run adaptive thinking by default and thinking tokens are
+    billed as output tokens even when not displayed — for Reverie's short
+    classification/extraction calls we want thinking off at the lowest
+    effort. Per model (Anthropic docs, checked 2026-10-15:
+    platform.claude.com/docs/en/build-with-claude/thinking#configuring-thinking
+    and the per-model migration guides):
+
+    - ``claude-haiku-5-5``: ``{"type": "disabled"}`` is valid at effort
+      ``high`` or below → disabled + ``output_config.effort: "low"``.
+    - ``claude-sonnet-5-5``: ``disabled`` is rejected at every effort; the
+      documented alternative is ``{"type": "between_tools"}`` → that +
+      effort ``low`` (no other field may accompany it).
+    - ``claude-opus-5-5``: thinking is always on and cannot be disabled —
+      the cheapest valid call sends no ``thinking`` field at all, only
+      ``output_config.effort: "low"``.
+
+    Non-5.5 models get no thinking field (their defaults are cheapest).
+    """
+    name = model.rsplit("/", 1)[-1]
+    if not re.match(r"^claude-(?:haiku|sonnet|opus)-5[.-]5(?:[.-]\d+)*$", name):
+        return None
+    if name.startswith("claude-haiku-5"):
+        return {"thinking": {"type": "disabled"},
+                "output_config": {"effort": "low"}}
+    if name.startswith("claude-sonnet-5"):
+        return {"thinking": {"type": "between_tools"},
+                "output_config": {"effort": "low"}}
+    return {"output_config": {"effort": "low"}}       # opus-5-5: always on
 
 
 # ---------------------------------------------------------------------------
@@ -302,14 +383,24 @@ def call_llm(
         config=cfg,
     )
     if fmt == "anthropic":
-        return _call_anthropic(**call_args)
+        return _call_anthropic(**call_args,
+                               no_sampling=_no_sampling_params(cfg, model))
     return _call_openai(**call_args,
-                        reasoning=_reasoning_params(cfg, model))
+                        reasoning=_reasoning_params(cfg, model),
+                        no_sampling=_no_sampling_params(cfg, model))
 
 
 def _call_anthropic(base_url, api_key, model, prompt, system,
-                    temperature, max_tokens, timeout, config=None) -> str:
-    """Anthropic Messages API format (Claude models via Zen or direct)."""
+                    temperature, max_tokens, timeout, no_sampling=False,
+                    config=None) -> str:
+    """Anthropic Messages API format (Claude models via Zen or direct).
+
+    Post-Opus-4.6 Claude models (the 5.5 generation and friends) reject
+    non-default sampling parameters with HTTP 400 — for those the request
+    omits ``temperature`` entirely and carries the cheapest valid thinking
+    configuration (``_claude_thinking_config``). ``max_tokens`` stays:
+    it is required by the Messages API.
+    """
     url = f"{base_url}/messages"
     headers = {
         "x-api-key": api_key,
@@ -319,9 +410,13 @@ def _call_anthropic(base_url, api_key, model, prompt, system,
     body: dict = {
         "model": model,
         "max_tokens": max_tokens,
-        "temperature": temperature,
         "messages": [{"role": "user", "content": prompt}],
     }
+    if not no_sampling:
+        body["temperature"] = temperature
+    thinking = _claude_thinking_config(model) if no_sampling else None
+    if thinking:
+        body.update(thinking)
     if system:
         body["system"] = system
 
@@ -341,7 +436,7 @@ def _call_anthropic(base_url, api_key, model, prompt, system,
 
 def _call_openai(base_url, api_key, model, prompt, system,
                  temperature, max_tokens, timeout, reasoning=False,
-                 config=None) -> str:
+                 no_sampling=False, config=None) -> str:
     """OpenAI Chat Completions API format (GPT, Ollama, and others).
 
     Ollama does not require an API key — the Authorization header is only
@@ -349,7 +444,9 @@ def _call_openai(base_url, api_key, model, prompt, system,
 
     Reasoning-family models (o-series, gpt-5) reject ``temperature`` and
     want ``max_completion_tokens`` instead of ``max_tokens`` — those params
-    are simply not sent (``reasoning=True``).
+    are simply not sent (``reasoning=True``). A vendor-prefixed Claude 5.5
+    model on an OpenAI-compatible gateway (OpenRouter) also omits
+    ``temperature`` (``no_sampling=True``) — the gateway forwards it.
     """
     url = f"{base_url}/chat/completions"
     headers = {"content-type": "application/json"}
@@ -363,7 +460,8 @@ def _call_openai(base_url, api_key, model, prompt, system,
     if reasoning:
         body["max_completion_tokens"] = max_tokens
     else:
-        body["temperature"] = temperature
+        if not no_sampling:
+            body["temperature"] = temperature
         body["max_tokens"] = max_tokens
 
     resp = _post_with_retries(
