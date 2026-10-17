@@ -8,10 +8,23 @@ Everything lives in one SQLite file on your machine. Reverie is an MCP server: i
 
 Requires Python 3.12, pip, and git.
 
+**Easiest — an isolated environment on your PATH** ([pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/)):
+
 ```bash
-pip install reverie          # from PyPI
+pipx install reverie         # or: uv tool install reverie
 reverie install              # configure your agents + ~/.reverie
 ```
+
+Plain pip works just as well — install into a virtualenv and run the CLI from there:
+
+```bash
+python -m venv ~/.reverie-venv
+source ~/.reverie-venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install reverie
+reverie install
+```
+
+Both layouts work. The installer writes the **absolute path** of the `reverie-mcp` script into every harness config — harnesses launch MCP servers outside your virtualenv, so a bare command name is not enough. It then starts the written command, performs an MCP `initialize` handshake, and prints ✓ or ✗ per harness; a failing setup is reported (with the command and the error) instead of "Reverie is ready!". If you later move or delete the environment, `reverie status` flags the broken path and tells you to re-run `reverie install`.
 
 `reverie install` detects which harnesses you have, wires the MCP server into each, writes the agent instructions and the `/reverie-review` / `/reverie-status` commands, creates `~/.reverie`, detects an LLM API key in your environment (or offers Ollama for local-only), and prints a per-harness summary of exactly what it wrote. Non-interactive: `reverie install --all` (every detected harness) or `--only claude_code,codex`; `--dry-run` previews everything without writing.
 

@@ -114,13 +114,21 @@ def test_agent_config_ec_shape(tmp_path, monkeypatch):
 
 
 def test_agent_config_ec_shape_console_script(tmp_path, monkeypatch):
-    """D45: pip-installed -> the MCP entry is just ["reverie-mcp"]; EC_* env vars
-    are unaffected (they ride on `environment`, not PYTHONPATH)."""
+    """D45 + install fix: pip-installed -> the MCP entry carries the ABSOLUTE
+    path of the reverie-mcp script (a bare name breaks outside the venv);
+    EC_* env vars are unaffected (they ride on `environment`, not PYTHONPATH)."""
+    from reverie.install import console_script_path
     monkeypatch.setattr("reverie.install._is_pip_installed", lambda: True)
+    if console_script_path() is None:
+        pytest.skip("reverie-mcp console script not present in this "
+                    "environment")
     cfg = run_ecbench.build_agent_config(
         "ec", tmp_path / "reverie_home", tmp_path / "wd", "main")
     entry = cfg["mcp"]["reverie"]
-    assert entry["command"] == [MCP_CONSOLE_SCRIPT]
+    assert entry["command"] == [server_command()[0]]
+    command = Path(entry["command"][0])
+    assert command.is_absolute() and command.is_file()
+    assert command.name.startswith(MCP_CONSOLE_SCRIPT)
     assert entry["environment"]["REVERIE_HOME"] == str(tmp_path / "reverie_home")
     assert entry["enabled"] is True
 

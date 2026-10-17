@@ -67,14 +67,28 @@ upsert idempotently, owned files refresh verbatim, your `config.yaml` is kept.
 | **OpenCode** | `~/.config/opencode/opencode.json` → `mcp.reverie` (`type: local`, argv-list `command`, `environment` key) | block appended to `~/.config/opencode/AGENTS.md` | `~/.config/opencode/commands/reverie-review.md`, `reverie-status.md` |
 | **Gemini CLI** | `~/.gemini/settings.json` → `mcpServers.reverie` | block appended to `~/.gemini/GEMINI.md` | `~/.gemini/commands/reverie-review.toml`, `reverie-status.toml` (TOML `prompt`) |
 
-The server entry itself (pip-installed):
+The server entry itself (pip-installed — pipx, uv tool, venv or system):
 
 ```json
-{"command": "reverie-mcp"}
+{"command": "/absolute/path/to/reverie-mcp"}
 ```
+
+The installer resolves the **absolute path** of the `reverie-mcp` script
+belonging to the running interpreter's environment
+(`Path(sys.executable).parent / "reverie-mcp"`, `Scripts\reverie-mcp.exe`
+on Windows, `shutil.which` fallback). Harnesses launch MCP servers outside
+the user's virtualenv, so a bare name would only work if it happened to be
+on the global PATH — with a venv or pipx install it is not.
 
 Dev checkout (not pip-installed): the absolute venv-python form with
 `args: ["-m", "reverie.mcp_server"]` and `env.PYTHONPATH: <repo root>`.
+
+At the end of the install the exact command written to each config is
+launched, sent an MCP `initialize` and checked (≤10 s); ✓/✗ is printed per
+harness and a change that doesn't produce a server is reported as
+"Setup incomplete" (never "Reverie is ready!"). `reverie status` re-checks
+that the configured command still exists and says to re-run
+`reverie install` when the environment was moved or deleted.
 
 ### Slash commands
 
@@ -137,8 +151,10 @@ Reverie on. Client support, per each vendor's docs (2026-10-15):
 
 Any client that launches a stdio MCP server works:
 
-- command: `reverie-mcp` (pip-installed) or `<venv>/bin/python -m
-  reverie.mcp_server` with `PYTHONPATH=<repo root>`
+- command: the absolute path to `reverie-mcp` (pip-installed;
+  `<venv>/bin/reverie-mcp`, `<venv>\Scripts\reverie-mcp.exe` on Windows) or
+  `<venv>/bin/python -m reverie.mcp_server` with `PYTHONPATH=<repo root>`
+  (dev checkout)
 - transport: stdio, NDJSON JSON-RPC 2.0, protocol `2024-11-05`
 - 7 tools (see the README's glossary + `docs/CLI.md`)
 

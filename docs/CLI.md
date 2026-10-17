@@ -20,13 +20,18 @@ hint (exit 2).
 ## reverie install
 
 One command configures Reverie for all detected coding agents: the MCP
-server entry per harness, the agent instructions reference, the user-level
-`/reverie-review` and `/reverie-status` commands, and the `~/.reverie`
-bootstrap (database, config, instructions). Also runs the LLM-provider step:
-detects keys in your environment, offers the detected one, merges the
-resolved `llm` block into `~/.reverie/config.yaml` (the key itself is NEVER
-written to disk), and verifies with one cheap live ping. Ends with a
-per-harness summary of what was written and what to do next.
+server entry per harness (the ABSOLUTE path of the running environment's
+`reverie-mcp` script — harnesses launch servers outside your virtualenv),
+the agent instructions reference, the user-level `/reverie-review` and
+`/reverie-status` commands, and the `~/.reverie` bootstrap (database,
+config, instructions). Also runs the LLM-provider step: detects keys in
+your environment, offers the detected one, merges the resolved `llm` block
+into `~/.reverie/config.yaml` (the key itself is NEVER written to disk),
+and verifies with one cheap live ping. Ends by launching each written
+server command, sending an MCP `initialize` (≤10 s) and printing ✓/✗ per
+harness — a command that does not start is reported as "Setup incomplete"
+(exit `1`), never "Reverie is ready!". Then prints a per-harness summary of
+what was written and what to do next.
 
 ```bash
 reverie install                     # interactive: pick harnesses + provider
@@ -126,7 +131,10 @@ Exit: `0` reviewed/no candidates; `1` when a `--decide` id was not applied
 
 The session + brain report: brain statistics, the session for the current
 (repo, branch), and the pending-review count. Also emitted by the
-`reverie_summary` MCP tool.
+`reverie_summary` MCP tool. Additionally checks that the server command
+written to each harness config still exists — a moved or deleted virtualenv
+breaks the absolute path, and the report then says to run
+`reverie install` again.
 
 ```bash
 reverie status

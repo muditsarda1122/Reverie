@@ -11,9 +11,15 @@ added/replaced). ``--dry-run`` prints every planned write with its full
 resulting content and writes nothing. API keys are NEVER written to disk —
 the installer only reads the environment to detect what is available.
 
-Entry points: ``python -m reverie.install`` or the ``reverie`` console script. When
-the package is pip-installed (D45), agent configs carry the ``reverie`` console
-script; otherwise the absolute venv-python form is written (B2/D28).
+Entry points: ``python -m reverie.install`` or the ``reverie`` console script.
+When the package is pip-installed (D45), agent configs carry the ABSOLUTE path
+of the ``reverie-mcp`` console script belonging to the running interpreter's
+environment (venv, pipx, uv tool or system install — harnesses launch MCP
+servers outside the user's virtualenv, so a bare name is not enough);
+otherwise the absolute venv-python form is written (B2/D28). Every install
+ends by launching each written command, sending an MCP ``initialize`` and
+checking the response; ``reverie status`` flags commands that later break
+(a moved or deleted venv).
 
 LLM provider step (feat/providers): the installer detects provider keys in
 the environment (registry in ``reverie/providers.py``), offers the detected one
@@ -31,6 +37,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -598,14 +605,60 @@ def stale_entry_point_note() -> str | None:
     return None
 
 
-def server_command() -> tuple[str, list[str], dict[str, str]]:
+def _console_script_candidates(executable: str | None = None) -> list[Path]:
+    """Absolute candidate locations of the pip-generated ``reverie-mcp`` script.
+
+    pip puts console scripts beside the environment's interpreter: ``bin/`` in
+    a POSIX venv, pipx or uv-tool environment, ``Scripts/`` on Windows. A
+    system install puts them in ``Scripts/`` under the interpreter directory.
+    """
+    exe_dir = Path(executable or sys.executable).parent
+    if os.name == "nt":
+        return [
+            exe_dir / f"{MCP_CONSOLE_SCRIPT}.exe",          # venv Scripts dir
+            exe_dir / f"{MCP_CONSOLE_SCRIPT}.cmd",
+            exe_dir / "Scripts" / f"{MCP_CONSOLE_SCRIPT}.exe",  # system install
+            exe_dir / "Scripts" / f"{MCP_CONSOLE_SCRIPT}.cmd",
+            exe_dir / MCP_CONSOLE_SCRIPT,
+            exe_dir / "Scripts" / MCP_CONSOLE_SCRIPT,
+        ]
+    return [exe_dir / MCP_CONSOLE_SCRIPT]
+
+
+def console_script_path(executable: str | None = None, which=shutil.which,
+                        ) -> str | None:
+    """Absolute path of the installed ``reverie-mcp`` console script, or None.
+
+    Resolved from the RUNNING interpreter's environment (``sys.executable``):
+    venv, pipx, uv tool and system installs all place the script beside the
+    interpreter. ``which`` is the fallback for layouts where the scripts
+    directory is elsewhere (e.g. ``pip install --user``).
+    """
+    for candidate in _console_script_candidates(executable):
+        if candidate.is_file():
+            return str(candidate)
+    found = which(MCP_CONSOLE_SCRIPT)
+    if found:
+        return str(Path(found).resolve())
+    return None
+
+
+def server_command(executable: str | None = None, which=shutil.which,
+                   ) -> tuple[str, list[str], dict[str, str]]:
     """``(command, args, env)`` for launching the Reverie MCP server from any cwd.
 
-    D45: when the package is pip-installed, the ``reverie-mcp`` console script is
-    used — a bare name that resolves wherever the package is installed, and
-    no PYTHONPATH juggling. NOTE (deviation from design doc §6.1): the doc's
-    literal ``"reverie"`` command would launch the INSTALLER (``reverie.install:main``),
-    not the server — hence the dedicated ``reverie-mcp`` script.
+    D45: when the package is pip-installed, agent configs carry the ABSOLUTE
+    path of the ``reverie-mcp`` console script belonging to the running
+    interpreter's environment (``console_script_path``). Harnesses launch MCP
+    servers outside the user's virtualenv, so a bare ``reverie-mcp`` only
+    resolves when it happens to be on the global PATH — with a venv or pipx
+    install it is not, and the server never starts. If the script cannot be
+    located at all, the running interpreter + ``-m reverie.mcp_server`` (it
+    can import the package — this code runs from it) is the fallback, which
+    the install-time server check then verifies. NOTE (deviation from design
+    doc §6.1): the doc's literal ``"reverie"`` command would launch the
+    INSTALLER (``reverie.install:main``), not the server — hence the
+    dedicated ``reverie-mcp`` script.
 
     Development fallback (D28/B2): a bare interpreter could not even import
     ``reverie``, so the configs carry the ABSOLUTE path to the project's venv
@@ -613,7 +666,10 @@ def server_command() -> tuple[str, list[str], dict[str, str]]:
     hardcoded) plus a PYTHONPATH entry pointing at the project root.
     """
     if _is_pip_installed():
-        return MCP_CONSOLE_SCRIPT, [], {}
+        script = console_script_path(executable, which)
+        if script is not None:
+            return script, [], {}
+        return executable or sys.executable, ["-m", "reverie.mcp_server"], {}
     root = Path(__file__).resolve().parent.parent
     python: str | None = None
     for candidate in (root / ".venv" / "bin" / "python",          # POSIX venv
@@ -624,6 +680,105 @@ def server_command() -> tuple[str, list[str], dict[str, str]]:
     if python is None:   # no project venv — the running interpreter has `reverie`
         python = sys.executable
     return python, ["-m", "reverie.mcp_server"], {"PYTHONPATH": str(root)}
+
+
+def _stop_process(proc: subprocess.Popen) -> None:
+    """Terminate a check subprocess; kill it when terminate is not enough."""
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+
+
+def _stderr_tail(proc: subprocess.Popen, limit: int = 300) -> str:
+    """The (already-exited) process's stderr tail, for the ✗ report."""
+    try:
+        err = proc.stderr.read() if proc.stderr else ""
+    except (OSError, ValueError):
+        return ""
+    err = (err or "").strip()
+    return err[-limit:] if err else ""
+
+
+def check_server(command: str, args: list[str] | None = None,
+                 env: dict[str, str] | None = None, *,
+                 timeout: float = 10.0, popen=subprocess.Popen,
+                 ) -> tuple[bool, str]:
+    """Launch ``command`` exactly as written to the harness configs, send an
+    MCP ``initialize``, wait up to ``timeout`` seconds for the response, then
+    stop the server. Returns ``(ok, detail)``.
+
+    This is the install-time proof that the command just written actually
+    starts a server: a broken setup is reported as ✗ (with the command and
+    the error) and never ends with "Reverie is ready!". ``popen`` is
+    injectable for tests.
+    """
+    request = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05", "capabilities": {},
+            "clientInfo": {"name": "reverie-install-check", "version": "1"},
+        },
+    }) + "\n"
+    launch_env = dict(os.environ)
+    if env:
+        launch_env.update(env)
+    try:
+        proc = popen([command, *(args or [])], stdin=subprocess.PIPE,
+                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                     text=True, env=launch_env)
+    except OSError as exc:
+        return False, f"could not launch: {exc}"
+    response: list[str] = []
+
+    def _read() -> None:
+        try:
+            response.append(proc.stdout.readline())
+        except (OSError, ValueError):
+            response.append("")
+
+    reader = threading.Thread(target=_read, daemon=True)
+    try:
+        try:
+            proc.stdin.write(request)
+            proc.stdin.flush()
+        except (OSError, ValueError) as exc:
+            return False, f"could not send initialize: {exc}"
+        reader.start()
+        reader.join(timeout)
+        if reader.is_alive():
+            _stop_process(proc)
+            return False, f"no MCP response within {timeout:.0f}s"
+        raw = response[0] if response else ""
+        if not raw:
+            _stop_process(proc)
+            tail = _stderr_tail(proc)
+            detail = "the server exited without responding"
+            if tail:
+                detail += f" — {tail.splitlines()[-1]}"
+            return False, detail
+        try:
+            message = json.loads(raw)
+        except json.JSONDecodeError:
+            return False, f"non-JSON response: {raw.strip()[:120]!r}"
+        name = None
+        if isinstance(message, dict):
+            result = message.get("result")
+            if isinstance(result, dict):
+                info = result.get("serverInfo")
+                if isinstance(info, dict):
+                    name = info.get("name")
+        if not name:
+            return False, f"unexpected MCP response: {raw.strip()[:120]!r}"
+        return True, f"server started ({name})"
+    finally:
+        _stop_process(proc)
 
 
 class InstallError(RuntimeError):
@@ -735,8 +890,8 @@ def _codex_table() -> str:
 
 def _mcp_entry(command: str, args: list[str], env: dict,
                extra: dict | None = None) -> dict:
-    """JSON MCP-server entry; empty args/env keys are omitted (D45 console
-    script form is just {"command": "reverie-mcp"})."""
+    """JSON MCP-server entry; empty args/env keys are omitted (D45 writes the
+    absolute console-script path as just {"command": "/abs/path/reverie-mcp"})."""
     entry = dict(extra or {})
     entry["command"] = command
     if args:
@@ -744,6 +899,111 @@ def _mcp_entry(command: str, args: list[str], env: dict,
     if env:
         entry["env"] = dict(env)
     return entry
+
+
+# ---------------------------------------------------------------------------
+# reading the configured server entry back (install verification + status)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ConfiguredServer:
+    """One harness config's reverie MCP server entry, read back from disk —
+    the exact command that harness will launch."""
+    agent: str                  # AgentSpec.key
+    config_path: Path
+    command: str
+    args: list[str]
+    env: dict[str, str]
+
+
+def _load_json_object(path: Path) -> dict | None:
+    """Parse a JSON config file; None when absent, unreadable or not an object."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _server_from_entry(agent: str, path: Path,
+                       entry: object) -> ConfiguredServer | None:
+    """Normalize a JSON/TOML MCP entry (``command`` string or argv list) into
+    a ConfiguredServer; None when the shape is not a launchable command."""
+    if not isinstance(entry, dict):
+        return None
+    command = entry.get("command")
+    args: list[str] = []
+    if isinstance(command, list):
+        if not command or not all(isinstance(token, str) for token in command):
+            return None
+        command, args = command[0], list(command[1:])
+    if not isinstance(command, str) or not command:
+        return None
+    raw_args = entry.get("args")
+    if isinstance(raw_args, list) and all(isinstance(a, str) for a in raw_args):
+        args = [*args, *raw_args]
+    raw_env = entry.get("env") or entry.get("environment") or {}
+    env = ({k: v for k, v in raw_env.items()
+            if isinstance(k, str) and isinstance(v, str)}
+           if isinstance(raw_env, dict) else {})
+    return ConfiguredServer(agent, path, command, args, env)
+
+
+def _json_configured_server(agent: str, path: Path,
+                            keys: tuple[str, ...]) -> ConfiguredServer | None:
+    node: object = _load_json_object(path)
+    for key in keys:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return _server_from_entry(agent, path, node)
+
+
+def configured_servers(home: Path | None = None) -> list[ConfiguredServer]:
+    """Every harness config's reverie server entry, in AGENTS order.
+
+    Used by the install-time check (launch what was just written) and by
+    ``reverie status`` (does that command still exist?)."""
+    home = Path(home) if home else Path.home()
+    found: list[ConfiguredServer] = []
+    for agent in AGENTS:
+        server = agent.configured_server(home)
+        if server is not None:
+            found.append(server)
+    return found
+
+
+def _command_exists(command: str, which=shutil.which) -> bool:
+    """True when a configured command can be launched: an existing file for a
+    path, or a resolvable name on PATH."""
+    separators = {sep for sep in (os.sep, os.altsep, "/") if sep}
+    if Path(command).is_absolute() or any(s in command for s in separators):
+        return Path(command).is_file()
+    return which(command) is not None
+
+
+def report_configured_servers(print_fn=print, home: Path | None = None,
+                              which=shutil.which) -> bool:
+    """``reverie status``: verify every configured harness's server command
+    still exists. A moved or deleted venv breaks an absolute path — flag it
+    and tell the user to re-run `reverie install`. Returns False on any
+    missing command; prints nothing when no harness is configured."""
+    servers = configured_servers(home)
+    if not servers:
+        return True
+    ok_all = True
+    print_fn("MCP server command:")
+    for server in servers:
+        agent = _AGENTS_BY_KEY.get(server.agent)
+        name = agent.name if agent else server.agent
+        if _command_exists(server.command, which):
+            print_fn(f"  ✓ {name}: {server.command}")
+        else:
+            ok_all = False
+            print_fn(f"  ✗ {name}: {server.command} is missing — the "
+                     "virtualenv was moved or deleted. Run `reverie install` "
+                     "again.")
+    return ok_all
 
 
 def _codex_toml(path: Path, home: Path, detail: str) -> PlannedWrite:
@@ -835,6 +1095,11 @@ class AgentSpec:
     def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
         raise NotImplementedError
 
+    def configured_server(self, home: Path) -> ConfiguredServer | None:
+        """The reverie server entry currently in this harness's config, or
+        None when the file is absent/unreadable or carries no entry."""
+        return None
+
 
 def _agents_ref(home: Path, reverie_home: Path) -> str:
     """How agent configs refer to the Reverie AGENTS.md (spec form when default)."""
@@ -848,6 +1113,10 @@ class _ClaudeCode(AgentSpec):
             next_step="restart Claude Code; the tools load in every project, "
                       "/reverie-review and /reverie-status are available in "
                       "the chat.")
+
+    def configured_server(self, home: Path) -> ConfiguredServer | None:
+        return _json_configured_server("claude_code", home / ".claude.json",
+                                       ("mcpServers", "reverie"))
 
     def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
         ref = _agents_ref(home, reverie_home)
@@ -886,6 +1155,11 @@ class _Cursor(AgentSpec):
                       "and /reverie-status are available in the chat "
                       "(commands are beta).")
 
+    def configured_server(self, home: Path) -> ConfiguredServer | None:
+        return _json_configured_server("cursor",
+                                       home / ".cursor" / "mcp.json",
+                                       ("mcpServers", "reverie"))
+
     def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
         python, args, env = server_command()
         plans = [
@@ -919,6 +1193,11 @@ class _OpenCode(AgentSpec):
             ".config/opencode/opencode.json",
             next_step="restart OpenCode; /reverie-review and /reverie-status "
                       "are available in the chat.")
+
+    def configured_server(self, home: Path) -> ConfiguredServer | None:
+        return _json_configured_server(
+            "opencode", home / ".config" / "opencode" / "opencode.json",
+            ("mcp", "reverie"))
 
     def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
         ref = _agents_ref(home, reverie_home)
@@ -959,6 +1238,15 @@ class _Codex(AgentSpec):
                       "/prompts:reverie-status are available (custom "
                       "prompts are deprecated upstream but work).")
 
+    def configured_server(self, home: Path) -> ConfiguredServer | None:
+        path = home / ".codex" / "config.toml"
+        try:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+            return None
+        return _server_from_entry("codex", path,
+                                  (data.get("mcp_servers") or {}).get("reverie"))
+
     def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
         ref = _agents_ref(home, reverie_home)
         cfg = home / ".codex" / "config.toml"
@@ -989,6 +1277,11 @@ class _GeminiCLI(AgentSpec):
             "gemini_cli", "Gemini CLI", "gemini", ".gemini/settings.json",
             next_step="restart Gemini CLI; /reverie-review and "
                       "/reverie-status are available in the chat.")
+
+    def configured_server(self, home: Path) -> ConfiguredServer | None:
+        return _json_configured_server("gemini_cli",
+                                       home / ".gemini" / "settings.json",
+                                       ("mcpServers", "reverie"))
 
     def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
         ref = _agents_ref(home, reverie_home)
@@ -1121,7 +1414,7 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
         dry_run: bool = False, provider: str | None = None,
         no_verify: bool = False, verify_fn=None, import_file: str | None = None,
-        input_fn=input, print_fn=print,
+        check_fn=None, input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
         runner=subprocess.run) -> int:
     """§28.8 `reverie install`. Returns 0 on success, raises InstallError otherwise.
@@ -1130,7 +1423,11 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     (registry key; ``ollama`` runs the D42 local setup). ``no_verify``
     skips the live ping; ``verify_fn`` (returning ``(ok, detail)``) replaces
     the ping in tests. ``runner`` executes the Ollama model pull (injectable;
-    failures are reported, never fatal). ``import_file`` (``--import``)
+    failures are reported, never fatal). ``check_fn`` replaces the
+    end-of-install MCP server check in tests (signature ``(command, args,
+    env) -> (ok, detail)``; the real one launches each written command). A
+    failed server check makes the run return 1 and suppresses "Reverie is
+    ready!". ``import_file`` (``--import``)
     restores a brain export during setup on a new machine (feat/flow D58):
     allowed into the fresh (empty) brain this installer just bootstrapped;
     when the local brain already holds data the import refuses with
@@ -1254,8 +1551,45 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
                          verify_fn=verify_fn, print_fn=print_fn)
 
     if dry_run:
+        if selected:
+            print_fn("\n[dry-run] would start each harness's written server "
+                     "command, send an MCP initialize and check the response")
         print_fn("\nDry run complete — no files were written.")
         return 0
+
+    # -- verify every written server command actually starts ---------------
+    # The absolute path is the whole point of D45: prove it runs before
+    # telling the user Reverie is ready. One launch per distinct command
+    # (all harnesses share one); ✓/✗ printed per harness.
+    if selected:
+        checker = check_fn or check_server
+        print_fn("\nVerifying the MCP server starts...")
+        results: dict[tuple, tuple[bool, str]] = {}
+        failures: list[str] = []
+        for agent in selected:
+            configured = agent.configured_server(home)
+            if configured is None:
+                print_fn(f"  ✗ {agent.name}: no reverie MCP entry found "
+                         "after install")
+                failures.append(agent.name)
+                continue
+            key = (configured.command, tuple(configured.args),
+                   tuple(sorted(configured.env.items())))
+            if key not in results:
+                results[key] = checker(configured.command, configured.args,
+                                       configured.env)
+            ok, detail = results[key]
+            print_fn(f"  {'✓' if ok else '✗'} {agent.name}: {detail}")
+            if not ok:
+                failures.append(agent.name)
+                print_fn("      command: "
+                         + " ".join([configured.command, *configured.args]))
+        if failures:
+            print_fn("\nSetup incomplete — the MCP server did not start for: "
+                     + ", ".join(failures))
+            print_fn("The harness entries above point at a command that does "
+                     "not run. Fix it, then re-run `reverie install`.")
+            return 1
 
     # -- per-harness summary: what was written, what to do next -----------
     print_fn("\nReverie is ready!\n")
