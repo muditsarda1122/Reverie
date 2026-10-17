@@ -2598,11 +2598,18 @@ The install script detects agents by checking for their config files or binaries
 {
   "mcpServers": {
     "reverie": {
-      "command": "reverie-mcp"
+      "command": "/absolute/path/to/reverie-mcp"
     }
   }
 }
 ```
+- The written command is the ABSOLUTE path of the `reverie-mcp` console
+  script belonging to the running interpreter's environment (venv, pipx,
+  uv tool or system install); a bare name only resolves when it happens to
+  be on the global PATH, and harnesses launch MCP servers outside the
+  user's virtualenv. See `install.server_command` / `console_script_path`.
+  The installer launches the written command after writing and reports
+  ✓/✗ per harness.
 - If `~/.cursor/mcp.json` already exists, merge the `reverie` entry into the existing `mcpServers` object without overwriting other servers.
 - Instructions (Phase 3): **no global rules file is written.** Cursor documents no global rules file load path (`~/.cursor/rules` exists as a mechanism but its format is undocumented, and project rules require `.mdc` frontmatter); the usage contract arrives via the server `instructions` field and the tool descriptions, and users who want it always-on paste it into Cursor Settings → Rules (the documented global mechanism). Reverie never writes into the user's repos.
 - Commands: `~/.cursor/commands/reverie-review.md` / `reverie-status.md` (plain markdown; the commands feature is beta).
@@ -2645,10 +2652,11 @@ The install script detects agents by checking for their config files or binaries
 
 **Codex:**
 - Detection: `codex` binary on PATH or `~/.codex/config.toml` exists.
-- MCP config: Write to `~/.codex/config.toml` (TOML format, NOT JSON):
+- MCP config: Write to `~/.codex/config.toml` (TOML format, NOT JSON;
+  `command` is the absolute `reverie-mcp` path — see Cursor's note):
 ```toml
 [mcp_servers.reverie]
-command = "reverie-mcp"
+command = "/absolute/path/to/reverie-mcp"
 ```
 - If `~/.codex/config.toml` already exists, append the `[mcp_servers.reverie]` table without overwriting other configuration.
 - Agent instructions: Codex reads `AGENTS.md`. The install script creates or appends to `~/.codex/AGENTS.md` with a reference to `~/.reverie/AGENTS.md`.

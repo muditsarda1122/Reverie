@@ -438,6 +438,10 @@ def main(argv: list[str] | None = None) -> int:
         manager = SessionManager(brain)
         row = manager.current_session(args.repo, args.branch)
         print(brain_summary(brain, row)["message"])
+        # Stale-path check (install fix): a moved/deleted venv breaks the
+        # absolute command written to each harness config.
+        from .install import report_configured_servers
+        report_configured_servers()
         return 0
     except (SessionError, review_gate.ReviewGateError, BrainError) as exc:
         print(str(exc), file=sys.stderr)
