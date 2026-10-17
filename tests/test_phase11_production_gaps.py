@@ -388,11 +388,13 @@ def scripted(answers):
 
 def run_install(home, reverie_home, *, input_answers=(), environ=None,
                 which_fn=None, runner=None, dry_run=False, all_agents=False,
-                input_fn=None, provider=None, no_verify=True, verify_fn=None):
+                input_fn=None, provider=None, no_verify=True, verify_fn=None,
+                check_fn=None):
     """install.run() fully sandboxed; returns the printed transcript.
 
     The live ping is disabled by default (no_verify); ``verify_fn`` replaces
-    it when a test exercises the report path.
+    it when a test exercises the report path. The end-of-install MCP server
+    check is stubbed to ✓; ``check_fn`` replaces it.
     """
     out = []
 
@@ -419,6 +421,7 @@ def run_install(home, reverie_home, *, input_answers=(), environ=None,
         provider=provider,
         no_verify=no_verify,
         verify_fn=verify_fn,
+        check_fn=check_fn or (lambda *a, **k: (True, "check skipped (test)")),
     )
     return "\n".join(out)
 
@@ -520,11 +523,19 @@ class TestOllamaAutoSetup:
 # ---------------------------------------------------------------------------
 
 class TestConsoleScriptDetection:
-    def test_console_script_detected(self, monkeypatch):
-        """#10: pip-installed package -> the reverie-mcp console script, no args,
-        no env (D45)."""
+    def test_console_script_detected_absolute(self, tmp_path, monkeypatch):
+        """#10 + install fix: pip-installed -> the ABSOLUTE path of the
+        reverie-mcp script beside the running interpreter, no args, no env
+        (D45). Harnesses launch servers outside the venv, so a bare name is
+        not enough."""
         monkeypatch.setattr(install, "_is_pip_installed", lambda: True)
-        assert install.server_command() == (install.MCP_CONSOLE_SCRIPT, [], {})
+        bin_dir = tmp_path / "venv" / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "python").write_text("#!/usr/bin/env python\n")
+        script = bin_dir / "reverie-mcp"
+        script.write_text("#!/usr/bin/env python\n")
+        assert install.server_command(executable=str(bin_dir / "python")) == (
+            str(script), [], {})
 
     def test_dev_fallback_unchanged(self, monkeypatch):
         """Not installed -> the D28 absolute-venv-python + PYTHONPATH form."""
@@ -546,21 +557,25 @@ class TestConsoleScriptDetection:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
         monkeypatch.setattr(install, "_is_pip_installed", lambda: True)
+        fake = str(tmp_path / "pipx" / "venvs" / "reverie" / "bin"
+                   / "reverie-mcp")
+        monkeypatch.setattr(install, "console_script_path",
+                            lambda *a, **k: fake)
         run_install(home, home / ".reverie", all_agents=True,
                           environ={install.ZEN_KEY_ENV: "sk-test"},
                           input_answers=[""])
         claude = json.loads((home / ".claude.json").read_text())
         assert claude["mcpServers"]["reverie"] == {
-            "type": "stdio", "command": "reverie-mcp"}
+            "type": "stdio", "command": fake}
         cursor = json.loads((home / ".cursor" / "mcp.json").read_text())
-        assert cursor["mcpServers"]["reverie"] == {"command": "reverie-mcp"}
+        assert cursor["mcpServers"]["reverie"] == {"command": fake}
         opencode = json.loads(
             (home / ".config" / "opencode" / "opencode.json").read_text())
         assert opencode["mcp"]["reverie"] == {
-            "type": "local", "command": ["reverie-mcp"], "enabled": True}
+            "type": "local", "command": [fake], "enabled": True}
         import tomllib
         codex = tomllib.loads((home / ".codex" / "config.toml").read_text())
-        assert codex["mcp_servers"]["reverie"] == {"command": "reverie-mcp"}
+        assert codex["mcp_servers"]["reverie"] == {"command": fake}
 
     def test_entry_point_registered_and_launches(self, tmp_path, monkeypatch):
         """The console script exists in the installed distribution and its

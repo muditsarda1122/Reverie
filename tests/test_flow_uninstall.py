@@ -86,6 +86,7 @@ def snapshot(home: Path) -> dict[str, bytes]:
 
 
 def do_install(home, reverie_home, **kwargs):
+    kwargs.setdefault("check_fn", lambda *a, **k: (True, "check skipped (test)"))
     return install.run(
         home=home, reverie_home=reverie_home, all_agents=True, no_verify=True,
         which=lambda _b: None, input_fn=lambda _p="": "",
@@ -139,6 +140,31 @@ def test_uninstall_removes_entries_it_created(home, reverie_home):
                 / "reverie-review.md").exists()
     assert not (home / ".codex" / "prompts" / "reverie-review.md").exists()
     assert not (home / ".gemini" / "commands" / "reverie-review.toml").exists()
+
+
+def test_uninstall_removes_absolute_path_entries(home, reverie_home):
+    """Install now writes the ABSOLUTE reverie-mcp path into every harness
+    config; uninstall matches by entry name, never by command value, so it
+    removes those entries cleanly."""
+    absolute = str(home / "venv" / "bin" / "reverie-mcp")
+    (home / ".claude.json").write_text(json_text({
+        "mcpServers": {
+            "other": {"command": "other-server"},
+            "reverie": {"type": "stdio", "command": absolute},
+        },
+    }))
+    (home / ".cursor").mkdir()
+    (home / ".cursor" / "mcp.json").write_text(json_text({
+        "mcpServers": {"reverie": {"command": absolute}},
+    }))
+    code, transcript = do_uninstall(home, reverie_home)
+    assert code == 0
+    assert "Removed the reverie MCP server" in transcript
+    claude = json.loads((home / ".claude.json").read_text())
+    assert "reverie" not in claude["mcpServers"]
+    assert claude["mcpServers"]["other"] == {"command": "other-server"}
+    # cursor held only the reverie entry -> the file is removed
+    assert not (home / ".cursor" / "mcp.json").exists()
 
 
 # ---------------------------------------------------------------------------

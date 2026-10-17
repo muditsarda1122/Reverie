@@ -44,11 +44,14 @@ def reverie_home(home):
 
 
 def run_install(home, reverie_home, *, input_fn=None, environ=None, provider=None,
-                no_verify=True, verify_fn=None, **kwargs):
+                no_verify=True, verify_fn=None, check_fn=None, **kwargs):
     """run() fully sandboxed: no real PATH binaries, no real env keys.
 
     The live ping is disabled by default (no_verify) so tests never touch
     the network; ``verify_fn`` replaces it when a test wants the report path.
+    The end-of-install MCP server check is stubbed to ✓ by default so tests
+    never launch real servers; ``check_fn`` replaces it when a test wants
+    the ✗ report path.
     """
     out = []
     install.run(
@@ -61,6 +64,7 @@ def run_install(home, reverie_home, *, input_fn=None, environ=None, provider=Non
         provider=provider,
         no_verify=no_verify,
         verify_fn=verify_fn,
+        check_fn=check_fn or (lambda *a, **k: (True, "check skipped (test)")),
         **kwargs,
     )
     return "\n".join(out)
