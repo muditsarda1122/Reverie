@@ -224,7 +224,7 @@ def test_double_stop_raises(manager, brain):
 
 
 # ---------------------------------------------------------------------------
-# brain summary (§16.3 reverie_summary)
+# brain summary (§16.3 summary)
 # ---------------------------------------------------------------------------
 
 def test_brain_summary_stats(brain):
@@ -280,7 +280,8 @@ def test_cli_status_subprocess(tmp_path):
                             capture_output=True, text=True, timeout=60)
     assert status.returncode == 0
     assert "The brain holds 0 conclusions" in status.stdout
-    assert "No active session." in status.stdout
+    assert ("No session on branch main yet; one starts on the next "
+            "Reverie call.") in status.stdout
 
     # a mistyped word is an error (the start/stop shims are gone)
     gone = subprocess.run(base + ["start"], env=env, cwd=ROOT,
@@ -321,7 +322,7 @@ def test_cli_review_decide_surfaces_diffusion_failure(tmp_path):
         capture_output=True, text=True, timeout=120)
     assert stop.returncode == 0, stop.stderr
     assert "Applied 1 decision(s)." in stop.stdout
-    assert "⚠️ WARNING: 1 ECU(s) promoted without diffusion due to API " \
+    assert "⚠️ WARNING: 1 conclusion(s) promoted without diffusion due to API " \
            "errors" in stop.stdout
     assert s in stop.stdout
     assert "Consider re-running diffusion manually" in stop.stdout

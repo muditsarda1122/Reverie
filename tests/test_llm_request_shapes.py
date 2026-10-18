@@ -71,7 +71,7 @@ class FakeResponse:
         return self._payload
 
 
-ANTHROPIC_PROVIDERS = {"opencode_zen": ("claude-haiku-4-5", "https://opencode.ai/zen/v1"),
+ANTHROPIC_PROVIDERS = {"opencode_zen": ("claude-haiku-5-5", "https://opencode.ai/zen/v1"),
                        "anthropic": ("claude-haiku-5-5", "https://api.anthropic.com/v1")}
 OPENAI_PROVIDERS = {
     "openai": ("gpt-5-mini", "https://api.openai.com/v1"),
@@ -103,15 +103,12 @@ def test_anthropic_format_providers(provider, tmp_path, monkeypatch):
     assert body["system"] == "be brief"
     assert body["max_tokens"] == cfg.llm.max_tokens
     assert body["messages"] == [{"role": "user", "content": "do the thing"}]
-    if provider == "anthropic":
-        # claude-haiku-5-5 (post-Opus-4.6): temperature is rejected with a
-        # 400 — the request omits it and carries the cheapest thinking config
-        assert "temperature" not in body
-        assert body["thinking"] == {"type": "disabled"}
-        assert body["output_config"] == {"effort": "low"}
-    else:
-        # claude-haiku-4-5 (Zen default): temperature is accepted and sent
-        assert body["temperature"] == cfg.llm.temperature
+    # claude-haiku-5-5 (post-Opus-4.6; both registry defaults): temperature
+    # is rejected with a 400 — the request omits it and carries the
+    # cheapest thinking config
+    assert "temperature" not in body
+    assert body["thinking"] == {"type": "disabled"}
+    assert body["output_config"] == {"effort": "low"}
 
 
 @pytest.mark.parametrize("provider", sorted(OPENAI_PROVIDERS))

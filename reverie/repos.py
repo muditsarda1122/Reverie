@@ -43,7 +43,7 @@ from .brain import Brain
 from .session import _git
 
 #: The exact first-time question (feat/flow). Shown to the user once per
-#: conversation; the agent records the answer via ``reverie_set_repo_state``.
+#: conversation; the agent records the answer via ``set_repo_state``.
 FIRST_TIME_QUESTION = (
     "Reverie isn't on for this repo. Turn it on? (yes / not now / never)"
 )

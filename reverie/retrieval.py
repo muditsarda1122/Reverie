@@ -1,7 +1,7 @@
-"""Demand-driven retrieval (Spec §8/§11.1–11.11) — the reverie_query pipeline.
+"""Demand-driven retrieval (Spec §8/§11.1–11.11) — the query pipeline.
 
 §11.3: retrieval is PURE demand-driven — this module acts only when the
-agent explicitly queries (the ``reverie_query`` path). Nothing here injects
+agent explicitly queries (the ``query`` path). Nothing here injects
 cognition proactively; that structural choice is anti-anchoring Defence 1
 (§11.6). Mode controls WHAT comes back, never WHEN (§11.9).
 
@@ -56,9 +56,9 @@ FRAMING_NOTE = (
     "This is past engineering understanding. "
     "Verify against current code before acting."
 )
-TRUNCATED_NOTE = "Context truncated due to token budget. Only core ECU included."
+TRUNCATED_NOTE = "Context truncated due to token budget. Only the core conclusion included."
 LOW_CONFIDENCE_FLAG = (
-    "⚠️ Low confidence — this cognition is uncertain. "
+    "⚠️ Low confidence — this conclusion is uncertain. "
     "Treat as a hypothesis, not a conclusion."
 )
 VERY_LOW_CONFIDENCE_FLAG = (
@@ -480,6 +480,7 @@ def _format_group(group: dict, number: int, config) -> str:
 
     lines = [f"--- Group {number} (rank: {rank:.4f}) ---"]
     lines.append(f'CONCLUSION: "{core["cognition"]}"')
+    lines.append(f'ID: {core["id"]}')
     conf_flag = _confidence_flag(conf, config)
     lines.append(
         f"CONFIDENCE: {conf} ({confidence_label(conf)}, {brain}, {reviewed})"
@@ -522,7 +523,7 @@ def _format_output(mode: str, max_tokens: int, groups: list[dict], *,
     )
     if fallback:
         lines.append(
-            "[Fallback: no ECUs passed the relevance gate — "
+            "[Fallback: no conclusions passed the relevance gate — "
             "returning top-ranked results anyway]"
         )
     if cross_group_refs:
@@ -536,7 +537,7 @@ def _format_output(mode: str, max_tokens: int, groups: list[dict], *,
 
 
 # ---------------------------------------------------------------------------
-# Structured result (§16.3 reverie_query return shape)
+# Structured result (§16.3 query return shape)
 # ---------------------------------------------------------------------------
 
 def _structured_group(group: dict) -> dict:
@@ -568,7 +569,7 @@ def _structured_group(group: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Public entry point — the reverie_query pipeline (§11.3: call-driven only)
+# Public entry point — the query pipeline (§11.3: call-driven only)
 # ---------------------------------------------------------------------------
 
 def retrieve(
@@ -693,7 +694,7 @@ def retrieve(
     )
     if low_n:
         warnings.append(
-            f"{low_n} ECU{'s' if low_n != 1 else ''} "
+            f"{low_n} conclusion{'s' if low_n != 1 else ''} "
             f"{'have' if low_n != 1 else 'has'} low confidence"
         )
     challenged_n = sum(
@@ -701,12 +702,12 @@ def retrieve(
     )
     if challenged_n:
         warnings.append(
-            f"{challenged_n} ECU{'s' if challenged_n != 1 else ''} "
+            f"{challenged_n} conclusion{'s' if challenged_n != 1 else ''} "
             f"{'are' if challenged_n != 1 else 'is'} challenged"
         )
     if fallback:
         warnings.append(
-            f"No ECUs passed the relevance gate ({gate}) — "
+            f"No conclusions passed the relevance gate ({gate}) — "
             "returned top-ranked results anyway (fallback)"
         )
 
@@ -719,7 +720,7 @@ def retrieve(
             f"for mode '{mode}' ({tokens_used}/{params['max_tokens']} tokens)."
         )
     else:
-        message = "No relevant engineering cognition found."
+        message = "No relevant engineering conclusions found."
 
     formatted = _format_output(
         mode, params["max_tokens"], selected,

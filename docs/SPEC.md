@@ -958,18 +958,18 @@ EC-Bench Finding 1 states: "The highest-quality investigations consistently esta
 
 **The single trigger — On-demand (agent-initiated):**
 
-The agent has an `reverie_query(query, scope?, mode?)` tool available for targeted lookups. The agent decides when to query based on AGENTS.md heuristics (see Section [FORGETTING - DEFERRED]9). There is no automatic injection at prompt boundaries. The agent must actively call `reverie_query` to retrieve any cognition.
+The agent has an `query(query, scope?, mode?)` tool available for targeted lookups. The agent decides when to query based on AGENTS.md heuristics (see Section [FORGETTING - DEFERRED]9). There is no automatic injection at prompt boundaries. The agent must actively call `query` to retrieve any cognition.
 
 **Session start — awareness without anchoring:**
 
-At session start, the agent calls `reverie_summary` once. This returns brain statistics (total ECUs, scope distribution, last maintenance run) — NOT individual ECUs. The agent learns "the brain has 847 ECUs, 230 about auth, 180 about database" without seeing any conclusions. This is awareness without anchoring: the agent knows cognition *exists* about auth without knowing *what* it says. The agent can then decide whether to query based on what it encounters in the repository.
+At session start, the agent calls `summary` once. This returns brain statistics (total ECUs, scope distribution, last maintenance run) — NOT individual ECUs. The agent learns "the brain has 847 ECUs, 230 about auth, 180 about database" without seeing any conclusions. This is awareness without anchoring: the agent knows cognition *exists* about auth without knowing *what* it says. The agent can then decide whether to query based on what it encounters in the repository.
 
 **Flow:**
 
 ```
 User runs /ec-start
        ↓
-Agent calls reverie_summary (ONCE — brain stats only, no ECUs)
+Agent calls summary (ONCE — brain stats only, no ECUs)
        ↓
 User submits prompt
        ↓
@@ -981,23 +981,23 @@ Agent recognizes a moment where past cognition might help:
   - Sees a pattern it doesn't recognise
   - Working with a file/module for the first time in this session
        ↓
-Agent calls reverie_query(query) → EC returns cognitive groups
+Agent calls query(query) → EC returns cognitive groups
        ↓
 Agent uses retrieved cognition (framed as past beliefs to verify)
        ↓
 Agent responds
        ↓
-Agent calls reverie_observe(reasoning_trace) → Extractor produces candidate ECUs
+Agent calls observe(reasoning_trace) → Extractor produces candidate ECUs
 ```
 
 **The critical rule — EC-Bench Finding 1 encoded:**
 
-The agent must NOT query EC before it has read the relevant code files. The AGENTS.md explicitly instructs: "Do NOT call reverie_query before you have read the relevant code files. Establish your own understanding of the repository first. EC cognition is a supplement to your understanding, not a replacement for it."
+The agent must NOT query EC before it has read the relevant code files. The AGENTS.md explicitly instructs: "Do NOT call query before you have read the relevant code files. Establish your own understanding of the repository first. EC cognition is a supplement to your understanding, not a replacement for it."
 
 **Why pure demand-driven is the correct choice for v2:**
 
 1. EC-Bench showed injection at the beginning caused anchoring — the agent used cognition heavily but produced worse work.
-2. The "LLMs don't know what they don't know" problem is addressed by `reverie_summary` at session start (awareness without anchoring) and strong AGENTS.md heuristics.
+2. The "LLMs don't know what they don't know" problem is addressed by `summary` at session start (awareness without anchoring) and strong AGENTS.md heuristics.
 3. Mode-aware retrieval still applies (Section 6.9) — when the agent *does* query, the mode determines depth, budget, and prioritization. But mode no longer controls *when* retrieval happens; it controls *what* comes back when the agent asks.
 4. Under-querying is recoverable (the agent can query again). Over-injection is not (the agent is anchored and doesn't know to un-ask). The asymmetry favours demand-driven.
 
@@ -1184,7 +1184,7 @@ If no ECU scores above the relevance threshold, don't return empty context. Retu
 
 **Retrieval restraint — the asymmetry principle:**
 
-An under-injected agent can query for more via `reverie_query`. An over-injected agent is anchored and doesn't know to un-ask. This asymmetry means the default token budgets are deliberately conservative (2000-6000 tokens depending on mode). Reverie errs on the side of injecting less, not more.
+An under-injected agent can query for more via `query`. An over-injected agent is anchored and doesn't know to un-ask. This asymmetry means the default token budgets are deliberately conservative (2000-6000 tokens depending on mode). Reverie errs on the side of injecting less, not more.
 
 ### 11.6 Anti-Anchoring Defences
 
@@ -1192,7 +1192,7 @@ The v1 mistake (cognition injected as authoritative context → agent anchored o
 
 **Defence 1 — Demand-driven retrieval (structural):**
 
-EC never injects cognition automatically. The agent must actively call `reverie_query` to retrieve any cognition. This is the primary anti-anchoring defence — if the agent hasn't asked for it, it doesn't see it. The agent reads the repository first, forms its own understanding, and only queries EC when it recognizes a gap. This directly addresses EC-Bench Finding 1: "Engineering cognition should support reasoning once uncertainty emerges, not initialise it before repository understanding is established" [cite:f6100d2cb].
+EC never injects cognition automatically. The agent must actively call `query` to retrieve any cognition. This is the primary anti-anchoring defence — if the agent hasn't asked for it, it doesn't see it. The agent reads the repository first, forms its own understanding, and only queries EC when it recognizes a gap. This directly addresses EC-Bench Finding 1: "Engineering cognition should support reasoning once uncertainty emerges, not initialise it before repository understanding is established" [cite:f6100d2cb].
 
 **Defence 2 — Framing:**
 
@@ -1268,7 +1268,7 @@ EC-Bench Finding 3 explicitly showed that different engineering modes required d
 
 **How mode is detected:**
 
-Mode is detected from the agent's `reverie_query` call. The agent can pass a `mode` parameter explicitly, or if omitted, EC classifies the query: "Classify this engineering query into one of: debugging, architecture, implementation, investigation, planning." This is a lightweight LLM call on the query text. (v2 can fall back to keyword heuristics if LLM call cost is a concern.)
+Mode is detected from the agent's `query` call. The agent can pass a `mode` parameter explicitly, or if omitted, EC classifies the query: "Classify this engineering query into one of: debugging, architecture, implementation, investigation, planning." This is a lightweight LLM call on the query text. (v2 can fall back to keyword heuristics if LLM call cost is a concern.)
 
 **Important: mode controls WHAT comes back, not WHEN.**
 
@@ -2009,7 +2009,7 @@ lightweight_diffusion:
 # Ollama is supported as a fallback for offline use (lower quality extraction).
 llm:
   provider: "opencode_zen"               # registry key: opencode_zen | anthropic | openai | google | openrouter | ollama | custom
-  model: "claude-haiku-4-5"             # best extraction quality per cost (tested); filled from the registry when omitted
+  model: "claude-haiku-5-5"             # cheap/current default; filled from the registry when omitted
   base_url: "https://opencode.ai/zen/v1"
   api_key_env: "OPENCODE_ZEN_API_KEY"   # env var name for API key
   wire_format: null                     # optional: "anthropic" | "openai" (null = derive from model name)
@@ -2135,10 +2135,10 @@ The MCP server is a Python module (`reverie.mcp_server`) that:
 
 #### MCP Tools Exposed to the Agent
 
-**1. `reverie_observe`** — Extract engineering cognition from the agent's reasoning.
+**1. `observe`** — Extract engineering cognition from the agent's reasoning.
 
 ```
-Tool: reverie_observe
+Tool: observe
 Description: >
   Extract engineering conclusions from your reasoning trace and store them
   in the Session Brain for immediate use. Call this AFTER you:
@@ -2147,14 +2147,14 @@ Description: >
   - Make an architectural decision with rationale
   - Discover that a previous assumption was wrong
 
-  Do NOT call reverie_observe for:
+  Do NOT call observe for:
   - Simple code changes with no insight
   - Things already captured in existing ECUs
   - Pure factual observations (the Extractor handles the lifting to conclusions)
 
-  reverie_observe runs the Extractor on your reasoning, produces candidate ECUs,
+  observe runs the Extractor on your reasoning, produces candidate ECUs,
   and stores them in the Session Brain. They are immediately available for
-  retrieval via reverie_query. The user reviews these ECUs at session close (/ec-stop).
+  retrieval via query. The user reviews these ECUs at session close (/ec-stop).
 
   If no session is active, returns an error — tell the user to run /ec-start.
 
@@ -2163,7 +2163,7 @@ Parameters:
     response. The Extractor processes the full interaction — prompt, reasoning,
     and output — not just the reasoning alone.
   reasoning_trace (string, required): Your reasoning trace since the last
-    reverie_observe call. Include your thinking, decisions, and rationale — not
+    observe call. Include your thinking, decisions, and rationale — not
     just the final code output.
   final_output (string, optional): Your final output (code, explanation,
     plan, etc.). If the output is just a code diff with no explanation,
@@ -2189,10 +2189,10 @@ Error example (no session):
   }
 ```
 
-**2. `reverie_query`** — Retrieve engineering cognition from the brain.
+**2. `query`** — Retrieve engineering cognition from the brain.
 
 ```
-Tool: reverie_query
+Tool: query
 Description: >
   Retrieve engineering conclusions relevant to your current task. Call this
   AFTER reading the relevant code files, when you recognize a gap that past
@@ -2293,10 +2293,10 @@ Error example (no session):
   }
 ```
 
-**3. `reverie_summary`** — Get a brain overview at session start.
+**3. `summary`** — Get a brain overview at session start.
 
 ```
-Tool: reverie_summary
+Tool: summary
 Description: >
   Get a summary of what the Reverie brain knows. Call this ONCE at session start
   to understand what engineering cognition is already stored before you begin
@@ -2433,7 +2433,7 @@ Constraint: only **one active session per (repo, branch)**. If the user runs `/e
 - Prints: session ID, branch, repo, session brain ECU count.
 
 **`/ec-stop`** — End the EC session and trigger the Review Gate.
-- Runs a final extraction pass on any unobserved reasoning (if the agent has reasoning since the last `reverie_observe` call).
+- Runs a final extraction pass on any unobserved reasoning (if the agent has reasoning since the last `observe` call).
 - Presents the Review Gate (Section [FORGETTING - DEFERRED]7).
 - After Review Gate completes: accepted ECUs → Full Diffuser → Canonical Brain.
 - **Session cleanup:**
@@ -2642,7 +2642,7 @@ The install script detects agents by checking for their config files or binaries
 - Verification: one cheap live ping through the configured model, skippable with `--no-verify` (`--provider <name>` works non-interactively). Success/failure is reported clearly; a failure is never fatal.
 - The MCP server calls the configured LLM directly (`requests`, two wire formats — Anthropic Messages and OpenAI Chat; `llm.wire_format` overrides model-name routing). Different model families use different endpoints (Anthropic Messages API for Claude, OpenAI Chat for others). No LLM SDK is used.
 - Transient failures (429, 5xx, timeouts) are retried with capped exponential backoff and jitter, honouring `Retry-After`; other 4xx errors fail immediately.
-- Extraction failures after retries are persisted (`pending_extractions`) and retried automatically at the next successful `reverie_observe`, or manually via `reverie retry` (which also re-diffuses promoted-but-undiffused ECUs).
+- Extraction failures after retries are persisted (`pending_extractions`) and retried automatically at the next successful `observe`, or manually via `reverie retry` (which also re-diffuses promoted-but-undiffused ECUs).
 - JSON post-processing: Claude models wrap JSON in markdown code fences. The Extractor strips these before parsing (see config block for implementation).
 
 **Ollama (offline fallback):**
@@ -2678,18 +2678,17 @@ This is the complete `~/.reverie/AGENTS.md` file. The install script writes this
 # Reverie — Agent Instructions
 
 Reverie is an MCP server providing engineering memory for your codebase.
-It stores engineering conclusions (the internal record is an Engineering
-Cognition Unit, ECU) — conclusions, not facts — and retrieves them when
+It stores engineering conclusions, not facts, and retrieves them when
 you need them.
 
 Reverie provides seven MCP tools:
-- reverie_observe: Extract engineering conclusions from your reasoning
-- reverie_query: Retrieve relevant engineering cognition
-- reverie_summary: Get brain statistics at session start
-- reverie_reconsolidate: Update a retrieved conclusion with new evidence
-- reverie_set_repo_state: Record the user's enablement answer for a repo
-- reverie_review_list: Show the user's pending review candidates
-- reverie_review_decide: Apply review decisions the user stated
+- observe: Extract engineering conclusions from your reasoning
+- query: Retrieve relevant engineering conclusions
+- summary: Get brain statistics at session start
+- reconsolidate: Update a retrieved conclusion with new evidence
+- set_repo_state: Record the user's enablement answer for a repo
+- review_list: Show the user's pending review candidates
+- review_decide: Apply review decisions the user stated
 
 ## Repo Path — Pass It on Every Call
 
@@ -2705,7 +2704,7 @@ a tool call reports that a repo is undecided, ask the user exactly:
 Reverie isn't on for this repo. Turn it on? (yes / not now / never)
 
 Ask this question AT MOST ONCE per conversation. Record the answer with
-reverie_set_repo_state:
+set_repo_state:
 - "yes" -> state="enabled"
 - "not now" -> state="not_now" (stays off for now; do not ask again in
   this conversation)
@@ -2723,9 +2722,9 @@ branches mid-conversation switches session memory; long-term memory
 stays shared across branches. Never suggest starting or stopping a
 session — there is nothing to start or stop.
 
-## When to Call reverie_observe
+## When to Call observe
 
-Call reverie_observe AFTER you:
+Call observe AFTER you:
 - Discover a non-obvious invariant or dependency
 - Debug a tricky issue and find the root cause
 - Make an architectural decision with rationale
@@ -2735,20 +2734,24 @@ Call reverie_observe AFTER you:
 Pass your reasoning trace (your thinking, decisions, and rationale) — not
 just the final code output. The Extractor lifts observations into conclusions.
 
-Do NOT call reverie_observe for:
+Do NOT call observe for:
 - Simple code changes with no insight
 - Things already captured in existing conclusions
 - Pure factual observations (e.g., "this function returns a string")
 - Every single response — only when you have engineering insight worth saving
 
-## When to Call reverie_query
+Call observe AT MOST ONCE per task — batch everything worth saving into a
+single call after you have the insight, not after every response — unless a
+separate new insight appears.
 
-Call reverie_query when you recognize a gap that past engineering cognition might fill.
-Read the relevant code files FIRST. Do NOT call reverie_query before you have grounded
+## When to Call query
+
+Call query when you recognize a gap that past engineering conclusions might fill.
+Read the relevant code files FIRST. Do NOT call query before you have grounded
 yourself in the repository. Reverie's memory is a supplement to your
 understanding, not a replacement for reading the code.
 
-Call reverie_query AFTER reading the code, when:
+Call query AFTER reading the code, when:
 - You're about to make a decision between multiple approaches
 - You're debugging and the cause isn't obvious from the code alone
 - You see a pattern in the code you don't recognise
@@ -2758,7 +2761,7 @@ Call reverie_query AFTER reading the code, when:
 - You're planning an architectural change and want to check for existing
   architectural decisions or constraints
 
-Do NOT call reverie_query:
+Do NOT call query:
 - Before you have read the relevant code files (this causes anchoring bias)
 - For simple code changes with no engineering insight needed
 - On every single response — only when you genuinely need past context
@@ -2774,37 +2777,39 @@ Pass a natural language query describing what you want to know. Be specific.
 than "dependency injection." The query is embedded and compared semantically —
 precise engineering questions retrieve better than single keywords.
 
-If reverie_query returns no results, proceed normally — this means Reverie
+If query returns no results, proceed normally — this means Reverie
 has no relevant memory yet. It starts empty and builds up over sessions.
 
-## When to Call reverie_reconsolidate
+## When to Call reconsolidate
 
-Call reverie_reconsolidate when you discover that a previously retrieved
+Call reconsolidate when you discover that a previously retrieved
 conclusion needs updating based on what you've found in the current
 codebase. This is how Reverie stays current — beliefs that are no longer
 accurate get corrected.
 
-Call reverie_reconsolidate when:
+Call reconsolidate when:
 - You verified a retrieved conclusion against the code and found it's no longer accurate
 - You discovered new evidence that strengthens a retrieved conclusion
 - You discovered new evidence that contradicts a retrieved conclusion
 - The code a conclusion is grounded in has changed, and the conclusion needs updating
 
-Pass the ECU ID (from the reverie_query result), your evidence (your reasoning about
+Pass the conclusion ID (from the query result), your evidence (your reasoning about
 what changed), and optionally the relationship (supports/contradicts/supersedes).
+Evidence must reference something the user can verify — a file path with
+line numbers, a test name, or a commit hash — not free-floating narrative.
 
-Do NOT call reverie_reconsolidate for:
-- New insights unrelated to a previously retrieved conclusion (use reverie_observe)
-- Conclusions you haven't retrieved in this session (reverie_query first)
+Do NOT call reconsolidate for:
+- New insights unrelated to a previously retrieved conclusion (use observe)
+- Conclusions you haven't retrieved in this session (query first)
 - Simple code changes with no impact on engineering conclusions
 
-If reverie_reconsolidate is not available, use reverie_observe to record
+If reconsolidate is not available, use observe to record
 the new finding — the Diffuser will handle the relationship at review time.
 
-## When to Call reverie_summary
+## When to Call summary
 
-Call reverie_summary ONCE at session start to see what Reverie already
-knows. This helps you decide whether to reverie_query for specific context
+Call summary ONCE at session start to see what Reverie already
+knows. This helps you decide whether to query for specific context
 before starting work. Returns brain statistics, not individual conclusions.
 
 If the response contains a pending-review backlog line (counts only),
@@ -2818,11 +2823,11 @@ Observations are stored as review candidates, never promoted
 automatically. The user reviews them:
 - in a terminal with `reverie review`, or
 - through you: when the user asks to see their Reverie candidates, call
-  reverie_review_list and show EVERY candidate's full conclusion text before
+  review_list and show EVERY candidate's full conclusion text before
   asking what they want to do.
 
 Rules for review through you:
-- Relay ONLY the decisions the user actually states, via reverie_review_decide.
+- Relay ONLY the decisions the user actually states, via review_decide.
 - NEVER decide on the user's behalf.
 - NEVER bulk-accept unless the user explicitly asked for that group.
 - Be honest about the limits: Reverie cannot verify who made a decision;
@@ -2830,7 +2835,7 @@ Rules for review through you:
 
 ## Reading Reverie Output
 
-When reverie_query returns conclusions, interpret them as follows:
+When query returns conclusions, interpret them as follows:
 
 ### Confidence levels:
 - High (>0.7): Reliable, act on this. Verify grounding if the decision is critical.
@@ -2852,12 +2857,12 @@ If the referenced file or symbol no longer exists, it may be stale.
 
 Reverie's Maintainer periodically verifies grounding references against the
 live repository and deprecates conclusions whose grounding has disappeared.
-Deprecated conclusions are not returned by reverie_query. If you discover
+Deprecated conclusions are not returned by query. If you discover
 that a conclusion's grounding is stale before the Maintainer has caught it,
-call reverie_reconsolidate to update it with what you've found.
+call reconsolidate to update it with what you've found.
 
 ### Warnings:
-reverie_query may return warnings (e.g., "2 conclusions have low
+query may return warnings (e.g., "2 conclusions have low
 confidence", "1 conclusion is challenged"). Read these warnings and adjust
 your trust accordingly.
 
@@ -2882,7 +2887,7 @@ Reverie's memory is framed as "past beliefs to verify against current
 code," NOT as authoritative context. Always verify conclusions against the
 live codebase.
 Do not anchor on past beliefs if the current code contradicts them.
-If you notice a contradiction, call reverie_observe to record the new finding.
+If you notice a contradiction, call observe to record the new finding.
 
 Observations are stored in the Session Brain, not the Canonical Brain. The
 user reviews the candidates — via `reverie review` in a terminal, or through you
@@ -2931,7 +2936,7 @@ The extraction flow during a live session:
 Agent generates response (reasoning + output)
          │
          ▼
-Agent calls reverie_observe(reasoning_trace)
+Agent calls observe(reasoning_trace)
          │
          ▼
 Extractor runs on reasoning_trace
@@ -2950,7 +2955,7 @@ Lightweight Diffusion (Section 4.4):
 ECUs stored in Session Brain (session_ecus table)
          │
          ▼
-ECUs immediately available for reverie_query in agent's next response
+ECUs immediately available for query in agent's next response
 ```
 
 The Extractor processes each LLM response independently. ECUs from response 1 enter the Session Brain immediately and are available for response 2 (Section 5, line 667). No batching — extraction is per-response.
@@ -2975,7 +2980,7 @@ At `/ec-stop`, all Session Brain ECUs go to the Review Gate. Only after human re
 ┌────────────────────────▼────────────────────────────────────┐
 │              EC MCP Server (python -m reverie.mcp_server)        │
 │                                                             │
-│  Tools: reverie_observe, reverie_query, reverie_summary               │
+│  Tools: observe, query, summary               │
 │                                                             │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────┐  │
 │  │Extractor │  │ Diffuser │  │Retrieval │  │Maintainer │  │
@@ -3030,14 +3035,14 @@ stored in the global brain's `repos` table, never inside the repo.
 - `undecided` → every tool returns a short, structured ask-the-user
   response instead of acting: "Reverie isn't on for this repo. Turn it
   on? (yes / not now / never)". The agent asks once per conversation and
-  records the answer with `reverie_set_repo_state`: `yes` → `enabled`,
+  records the answer with `set_repo_state`: `yes` → `enabled`,
   `not now` → `not_now` (asked, stays off), `never` → `disabled`.
 - `disabled` → fully off for that repo: no capture, no retrieval,
   nothing injected. Existing data is kept; re-enabling resumes with
   everything intact (`reverie disable` says so in its output).
 - Commands: `reverie enable`, `reverie disable` (inside a repo, any time), `ec
   repos` (every known repo with state + counts), MCP tool
-  `reverie_set_repo_state(state)`.
+  `set_repo_state(state)`.
 
 ### 29.2 Repo identity, worktrees, moves (D58)
 
@@ -3103,15 +3108,15 @@ rejects/skips reverse from a snapshot.
 
 ### 29.5 Review through the agent (D57)
 
-`reverie_review_list` returns the same ordered page as the TUI in a compact
+`review_list` returns the same ordered page as the TUI in a compact
 form plus a short-lived `review_token` (TTL 1 h, server-held).
-`reverie_review_decide(review_token, decisions)` applies decisions only to
+`review_decide(review_token, decisions)` applies decisions only to
 ids returned under that token, refuses a bulk accept-all (all ids of a
 multi-candidate token accepted in one call), and records the channel as
 `agent`. Tokens are single-use: a successful decide call consumes the
 token, so accepting part of a listing and then the rest in a second call
 with the same token is refused — the next batch requires a fresh
-`reverie_review_list`. This adds friction; it is not a security boundary
+`review_list`. This adds friction; it is not a security boundary
 (§29.4's honesty note stands: the channel is the record). The agent
 instructions (`~/.reverie/AGENTS.md`) require: show every candidate's full
 text before asking; relay only stated decisions; never decide on the
@@ -3120,10 +3125,10 @@ that group.
 
 ### 29.6 The nudge (D57)
 
-`reverie_summary` adds one counts-only line when the unreviewed backlog
+`summary` adds one counts-only line when the unreviewed backlog
 exceeds `review.nudge_threshold` (10) or the oldest unreviewed candidate
 is older than `review.nudge_age_days` (5). When a repo resolves, the line
-splits the count to match what `reverie_review_list` will show for that repo
+splits the count to match what `review_list` will show for that repo
 — e.g. "14 conclusions waiting for review (3 in this repo, oldest 6
 days)"; outside a repo it stays global-only ("14 conclusions waiting for
 review (oldest 6 days)"). The agent mentions it at most once per
@@ -3187,7 +3192,7 @@ compatibility aliases. Everything a user sees is now `reverie`.
 | CLI | `ec` (+ `ec-start`/`ec-stop`/`ec-status`/`ec-retry`/`ec-repair` scripts) | `reverie` with subcommands `install enable disable repos review status export import reset retry repair uninstall`; the only other console script is `reverie-mcp` |
 | MCP server (in harness configs) | `ec` / `mcp.ec` / `[mcp_servers.ec]` | `reverie` / `mcp.reverie` / `[mcp_servers.reverie]` |
 | MCP server name (initialize `serverInfo`) | `ec` | `reverie` |
-| Tools | `ec_observe`, `ec_query`, `ec_get_summary`, `ec_reconsolidate`, `ec_set_repo_state`, `ec_review_list`, `ec_review_decide` | `reverie_observe`, `reverie_query`, `reverie_summary`, `reverie_reconsolidate`, `reverie_set_repo_state`, `reverie_review_list`, `reverie_review_decide` |
+| Tools | `ec_observe`, `ec_query`, `ec_get_summary`, `ec_reconsolidate`, `ec_set_repo_state`, `ec_review_list`, `ec_review_decide` | `observe`, `query`, `summary`, `reconsolidate`, `set_repo_state`, `review_list`, `review_decide` |
 | Data directory | `~/.ec` | `~/.reverie` |
 | Database file | `ec.db` | `reverie.db` |
 | Env vars | `EC_HOME`, `EC_REPO_PATH`, `EC_BRANCH` | `REVERIE_HOME`, `REVERIE_REPO_PATH`, `REVERIE_BRANCH` |

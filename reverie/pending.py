@@ -5,7 +5,7 @@ Two failure states this recovers:
 1. **Pending extractions.** When the extraction LLM call fails after
    retries, the interaction input is persisted to ``pending_extractions``
    (nothing is lost). Items are retried automatically at the next
-   successful ``reverie_observe`` for the same (repo, branch), or manually:
+   successful ``observe`` for the same (repo, branch), or manually:
    ``reverie retry`` / ``reverie retry --list`` / ``reverie retry --drop <id>``.
    A retry extracts the stored interaction into the *current* active
    session for that (repo, branch) — a closed session's brain is never
@@ -88,6 +88,7 @@ def retry_pending(
                 embedding_model=embedding_model, config=cfg,
                 origin_agent=item.get("origin_agent"),
                 commit_hash=item.get("commit_hash"),
+                repo_path=item.get("repo_path") or active["repo_path"],
             )
         except ExtractorError as exc:
             brain.mark_pending_extraction_attempt(item["id"], str(exc))
@@ -188,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="re-run diffusion for undiffused conclusions instead of "
                              "retrying pending extractions")
     parser.add_argument("--ecu-id", metavar="ECU_ID", default=None,
-                        help="with --rediffuse: only this conclusion id (ECU id)")
+                        help="with --rediffuse: only this conclusion id")
     parser.add_argument("--repo", default=None,
                         help="only items for this repo path (default: all)")
     parser.add_argument("--branch", default=None,

@@ -158,6 +158,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="repo path (default: git detect)")
     p.add_argument("--branch", default=None,
                    help="branch (default: git detect)")
+    p.add_argument("--all", action="store_true",
+                   help="every enabled repo's active sessions")
 
     p = sub.add_parser("export", help="export the brain to one ZIP file")
     p.add_argument("file", nargs="?",
@@ -214,7 +216,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="re-run diffusion for undiffused conclusions instead of "
                         "retrying pending extractions")
     p.add_argument("--ecu-id", metavar="ECU_ID", default=None,
-                   help="with --rediffuse: only this conclusion id (ECU id)")
+                   help="with --rediffuse: only this conclusion id")
     p.add_argument("--repo", default=None,
                    help="only items for this repo path (default: all)")
     p.add_argument("--branch", default=None,

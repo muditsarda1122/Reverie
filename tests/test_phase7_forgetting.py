@@ -350,7 +350,7 @@ def make_server(brain, config):
 
 
 def core_result(ecu_ids_by_brain):
-    """Minimal reverie_query-shaped result for _record_retrieval_metadata."""
+    """Minimal query-shaped result for _record_retrieval_metadata."""
     return {
         "groups": [
             {"core_ecu": {"id": ecu_id, "brain": brain_name},

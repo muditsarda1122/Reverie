@@ -185,7 +185,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # behaviour: every field is used as written below).
     "llm": {
         "provider": "opencode_zen",
-        "model": "claude-haiku-4-5",
+        "model": "claude-haiku-5-5",
         "base_url": "https://opencode.ai/zen/v1",
         "api_key_env": "OPENCODE_ZEN_API_KEY",
         # Overrides the model-name wire-format rule (D48) when set:
@@ -284,12 +284,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # (kept, never deleted; still usable in session memory; revived only
         # via `reverie review --expired`). 0 disables expiry.
         "expire_after_days": 21,
-        # reverie_summary nudge: one counts-only line when the unreviewed
+        # summary nudge: one counts-only line when the unreviewed
         # backlog exceeds this many candidates...
         "nudge_threshold": 10,
         # ...or the oldest unreviewed candidate is older than this many days.
         "nudge_age_days": 5,
-        # Page size for `reverie review` and reverie_review_list (never a filter —
+        # Page size for `reverie review` and review_list (never a filter —
         # "more" is always available).
         "page_size": 10,
     },

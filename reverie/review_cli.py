@@ -80,6 +80,11 @@ def candidate_detail(brain: Brain, candidate: dict) -> dict:
         "grounding_files": grounding.get("files") or [],
         "evidence": doc.get("evidence_pointers") or [],
         "grounding_symbols": grounding.get("symbols") or [],
+        "evidence_status": (doc.get("metadata") or {}).get("evidence_status"),
+        "grounding_dropped": (grounding.get("validation") or {}).get(
+            "dropped_files") or [],
+        "symbols_dropped": (grounding.get("validation") or {}).get(
+            "dropped_symbols") or [],
     }
 
 
@@ -143,6 +148,14 @@ def render_screen(candidate: dict, detail: dict, *, index: int, total: int,
     lines.append(f"    grounded: {_muted(detail.get('grounding_files'))}"
                  f"  symbols: {_muted(detail.get('grounding_symbols'))}")
     lines.append(f"    evidence: {_muted(detail.get('evidence'))}")
+    if detail.get("evidence_status") == "unsupported":
+        lines.append("    ⚠ evidence unsupported — no file path, test name, "
+                     "or commit reference")
+    dropped = (detail.get("grounding_dropped") or []) \
+        + (detail.get("symbols_dropped") or [])
+    if dropped:
+        lines.append(f"    ⚠ unverifiable references dropped: "
+                     f"{', '.join(str(d) for d in dropped)}")
     lines.append(
         f"    repo: {candidate.get('repo_path') or '—'} "
         f"(branch {candidate.get('branch') or '—'})"
@@ -414,6 +427,7 @@ def _run_loop(run: ReviewRun, queue: list[dict], *, key_reader, print_fn,
     size = page_size
     remaining = list(queue)
     shown = 0
+    consumed: set[str] = set()
     while remaining:
         page = remaining[:size]
         remaining = remaining[size:]
@@ -421,6 +435,7 @@ def _run_loop(run: ReviewRun, queue: list[dict], *, key_reader, print_fn,
             fresh = brain.get_queue_candidate(candidate["id"])
             if fresh is None or fresh["review_status"] not in (
                     "pending", "skipped", "expired"):
+                consumed.add(candidate["id"])
                 continue               # already decided (e.g. by 'g') — skip
             shown += 1
             detail = candidate_detail(brain, candidate)
@@ -433,18 +448,39 @@ def _run_loop(run: ReviewRun, queue: list[dict], *, key_reader, print_fn,
             try:
                 key = key_reader().strip().lower()
             except Quit:
-                return {"progress": run.progress, "remaining":
-                        len(remaining) + len(page) - 1}
-            _handle_key(
-                run, candidate, key, page, remaining, brain=brain,
-                print_fn=print_fn, edit_fn=edit_fn,
-                expired_mode=expired_mode, key_reader=key_reader,
-            )
+                return {"progress": run.progress,
+                        "remaining": _undecided(brain, queue, consumed)}
+            try:
+                _handle_key(
+                    run, candidate, key, page, remaining, brain=brain,
+                    print_fn=print_fn, edit_fn=edit_fn,
+                    expired_mode=expired_mode, key_reader=key_reader,
+                )
+            except Quit:               # 'q' pressed at the candidate prompt
+                return {"progress": run.progress,
+                        "remaining": _undecided(brain, queue, consumed)}
+            consumed.add(candidate["id"])
         if remaining:
             print_fn(f"\n--- more available: {len(remaining)} candidate(s) "
                      "remain (q quits, decisions so far are kept) ---")
     _end_screen(run, key_reader, print_fn)
     return {"progress": run.progress, "remaining": 0}
+
+
+def _undecided(brain: Brain, queue: list[dict], consumed: set[str]) -> int:
+    """Queue candidates still needing a decision after a quit: not consumed
+    by this run (any key consumes one — even 'u' or an unknown key moves on),
+    and still in a reviewable state (a pre-run 'skipped' still counts —
+    it comes back, §28.6)."""
+    left = 0
+    for candidate in queue:
+        if candidate["id"] in consumed:
+            continue
+        fresh = brain.get_queue_candidate(candidate["id"])
+        if fresh is not None and fresh["review_status"] in (
+                "pending", "skipped", "expired"):
+            left += 1
+    return left
 
 
 def _end_screen(run: ReviewRun, key_reader, print_fn) -> None:

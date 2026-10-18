@@ -45,17 +45,17 @@ class Provider:
 
 
 REGISTRY: dict[str, Provider] = {
-    # Default for continuity: this is the model the extraction prompt was
-    # tested against (docs/SPEC.md §15 comments) — not the newest Haiku.
-    # Zen serves several model families, so the wire format stays
-    # model-name-derived (None), not pinned.
+    # claude-haiku-5-5: current cheap/fast default (review fix 2 — the old
+    # claude-haiku-4-5 default was verified to be the model name the smoke
+    # test tripped over). Zen serves several model families, so the wire
+    # format stays model-name-derived (None), not pinned.
     "opencode_zen": Provider(
         key="opencode_zen",
         name="OpenCode Zen",
         base_url="https://opencode.ai/zen/v1",
         api_key_env="OPENCODE_ZEN_API_KEY",
         wire_format=None,
-        default_model="claude-haiku-4-5",
+        default_model="claude-haiku-5-5",
         key_required=True,
         key_url="https://opencode.ai/auth",
     ),

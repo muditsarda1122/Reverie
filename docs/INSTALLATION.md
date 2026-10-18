@@ -32,9 +32,35 @@ work tree.
 reverie install                    # interactive
 reverie install --all              # every detected harness, non-interactive
 reverie install --only claude_code,codex --provider anthropic --no-verify
+reverie install --reconfigure      # ask the provider question again
 reverie install --dry-run          # print every planned write, change nothing
 reverie install --import memory.zip  # new machine: restore an export
 ```
+
+`--provider <key>` configures an LLM provider without prompting (see the
+provider table below); `--reconfigure` asks the provider question again even
+when `config.yaml` already carries an `llm` block (by default an existing
+block is kept and only re-verified); `--no-verify` skips the live ping.
+After the provider is configured the installer pings it once with the model
+name read from the written config. A failed ping makes the install **exit
+non-zero** with "Reverie is installed, but the LLM is not reachable." — the
+config and harness entries are still written; fix the key/model and re-run.
+
+| Provider (`--provider`) | Key environment variable | Default model |
+|---|---|---|
+| `opencode_zen` | `OPENCODE_ZEN_API_KEY` | `claude-haiku-5-5` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-haiku-5-5` |
+| `openai` | `OPENAI_API_KEY` | `gpt-5-mini` |
+| `google` | `GEMINI_API_KEY` (alias `GOOGLE_API_KEY`) | `gemini-3.8-flash` |
+| `openrouter` | `OPENROUTER_API_KEY` | `anthropic/claude-haiku-5.5` |
+| `ollama` | — (local, no key) | `qwen2.5-coder:14b` |
+
+`custom` has no installer flow: set `llm.*` by hand in
+`~/.reverie/config.yaml`. API keys are never written to disk — the
+installer only reads the environment. When a key is missing it says so
+(the variable name, that it checked this process's environment, and that a
+new terminal or `source ~/.zshrc` / `source ~/.bashrc` makes an exported
+key visible).
 
 What it does, in order:
 
@@ -49,13 +75,20 @@ What it does, in order:
 5. **LLM provider step** — detects registry provider keys in the
    environment, offers the detected one as the default, merges the resolved
    `llm` block into `~/.reverie/config.yaml`, prints the exact `export`
-   line, and pings the provider once (`--no-verify` skips; a failed ping is
-   reported, never fatal). Keys are never written to disk.
+   line, and pings the provider once with the configured model name. A
+   failed ping is reported and the install **exits 1**. If `config.yaml`
+   already contains an `llm` block it is kept and only re-verified —
+   `--provider` or `--reconfigure` are the explicit ways to change it. Keys
+   are never written to disk.
 6. **Per-harness summary** — exactly what was written and the next step in
    that harness.
 
 Re-running `reverie install` is safe and is the upgrade path: entries
-upsert idempotently, owned files refresh verbatim, your `config.yaml` is kept.
+upsert idempotently, owned files refresh verbatim, your `config.yaml` is
+kept. Every file the installer *creates* is recorded (path + hash) in
+`~/.reverie/install_manifest.json`, which lets `reverie uninstall` remove
+exactly what it made; a file that existed before install is never deleted —
+uninstall only removes Reverie's entry from it.
 
 ## What gets written per harness
 
@@ -96,7 +129,7 @@ Two commands are installed in every harness that has a user-level command
 mechanism: **`/reverie-review`** (asks the agent to list review candidates,
 show every candidate's full text, and relay only the decisions you state)
 and **`/reverie-status`** (the session + brain report through
-`reverie_summary`). Formats: plain markdown for Claude Code and Cursor;
+`summary`). Formats: plain markdown for Claude Code and Cursor;
 markdown + YAML frontmatter for OpenCode; frontmatter markdown under
 `~/.codex/prompts/` for Codex (custom prompts are deprecated upstream —
 still the user-level mechanism); TOML (`prompt` string) for Gemini CLI.
@@ -165,10 +198,13 @@ reverie uninstall [--delete-data] [--no-export] [--yes] [--dry-run]
 ```
 
 Shows the full plan first (harness entries + data plan) and asks ONE
-confirmation. Removes only Reverie's own entries (merge logic in reverse),
-keeps `~/.reverie` unless `--delete-data` (a final export is written
-outside it first), and prints the `pip uninstall reverie` command for the
-last step. See `docs/CLI.md` for every flag.
+confirmation. Removes only Reverie's own entries (merge logic in reverse)
+and deletes a whole file only when the install manifest shows Reverie
+created it and it is still unedited — a file that existed before install
+survives with just Reverie's entry removed. Keeps `~/.reverie` unless
+`--delete-data` (a final export is written outside it first), and prints
+the `pip uninstall reverie` command for the last step. See `docs/CLI.md`
+for every flag.
 
 ## Smoke test
 

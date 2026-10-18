@@ -662,9 +662,9 @@ def test_cli_status_shares_logic_with_ec_status(reverie_home, capsys,
     monkeypatch.setenv("REVERIE_REPO_PATH", "/repos/a")
     monkeypatch.setenv("REVERIE_BRANCH", "main")
     assert cli.main(["status"]) == 0
-    assert "No active session" in capsys.readouterr().out
+    assert "No session on branch main yet" in capsys.readouterr().out
     assert cli.main(["status", "--repo", "/repos/a", "--branch", "dev"]) == 0
-    assert "No active session" in capsys.readouterr().out
+    assert "No session on branch dev yet" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

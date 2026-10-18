@@ -19,28 +19,28 @@ Run the same checklist per harness. Time: ~15 minutes each.
 | 1.3 | Inspect what was written | The harness config contains the `reverie` MCP server entry (e.g. `~/.claude.json` has `mcpServers.reverie`; `~/.codex/config.toml` has `[mcp_servers.reverie]`; `~/.config/opencode/opencode.json` has `mcp.reverie`; `~/.cursor/mcp.json` has `mcpServers.reverie`; `~/.gemini/settings.json` has `mcpServers.reverie`) |
 | 1.4 | Check `~/.reverie/` | Contains `reverie.db`, `config.yaml`, `AGENTS.md` — no `commands/` directory (commands live per harness now) |
 | 1.5 | Check the harness command directory | `~/.claude/commands/reverie-review.md` + `reverie-status.md`, or `~/.codex/prompts/…`, or `~/.config/opencode/commands/…`, or `~/.cursor/commands/…`, or `~/.gemini/commands/*.toml` |
-| 1.6 | Start the harness fresh (restart it so the MCP server loads) | The harness's MCP log/panel shows a `reverie` server with 7 tools: `reverie_observe`, `reverie_query`, `reverie_summary`, `reverie_reconsolidate`, `reverie_set_repo_state`, `reverie_review_list`, `reverie_review_decide` |
+| 1.6 | Start the harness fresh (restart it so the MCP server loads) | The harness's MCP log/panel shows a `reverie` server with 7 tools: `observe`, `query`, `summary`, `reconsolidate`, `set_repo_state`, `review_list`, `review_decide` |
 
 ## 2. The agent asks to turn Reverie on
 
 | Step | Action | Expected |
 |---|---|---|
 | 2.1 | Open a scratch repo with your agent; ask it anything | The first Reverie tool call returns the enablement question instead of acting; the agent asks you exactly once: **"Reverie isn't on for this repo. Turn it on? (yes / not now / never)"** |
-| 2.2 | Answer **yes** | The agent records it (`reverie_set_repo_state`); no further asking this conversation |
+| 2.2 | Answer **yes** | The agent records it (`set_repo_state`); no further asking this conversation |
 | 2.3 | `reverie repos` | The repo is listed with `state: enabled` |
 
 ## 3. A conclusion gets captured
 
 | Step | Action | Expected |
 |---|---|---|
-| 3.1 | Give the agent a task with a non-obvious decision (e.g. "add caching but think hard about stale-then-invalidate ordering"), let it work | The agent calls `reverie_observe` with its reasoning; the tool result reports "Extracted N conclusion(s) into session memory (… rejected by the Lifting Test)" |
+| 3.1 | Give the agent a task with a non-obvious decision (e.g. "add caching but think hard about stale-then-invalidate ordering"), let it work | The agent calls `observe` with its reasoning; the tool result reports "Extracted N conclusion(s) into session memory (… rejected by the Lifting Test)" |
 | 3.2 | Ask the agent what it stored | It can describe the captured conclusion (counts/text via the tool result); not every response produces one — that's normal |
 
 ## 4. Both review paths show it
 
 | Step | Action | Expected |
 |---|---|---|
-| 4.1 | Type `/reverie-review` in the harness chat (Codex: `/prompts:reverie-review`) | The agent calls `reverie_review_list`, shows the candidate's full conclusion text, and asks what to do — it does NOT decide for you |
+| 4.1 | Type `/reverie-review` in the harness chat (Codex: `/prompts:reverie-review`) | The agent calls `review_list`, shows the candidate's full conclusion text, and asks what to do — it does NOT decide for you |
 | 4.2 | In a terminal: `reverie review` | The same candidate appears in the TUI, strongest first, one at a time with a/r/s hints. Press `q` to quit without deciding (leave it for step 5) |
 | 4.3 | (optional) `reverie status` | The brain report shows the pending-review count |
 
@@ -49,36 +49,38 @@ Run the same checklist per harness. Time: ~15 minutes each.
 | Step | Action | Expected |
 |---|---|---|
 | 5.1 | `reverie review`, press `a` on the candidate | "Accepted: promoted to the Canonical Brain" (a diffusion warning can appear offline — see limits). The candidate leaves the queue |
-| 5.2 | `reverie review` again | "No pending candidates — nothing to review." |
+| 5.2 | `reverie review` again | If the observe step produced more candidates, the next one opens as **"candidate 1 of N"** (the queue is re-counted after each decision). Only when the queue is truly empty: "No pending candidates — nothing to review." |
 
 ## 6. A new conversation retrieves it
 
 | Step | Action | Expected |
 |---|---|---|
-| 6.1 | Open a NEW conversation in the same repo; let the agent read the relevant code first, then ask a question that touches the stored conclusion | The agent calls `reverie_query` AFTER reading code; the result includes the accepted conclusion with its confidence, status and grounding references, framed as past understanding to verify |
+| 6.1 | Open a NEW conversation in the same repo; let the agent read the relevant code first, then ask a **decision-type question** about it — e.g. "why did we settle on the stale-then-invalidate ordering, and is that still the right call?" Retrieval is demand-driven: the agent calls `query` when it needs past conclusions to answer, not for every code question | The agent calls `query` AFTER reading code; the result includes the accepted conclusion with its **conclusion ID**, confidence, status and grounding references, framed as past understanding to verify |
 | 6.2 | Sanity-check the anti-anchoring framing | The agent verifies against the code rather than trusting the memory blindly |
 
 ## 7. A branch switch
 
 | Step | Action | Expected |
 |---|---|---|
-| 7.1 | `git checkout -b smoke-test-branch` in the scratch repo; continue the conversation | Session memory switches with the branch; nothing errors. Long-term memory stays shared |
-| 7.2 | `reverie status` | The active session now reports the new branch |
+| 7.1 | `git checkout -b smoke-test-branch` in the scratch repo, then make the agent perform a Reverie call (e.g. ask it to summarize what the brain knows) | Sessions resolve **on the first Reverie call**, not on the branch switch itself — a session starts for the new branch and nothing errors. Long-term memory stays shared |
+| 7.2 | `reverie status` | The first line names the repo and branch; the active session reports the new branch, with its start time in local time (offset shown) |
 | 7.3 | `git checkout -` (switch back) | Sessions resolve again per branch; no manual action needed |
+| 7.4 | (optional) `reverie status --all` | Lists every enabled repo's active session, one line each ("<repo> [<branch>] — active since …") |
 
 ## 8. `reverie disable`, then `reverie enable`
 
 | Step | Action | Expected |
 |---|---|---|
 | 8.1 | `reverie disable` | "Reverie is off for … Fully off: nothing is captured, retrieved, or injected here. Existing memory is kept…" |
-| 8.2 | Use the agent in the repo | Tool calls return the structured "disabled" response; nothing is captured |
-| 8.3 | `reverie enable` | Back on; everything intact (the accepted conclusion is still retrievable) |
+| 8.2 | `reverie status` | Says **"Reverie is off for this repo. Existing memory is kept; `reverie enable` turns it back on."** and does NOT report a session as active |
+| 8.3 | Use the agent in the repo | Tool calls return the structured "disabled" response; nothing is captured |
+| 8.4 | `reverie enable` | Back on; everything intact (the accepted conclusion is still retrievable) |
 
 ## 9. Uninstall — dry run, then real
 
 | Step | Action | Expected |
 |---|---|---|
-| 9.1 | `reverie uninstall --dry-run` | The full plan prints — every harness entry with its exact before/after — and NOTHING changes (harness configs still contain the entry) |
+| 9.1 | `reverie uninstall --dry-run` | One pass in future tense — every harness entry as "would remove …" with its exact before/after — and NOTHING changes (harness configs still contain the entry). The report ends "Dry run — nothing was removed." |
 | 9.2 | `reverie uninstall` | The same plan, then ONE confirmation question. Answer `y`. The harness entries, instruction references and command files are removed; `~/.reverie` is kept |
 | 9.3 | Restart the harness | The `reverie` server is gone; your other MCP servers are untouched |
 | 9.4 | `reverie uninstall --delete-data` (optional — destructive) | Plan shows the final-export path + removal; confirm once; `~/.reverie` is gone, an export ZIP remains |

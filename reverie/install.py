@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -57,18 +59,17 @@ from .llm import call_llm
 AGENTS_MD = """# Reverie — Agent Instructions
 
 Reverie is an MCP server providing engineering memory for your codebase.
-It stores engineering conclusions (the internal record is an Engineering
-Cognition Unit, ECU) — conclusions, not facts — and retrieves them when
+It stores engineering conclusions, not facts, and retrieves them when
 you need them.
 
 Reverie provides seven MCP tools:
-- reverie_observe: Extract engineering conclusions from your reasoning
-- reverie_query: Retrieve relevant engineering cognition
-- reverie_summary: Get brain statistics at session start
-- reverie_reconsolidate: Update a retrieved conclusion with new evidence
-- reverie_set_repo_state: Record the user's enablement answer for a repo
-- reverie_review_list: Show the user's pending review candidates
-- reverie_review_decide: Apply review decisions the user stated
+- observe: Extract engineering conclusions from your reasoning
+- query: Retrieve relevant engineering conclusions
+- summary: Get brain statistics at session start
+- reconsolidate: Update a retrieved conclusion with new evidence
+- set_repo_state: Record the user's enablement answer for a repo
+- review_list: Show the user's pending review candidates
+- review_decide: Apply review decisions the user stated
 
 ## Repo Path — Pass It on Every Call
 
@@ -84,7 +85,7 @@ a tool call reports that a repo is undecided, ask the user exactly:
 Reverie isn't on for this repo. Turn it on? (yes / not now / never)
 
 Ask this question AT MOST ONCE per conversation. Record the answer with
-reverie_set_repo_state:
+set_repo_state:
 - "yes" -> state="enabled"
 - "not now" -> state="not_now" (stays off for now; do not ask again in
   this conversation)
@@ -102,9 +103,9 @@ branches mid-conversation switches session memory; long-term memory
 stays shared across branches. Never suggest starting or stopping a
 session — there is nothing to start or stop.
 
-## When to Call reverie_observe
+## When to Call observe
 
-Call reverie_observe AFTER you:
+Call observe AFTER you:
 - Discover a non-obvious invariant or dependency
 - Debug a tricky issue and find the root cause
 - Make an architectural decision with rationale
@@ -114,20 +115,24 @@ Call reverie_observe AFTER you:
 Pass your reasoning trace (your thinking, decisions, and rationale) — not
 just the final code output. The Extractor lifts observations into conclusions.
 
-Do NOT call reverie_observe for:
+Do NOT call observe for:
 - Simple code changes with no insight
 - Things already captured in existing conclusions
 - Pure factual observations (e.g., "this function returns a string")
 - Every single response — only when you have engineering insight worth saving
 
-## When to Call reverie_query
+Call observe AT MOST ONCE per task — batch everything worth saving into a
+single call after you have the insight, not after every response — unless a
+separate new insight appears.
 
-Call reverie_query when you recognize a gap that past engineering cognition might fill.
-Read the relevant code files FIRST. Do NOT call reverie_query before you have grounded
+## When to Call query
+
+Call query when you recognize a gap that past engineering conclusions might fill.
+Read the relevant code files FIRST. Do NOT call query before you have grounded
 yourself in the repository. Reverie's memory is a supplement to your
 understanding, not a replacement for reading the code.
 
-Call reverie_query AFTER reading the code, when:
+Call query AFTER reading the code, when:
 - You're about to make a decision between multiple approaches
 - You're debugging and the cause isn't obvious from the code alone
 - You see a pattern in the code you don't recognise
@@ -137,7 +142,7 @@ Call reverie_query AFTER reading the code, when:
 - You're planning an architectural change and want to check for existing
   architectural decisions or constraints
 
-Do NOT call reverie_query:
+Do NOT call query:
 - Before you have read the relevant code files (this causes anchoring bias)
 - For simple code changes with no engineering insight needed
 - On every single response — only when you genuinely need past context
@@ -153,37 +158,39 @@ Pass a natural language query describing what you want to know. Be specific.
 than "dependency injection." The query is embedded and compared semantically —
 precise engineering questions retrieve better than single keywords.
 
-If reverie_query returns no results, proceed normally — this means Reverie
+If query returns no results, proceed normally — this means Reverie
 has no relevant memory yet. It starts empty and builds up over sessions.
 
-## When to Call reverie_reconsolidate
+## When to Call reconsolidate
 
-Call reverie_reconsolidate when you discover that a previously retrieved
+Call reconsolidate when you discover that a previously retrieved
 conclusion needs updating based on what you've found in the current
 codebase. This is how Reverie stays current — beliefs that are no longer
 accurate get corrected.
 
-Call reverie_reconsolidate when:
+Call reconsolidate when:
 - You verified a retrieved conclusion against the code and found it's no longer accurate
 - You discovered new evidence that strengthens a retrieved conclusion
 - You discovered new evidence that contradicts a retrieved conclusion
 - The code a conclusion is grounded in has changed, and the conclusion needs updating
 
-Pass the ECU ID (from the reverie_query result), your evidence (your reasoning about
+Pass the conclusion ID (from the query result), your evidence (your reasoning about
 what changed), and optionally the relationship (supports/contradicts/supersedes).
+Evidence must reference something the user can verify — a file path with
+line numbers, a test name, or a commit hash — not free-floating narrative.
 
-Do NOT call reverie_reconsolidate for:
-- New insights unrelated to a previously retrieved conclusion (use reverie_observe)
-- Conclusions you haven't retrieved in this session (reverie_query first)
+Do NOT call reconsolidate for:
+- New insights unrelated to a previously retrieved conclusion (use observe)
+- Conclusions you haven't retrieved in this session (query first)
 - Simple code changes with no impact on engineering conclusions
 
-If reverie_reconsolidate is not available, use reverie_observe to record
+If reconsolidate is not available, use observe to record
 the new finding — the Diffuser will handle the relationship at review time.
 
-## When to Call reverie_summary
+## When to Call summary
 
-Call reverie_summary ONCE at session start to see what Reverie already
-knows. This helps you decide whether to reverie_query for specific context
+Call summary ONCE at session start to see what Reverie already
+knows. This helps you decide whether to query for specific context
 before starting work. Returns brain statistics, not individual conclusions.
 
 If the response contains a pending-review backlog line (counts only),
@@ -197,11 +204,11 @@ Observations are stored as review candidates, never promoted
 automatically. The user reviews them:
 - in a terminal with `reverie review`, or
 - through you: when the user asks to see their Reverie candidates, call
-  reverie_review_list and show EVERY candidate's full conclusion text before
+  review_list and show EVERY candidate's full conclusion text before
   asking what they want to do.
 
 Rules for review through you:
-- Relay ONLY the decisions the user actually states, via reverie_review_decide.
+- Relay ONLY the decisions the user actually states, via review_decide.
 - NEVER decide on the user's behalf.
 - NEVER bulk-accept unless the user explicitly asked for that group.
 - Be honest about the limits: Reverie cannot verify who made a decision;
@@ -209,7 +216,7 @@ Rules for review through you:
 
 ## Reading Reverie Output
 
-When reverie_query returns conclusions, interpret them as follows:
+When query returns conclusions, interpret them as follows:
 
 ### Confidence levels:
 - High (>0.7): Reliable, act on this. Verify grounding if the decision is critical.
@@ -231,12 +238,12 @@ If the referenced file or symbol no longer exists, it may be stale.
 
 Reverie's Maintainer periodically verifies grounding references against the
 live repository and deprecates conclusions whose grounding has disappeared.
-Deprecated conclusions are not returned by reverie_query. If you discover
+Deprecated conclusions are not returned by query. If you discover
 that a conclusion's grounding is stale before the Maintainer has caught it,
-call reverie_reconsolidate to update it with what you've found.
+call reconsolidate to update it with what you've found.
 
 ### Warnings:
-reverie_query may return warnings (e.g., "2 conclusions have low
+query may return warnings (e.g., "2 conclusions have low
 confidence", "1 conclusion is challenged"). Read these warnings and adjust
 your trust accordingly.
 
@@ -261,7 +268,7 @@ Reverie's memory is framed as "past beliefs to verify against current
 code," NOT as authoritative context. Always verify conclusions against the
 live codebase.
 Do not anchor on past beliefs if the current code contradicts them.
-If you notice a contradiction, call reverie_observe to record the new finding.
+If you notice a contradiction, call observe to record the new finding.
 
 Observations are stored in the Session Brain, not the Canonical Brain. The
 user reviews the candidates — via `reverie review` in a terminal, or through you
@@ -275,17 +282,17 @@ uncertain — the review gate filters it.
 # user-level slash commands (Phase 3) — installed in each harness's own
 # location and format. Two commands: /reverie-review (ask the agent to list
 # review candidates and relay decisions) and /reverie-status (the session +
-# brain report through reverie_summary).
+# brain report through summary).
 # ---------------------------------------------------------------------------
 
 _REVIEW_COMMAND_BODY = """Review your pending Reverie conclusions (the human decides).
 
 Steps:
-1. Call reverie_review_list to get the pending candidates
+1. Call review_list to get the pending candidates
    (pass the workspace path as repo_path).
 2. Show EVERY candidate's full conclusion text, one at a time.
 3. Ask what the user wants to do with each (accept / reject / skip).
-4. Relay ONLY the decisions the user states, via reverie_review_decide
+4. Relay ONLY the decisions the user states, via review_decide
    (pass the review_token from the listing).
 5. Never decide on the user's behalf; never bulk-accept unless the user
    explicitly asked for that group.
@@ -294,7 +301,7 @@ Steps:
 _STATUS_COMMAND_BODY = """Show the current Reverie status.
 
 Steps:
-1. Call reverie_summary (pass the workspace path as repo_path).
+1. Call summary (pass the workspace path as repo_path).
 2. Report: brain statistics, session state for the current (repo, branch),
    and the pending-review count. Statistics only — never candidate
    contents unless the user asks for a review (use /reverie-review).
@@ -416,6 +423,22 @@ def _provider_guidance() -> str:
     return "\n".join(lines)
 
 
+def _existing_llm_config(reverie_home: Path) -> dict | None:
+    """The user's pre-existing ``llm`` block from ``config.yaml`` (None when
+    there is no usable one). Read BEFORE the install run writes anything so
+    a freshly bootstrapped default never counts as user configuration
+    (review fix 44)."""
+    path = reverie_home / "config.yaml"
+    if not path.exists():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return None
+    llm = data.get("llm") if isinstance(data, dict) else None
+    return llm if isinstance(llm, dict) and llm else None
+
+
 def _llm_block_config_plan(reverie_home: Path, home: Path, block: dict,
                            detail: str) -> PlannedWrite:
     """Merge a resolved ``llm`` block into ``~/.reverie/config.yaml`` (D42-style).
@@ -489,9 +512,15 @@ def _configure_provider(reverie_home: Path, home: Path, entry: providers.Provide
         if env_var:
             print_fn(f"  ✓ {env_var} is set")
         elif entry.key_required:
-            print_fn(f"  ✗ {entry.api_key_env} is not set — export it before "
-                     "using Reverie's LLM features:")
+            # review fix 43: this check runs in the SAME process as the ping,
+            # so name the variable, where it was checked, and how to make it
+            # visible here without touching any real shell config.
+            print_fn(f"  ✗ {entry.api_key_env} is not set in this process's "
+                     "environment — Reverie's LLM calls will fail until it is.")
             print_fn(f"      {_export_hint(entry)}")
+            print_fn("      Then open a new terminal (or run `source "
+                     "~/.zshrc` / `source ~/.bashrc` for your shell) and "
+                     "re-run `reverie install`.")
     if entry.key != "ollama" and ollama_path:
         print_fn(_OLLAMA_FALLBACK_NOTE)
 
@@ -508,24 +537,33 @@ def _live_ping(config) -> tuple[bool, str]:
 
 
 def _verify_provider(reverie_home: Path, *, dry_run: bool, no_verify: bool,
-                     verify_fn, print_fn) -> None:
-    """One live ping against the freshly written config (skippable)."""
+                     verify_fn, print_fn) -> bool:
+    """One live ping against the freshly written config (skippable).
+
+    Returns True when the provider answered (or verification was skipped)
+    and False only for a real ping failure — the caller reports "Reverie is
+    installed, but the LLM is not reachable" and exits non-zero (review
+    fix 1). The model name in the message comes from the config that was
+    actually written (review fix 2)."""
     if dry_run:
         print_fn("  [dry-run] would verify the provider with one cheap "
                  "live ping (skipped)")
-        return
+        return True
     if no_verify:
         print_fn("  (live verification skipped — --no-verify)")
-        return
-    print_fn("  Verifying with a live ping...")
+        return True
+    config = load_config(reverie_home / "config.yaml")
+    model = config.llm.model
+    print_fn(f"  Verifying {model} with a live ping...")
     ping = verify_fn or _live_ping
-    ok, detail = ping(load_config(reverie_home / "config.yaml"))
+    ok, detail = ping(config)
     if ok:
-        print_fn(f"  ✓ {detail!r} — Reverie's LLM features are live")
-    else:
-        print_fn(f"  ✗ Ping failed: {detail}")
-        print_fn("    The provider is configured; fix the key or model name "
-                 "and re-run `reverie install --provider <name> --no-verify`.")
+        print_fn(f"  ✓ {detail!r} — {model} is reachable")
+        return True
+    print_fn(f"  ✗ Ping failed for {model}: {detail}")
+    print_fn("    The provider is configured; fix the key or model name "
+             "and re-run `reverie install --provider <name>`.")
+    return False
 
 
 def _provider_menu(input_fn, print_fn, environ) -> str | None:
@@ -805,6 +843,49 @@ def _display(path: Path, home: Path) -> str:
         return str(path)
 
 
+#: Where install records the files IT created (ABS path → sha256 at write
+#: time). Uninstall deletes such a file only while the hash still matches;
+#: a file that existed before install is never recorded, so it is never
+#: deleted — only Reverie's entry is removed from it (review fix 39).
+INSTALL_MANIFEST_NAME = "install_manifest.json"
+
+
+def install_manifest_path(reverie_home: Path) -> Path:
+    return Path(reverie_home) / INSTALL_MANIFEST_NAME
+
+
+def load_install_manifest(reverie_home: Path) -> dict[str, str]:
+    """The installer-created file hashes ({} when absent/unreadable)."""
+    try:
+        data = json.loads(install_manifest_path(reverie_home).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    files = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(files, dict):
+        return {}
+    return {k: v for k, v in files.items() if isinstance(v, str)}
+
+
+def _record_install_manifest(reverie_home: Path,
+                             created_paths: list[Path]) -> None:
+    """Record sha256 hashes for files this run CREATED. Existing entries
+    keep their original hash (a user edit must never be re-owned), so this
+    is merge-only and idempotent."""
+    files = load_install_manifest(reverie_home)
+    for path in created_paths:
+        try:
+            digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        except OSError:
+            continue
+        files.setdefault(str(Path(path).resolve()), digest)
+    manifest = install_manifest_path(reverie_home)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps({"version": 1, "files": files}, indent=2) + "\n",
+        encoding="utf-8")
+
+
 def _json_merge(path: Path, home: Path, section: str, entry: dict,
                 detail: str, schema: str | None = None) -> PlannedWrite:
     """Merge ``entry`` into ``data[section]["reverie"]`` — never overwriting siblings."""
@@ -1061,9 +1142,9 @@ def _reference_block(agents_ref: str) -> str:
         f"## Reverie\n\n"
         f"Follow the Reverie agent instructions at {agents_ref}. Reverie is "
         f"an MCP server (`reverie`) providing engineering memory via "
-        f"reverie_observe, reverie_query, reverie_summary, "
-        f"reverie_reconsolidate, reverie_set_repo_state, "
-        f"reverie_review_list, and reverie_review_decide. Sessions are "
+        f"observe, query, summary, "
+        f"reconsolidate, set_repo_state, "
+        f"review_list, and review_decide. Sessions are "
         f"automatic per branch — never suggest starting or stopping a "
         f"session. Pass the workspace path as repo_path on every call. The "
         f"user reviews candidates via `reverie review` or by asking the "
@@ -1320,6 +1401,63 @@ _AGENTS_BY_KEY = {a.key: a for a in AGENTS}
 # ~/.reverie bootstrap (§28.2)
 # ---------------------------------------------------------------------------
 
+#: The retired installer default for the opencode_zen llm block (review fix
+#: 2 follow-up). Configs written before the default moved to Haiku 5.5 are
+#: migrated — only when they still carry exactly this model.
+OLD_DEFAULT_LLM_MODEL = "claude-haiku-4-5"
+
+#: One `model:` scalar inside the top-level `llm:` mapping.
+_LLM_MODEL_LINE = re.compile(r"^(\s+model\s*:\s*)(\S+)(.*)$")
+
+
+def _migrate_old_llm_default(text: str) -> str | None:
+    """Migrate config.yaml whose opencode_zen block still names the retired
+    installer default (review fix 2, follow-up).
+
+    Returns the rewritten text, or None when the migration does not apply.
+    Only that one scalar is replaced: comments, key order, quoting, spacing
+    and every other byte survive untouched. Any other provider or model is
+    the user's explicit choice and is left alone.
+    """
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    llm = data.get("llm")
+    if not isinstance(llm, dict):
+        return None
+    if llm.get("provider") != "opencode_zen":
+        return None
+    if llm.get("model") != OLD_DEFAULT_LLM_MODEL:
+        return None
+    new_model = DEFAULT_CONFIG["llm"]["model"]
+    lines = text.splitlines(keepends=True)
+    in_block = False
+    for i, line in enumerate(lines):
+        body = line.rstrip("\r\n")
+        ending = line[len(body):]
+        if body and not body[0].isspace() and not body.startswith("#"):
+            in_block = bool(re.match(r"llm\s*:", body))
+            continue
+        if not in_block:
+            continue
+        match = _LLM_MODEL_LINE.match(body)
+        if match is None:
+            continue
+        token = match.group(2)
+        quote, value = "", token
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+            quote, value = token[0], token[1:-1]
+        if value != OLD_DEFAULT_LLM_MODEL:
+            return None           # a hand-picked model line — keep the file
+        lines[i] = (f"{match.group(1)}{quote}{new_model}{quote}"
+                    f"{match.group(3)}{ending}")
+        return "".join(lines)
+    return None
+
+
 def _reverie_home_plans(home: Path, reverie_home: Path) -> list[PlannedWrite]:
     db = reverie_home / "reverie.db"
     plans = [
@@ -1331,9 +1469,17 @@ def _reverie_home_plans(home: Path, reverie_home: Path) -> list[PlannedWrite]:
     ]
     cfg = reverie_home / "config.yaml"
     if cfg.exists():
-        plans.append(PlannedWrite(
-            cfg, "unchanged", None,
-            f"{_display(cfg, home)} already exists — kept"))
+        migrated = _migrate_old_llm_default(cfg.read_text(encoding="utf-8"))
+        if migrated is not None:
+            plans.append(PlannedWrite(
+                cfg, "update", migrated,
+                f"Updated {_display(cfg, home)}: llm.model "
+                f"{OLD_DEFAULT_LLM_MODEL} → {DEFAULT_CONFIG['llm']['model']} "
+                "(the old installer default; only this value changed)"))
+        else:
+            plans.append(PlannedWrite(
+                cfg, "unchanged", None,
+                f"{_display(cfg, home)} already exists — kept"))
     else:
         plans.append(PlannedWrite(
             cfg, "create",
@@ -1413,6 +1559,7 @@ def _select_interactive(detected: list[AgentSpec], input_fn, print_fn
 def run(*, home: Path | None = None, reverie_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
         dry_run: bool = False, provider: str | None = None,
+        reconfigure: bool = False,
         no_verify: bool = False, verify_fn=None, import_file: str | None = None,
         check_fn=None, input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
@@ -1420,9 +1567,15 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     """§28.8 `reverie install`. Returns 0 on success, raises InstallError otherwise.
 
     ``provider`` (--provider) selects the LLM provider non-interactively
-    (registry key; ``ollama`` runs the D42 local setup). ``no_verify``
-    skips the live ping; ``verify_fn`` (returning ``(ok, detail)``) replaces
-    the ping in tests. ``runner`` executes the Ollama model pull (injectable;
+    (registry key; ``ollama`` runs the D42 local setup). ``reconfigure``
+    (--reconfigure) asks the provider question again even when
+    ``config.yaml`` already carries an ``llm`` block; without it an
+    existing block is kept and only re-verified (review fix 44).
+    ``no_verify`` skips the live ping; ``verify_fn`` (returning
+    ``(ok, detail)``) replaces the ping in tests. A failed ping makes the
+    run return 1 with "Reverie is installed, but the LLM is not
+    reachable" — no "Reverie is ready!" (review fix 1). ``runner``
+    executes the Ollama model pull (injectable;
     failures are reported, never fatal). ``check_fn`` replaces the
     end-of-install MCP server check in tests (signature ``(command, args,
     env) -> (ok, detail)``; the real one launches each written command). A
@@ -1435,6 +1588,10 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     """
     home = Path(home) if home else Path.home()
     reverie_home = Path(reverie_home) if reverie_home else _default_reverie_home()
+    # Read BEFORE anything is written: only a pre-existing llm block counts
+    # as user configuration (review fix 44).
+    existing_llm = _existing_llm_config(reverie_home)
+    config_existed = (reverie_home / "config.yaml").exists()
 
     print_fn("\nReverie — Installation\n")
     if dry_run:
@@ -1481,16 +1638,28 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             writes.append((agent.name, write))
 
     current_agent: str | None = None
+    created_paths: list[Path] = []
     for agent_name, write in writes:
         if agent_name != current_agent:
             print_fn(f"\nConfiguring {agent_name}...")
             current_agent = agent_name
         _emit(write, home, dry_run, print_fn)
+        if not dry_run and write.action in ("create", "create-db"):
+            created_paths.append(write.path)
 
     # -- ~/.reverie bootstrap (§28.2) -------------------------------------------
-    print_fn(f"\nCreating {_display(reverie_home, home)}/ directory...")
+    # review fix 48: only announce directory creation when it happens.
+    if not reverie_home.exists():
+        print_fn(f"\nCreating {_display(reverie_home, home)}/ directory...")
     for write in _reverie_home_plans(home, reverie_home):
         _emit(write, home, dry_run, print_fn)
+        if not dry_run and write.action in ("create", "create-db"):
+            created_paths.append(write.path)
+    if config_existed and not dry_run:
+        # review fix 2 (follow-up): the plan above may have migrated an old
+        # installer-default llm.model. Keep the snapshot in step with disk so
+        # the messages below and the re-verify ping use the migrated config.
+        existing_llm = _existing_llm_config(reverie_home) or existing_llm
 
     # -- brain import (feat/flow --import, D58) -----------------------------
     if import_file is not None and not dry_run:
@@ -1501,6 +1670,7 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     ollama_path = which(OLLAMA_BINARY)
 
     chosen: providers.Provider | None = None
+    verify_existing = False
     if provider is not None:
         entry = providers.get(provider)
         if entry is None or provider == "custom":
@@ -1509,6 +1679,17 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
                 f"{', '.join(providers.provider_names())}"
             )
         chosen = entry
+    elif existing_llm is not None and not reconfigure:
+        # review fix 44: a config that already carries an llm block is the
+        # user's setup — keep it and only re-verify. --provider and
+        # --reconfigure are the explicit ways to change it.
+        keep_provider = existing_llm.get("provider") or "(provider unset)"
+        keep_model = existing_llm.get("model") or "(model unset)"
+        print_fn(f"  · already configured for {keep_provider} — keeping "
+                 f"{_display(reverie_home / 'config.yaml', home)}")
+        print_fn(f"    ({keep_model}; pass --provider <name> or "
+                 "--reconfigure to change it)")
+        verify_existing = True
     else:
         detected = [
             key for key in providers.MENU_KEYS
@@ -1532,7 +1713,19 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             menu_choice = _provider_menu(input_fn, print_fn, environ)
             chosen = providers.get(menu_choice)
 
-    if chosen is None:
+    ping_ok = True
+    if chosen is not None:
+        _configure_provider(reverie_home, home, chosen, dry_run=dry_run,
+                            print_fn=print_fn, environ=environ,
+                            runner=runner, ollama_path=ollama_path)
+        ping_ok = _verify_provider(reverie_home, dry_run=dry_run,
+                                   no_verify=no_verify, verify_fn=verify_fn,
+                                   print_fn=print_fn)
+    elif verify_existing:
+        ping_ok = _verify_provider(reverie_home, dry_run=dry_run,
+                                   no_verify=no_verify, verify_fn=verify_fn,
+                                   print_fn=print_fn)
+    else:
         print_fn("\nNo provider configured — Reverie's LLM features stay off "
                  "until one is set.")
         print_fn(_provider_guidance())
@@ -1543,12 +1736,11 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             print_fn(_OLLAMA_CONFIG_SNIPPET)
         else:
             print_fn(_OLLAMA_INSTALL_INSTRUCTIONS)
-    else:
-        _configure_provider(reverie_home, home, chosen, dry_run=dry_run,
-                            print_fn=print_fn, environ=environ,
-                            runner=runner, ollama_path=ollama_path)
-        _verify_provider(reverie_home, dry_run=dry_run, no_verify=no_verify,
-                         verify_fn=verify_fn, print_fn=print_fn)
+
+    # Record what this run created (folded in, hashes as written) so the
+    # uninstaller can distinguish Reverie-created files from user files.
+    if not dry_run:
+        _record_install_manifest(reverie_home, created_paths)
 
     if dry_run:
         if selected:
@@ -1590,6 +1782,13 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             print_fn("The harness entries above point at a command that does "
                      "not run. Fix it, then re-run `reverie install`.")
             return 1
+
+    # -- LLM reachability decides success (review fix 1) -------------------
+    if not ping_ok:
+        print_fn("\nReverie is installed, but the LLM is not reachable.")
+        print_fn("  The harness entries are in place. Fix the key or model "
+                 "above, then re-run `reverie install` to re-verify.")
+        return 1
 
     # -- per-harness summary: what was written, what to do next -----------
     print_fn("\nReverie is ready!\n")
@@ -1674,6 +1873,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--provider", default=None, metavar="PROVIDER",
                         help="LLM provider to configure without prompting "
                              f"({', '.join(providers.provider_names())})")
+    parser.add_argument("--reconfigure", action="store_true",
+                        help="ask the LLM provider question again even when "
+                             "config.yaml already carries an llm block "
+                             "(by default an existing configuration is kept "
+                             "and only re-verified)")
     parser.add_argument("--no-verify", action="store_true",
                         help="skip the live ping after provider setup")
     parser.add_argument("--import", dest="import_file", metavar="FILE",
@@ -1691,6 +1895,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.only else None,
             dry_run=args.dry_run,
             provider=args.provider,
+            reconfigure=args.reconfigure,
             no_verify=args.no_verify,
             import_file=args.import_file,
         )

@@ -145,7 +145,7 @@ class TestConfigResolution:
 
     def test_default_config_is_unchanged_without_user_file(self, tmp_path):
         cfg = load_config(tmp_path / "missing.yaml")
-        assert cfg.llm.model == "claude-haiku-4-5"
+        assert cfg.llm.model == "claude-haiku-5-5"
         assert cfg.llm.provider == "opencode_zen"
         assert cfg.llm.wire_format is None
 
@@ -153,13 +153,13 @@ class TestConfigResolution:
         cfg = self._load(tmp_path, "llm:\n  provider: custom\n")
         assert cfg.llm.provider == "custom"
         # fields stay as written in the defaults (today's behaviour)
-        assert cfg.llm.model == "claude-haiku-4-5"
+        assert cfg.llm.model == "claude-haiku-5-5"
         assert cfg.llm.base_url == "https://opencode.ai/zen/v1"
 
     def test_unknown_provider_name_is_left_alone(self, tmp_path):
         cfg = self._load(tmp_path, "llm:\n  provider: vllm\n")
         assert cfg.llm.provider == "vllm"
-        assert cfg.llm.model == "claude-haiku-4-5"      # merged defaults
+        assert cfg.llm.model == "claude-haiku-5-5"      # merged defaults
 
     def test_ollama_provider_clears_key_env(self, tmp_path):
         cfg = self._load(tmp_path, "llm:\n  provider: ollama\n")
@@ -176,7 +176,7 @@ class TestConfigResolution:
 
     def test_zen_provider_only_matches_defaults(self, tmp_path):
         cfg = self._load(tmp_path, "llm:\n  provider: opencode_zen\n")
-        assert cfg.llm.model == "claude-haiku-4-5"
+        assert cfg.llm.model == "claude-haiku-5-5"
         assert cfg.llm.base_url == "https://opencode.ai/zen/v1"
         assert cfg.llm.api_key_env == "OPENCODE_ZEN_API_KEY"
         assert cfg.llm.wire_format is None              # multi-family: name rule
@@ -196,3 +196,41 @@ class TestConfigResolution:
         assert cfg.llm.models.extraction is None
         assert cfg.llm.models.classification is None
         assert cfg.llm.models.mode_detection is None
+
+
+class TestInstallationDoc:
+    """docs/INSTALLATION.md's provider table must exactly match the registry
+    (review fix 3): same keys, env vars, aliases and default models."""
+
+    def _doc(self) -> str:
+        from pathlib import Path
+        return (Path(__file__).resolve().parent.parent
+                / "docs" / "INSTALLATION.md").read_text(encoding="utf-8")
+
+    def test_provider_table_matches_registry(self):
+        doc = self._doc()
+        table = doc[doc.index("| Provider (`--provider`) |"):]
+        rows = {}
+        for line in table.splitlines()[2:]:
+            if not line.startswith("|"):
+                break
+            rows[line.split("|")[1].strip().strip("`")] = line
+        doc_keys = set(rows)
+        registry_keys = {k for k in REGISTRY if k != "custom"}
+        assert doc_keys == registry_keys, (
+            f"doc keys {doc_keys ^ registry_keys} differ from the registry")
+        for key, row in rows.items():
+            entry = REGISTRY[key]
+            if entry.api_key_env:
+                assert f"`{entry.api_key_env}`" in row, key
+            for alias in entry.key_aliases:
+                assert f"`{alias}`" in row, key
+            if entry.default_model:
+                assert f"`{entry.default_model}`" in row, key
+
+    def test_install_flags_documented(self):
+        doc = self._doc()
+        for flag in ("--provider", "--reconfigure", "--no-verify",
+                     "--dry-run", "--import", "--delete-data", "--no-export",
+                     "--yes"):
+            assert flag in doc, flag

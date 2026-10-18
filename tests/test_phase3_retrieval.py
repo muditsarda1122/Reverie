@@ -403,7 +403,7 @@ class TestRanking:
         assert groups["A"]["core_ecu"]["status"] == "challenged"
         assert "⚠️ This cognition is challenged" in challenged["formatted"]
         assert f"See: [B]" in challenged["formatted"]
-        assert any("1 ECU is challenged" == w for w in challenged["warnings"])
+        assert any("1 conclusion is challenged" == w for w in challenged["warnings"])
 
     def test_mode_reweighting(self, brain, model):
         text = "PostgreSQL was chosen over MongoDB for flexible indexing needs"
@@ -614,7 +614,7 @@ class TestResultFormat:
             brain, "does the session store lose data on deploy",
             mode="investigation", embedding_model=model)
         text = result["formatted"]
-        assert "⚠️ Low confidence — this cognition is uncertain." in text
+        assert "⚠️ Low confidence — this conclusion is uncertain." in text
         assert "⚠️ Very low confidence" in text
         assert any("low confidence" in w for w in result["warnings"])
         labels = {g["core_ecu"]["id"]: g["core_ecu"]["confidence_label"]
@@ -626,7 +626,7 @@ class TestResultFormat:
                                    embedding_model=model)
         assert empty["status"] == "ok"
         assert empty["groups_retrieved"] == 0
-        assert "No relevant engineering cognition" in empty["message"]
+        assert "No relevant engineering conclusions" in empty["message"]
         assert "=== End Engineering Cognition ===" in empty["formatted"]
 
         insert(brain, model, make_ecu(
@@ -656,6 +656,22 @@ class TestResultFormat:
             retrieval.retrieve(brain, "q", scope="nonsense", embedding_model=model)
         with pytest.raises(ValueError):
             retrieval.retrieve(brain, "  ", mode="debugging", embedding_model=model)
+
+
+def test_format_group_includes_conclusion_id():
+    """Item 38: every group prints its conclusion id right after the
+    conclusion — the handle the agent passes to reconsolidate."""
+    ecu = make_ecu("Optimistic token refresh avoids retry storms")
+    ecu["id"] = "11111111-2222-3333-4444-555555555555"
+    group = {
+        "core": {"ecu": ecu, "rank": 0.9, "brain": "canonical"},
+        "supporting_evidence": [], "contradictions": [],
+        "dependencies": [], "superseded_by": [], "truncated": False,
+    }
+    text = retrieval._format_group(group, 1, get_config())
+    assert f'ID: {ecu["id"]}' in text
+    assert text.index("CONCLUSION:") < text.index("ID:") < \
+        text.index("CONFIDENCE:")
 
 
 # ---------------------------------------------------------------------------

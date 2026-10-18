@@ -10,21 +10,21 @@ pinned venv): ``initialize``, ``notifications/initialized`` (ignored), ``ping``,
 payload as JSON text; ``isError`` mirrors the payload's ``status == "error"``.
 
 Tools (feat/flow surface — the §28.3 four plus review/enablement, D55-D57):
-  - ``reverie_observe``       — extract + lightweight-diffuse reasoning into the
+  - ``observe``       — extract + lightweight-diffuse reasoning into the
                            Session Brain (§28.13)
-  - ``reverie_query``         — demand-driven retrieval over both brains (§11.3)
-  - ``reverie_summary``   — brain statistics at session start (§11.3 awareness
+  - ``query``         — demand-driven retrieval over both brains (§11.3)
+  - ``summary``   — brain statistics at session start (§11.3 awareness
                            without anchoring)
-  - ``reverie_reconsolidate`` — re-evaluate a retrieved ECU with new evidence
+  - ``reconsolidate`` — re-evaluate a retrieved ECU with new evidence
                            (design doc §5.2/D37; writes to the Canonical
                             Brain immediately — the ECU was reviewed when it
                             entered). Only ECUs retrieved in this session are
                             labile (D39): the server marks surfaced canonical
-                            ids during reverie_query and refuses others.
-  - ``reverie_set_repo_state``— record the user's answer to the first-time
+                            ids during query and refuses others.
+  - ``set_repo_state``— record the user's answer to the first-time
                            enablement question (or turn Reverie off/on here)
-  - ``reverie_review_list``   — the review queue page, for the agent to relay
-  - ``reverie_review_decide`` — apply decisions the USER stated, through the
+  - ``review_list``   — the review queue page, for the agent to relay
+  - ``review_decide`` — apply decisions the USER stated, through the
                            review gate (channel "agent", D57)
 
 Repo enablement (feat/flow, D55): every tool call first resolves the repo
@@ -39,10 +39,10 @@ Automatic sessions (feat/flow, D56 — replaces D15 for the MCP surface):
 in an enabled repo every tool call resolves or creates the session for
 (repo, branch). The database stays the source of truth (WAL keeps the
 CLI/MCP processes consistent); sessions are never closed by the user —
-review is independent of sessions (``reverie_review_list``/``reverie_review_decide``
+review is independent of sessions (``review_list``/``review_decide``
 and the ``reverie review`` TUI work across every session, branch and repo).
 
-After each successful reverie_query the server writes retrieval metadata
+After each successful query the server writes retrieval metadata
 (``last_retrieved`` / ``retrieval_count``, canonical ECUs only — D17) and
 applies retrieval reinforcement (design doc §2.1): the STORED confidence is
 bumped by ``alpha_retrieval`` in log-odds space and ``last_reinforced`` is
@@ -66,7 +66,7 @@ be launched outside any work tree) — and reused by both the startup run
 and the background thread. Grounding runs are additionally throttled per
 repo (72h) inside the task itself.
 
-commit_hash provenance (D49, design doc §4): every reverie_observe stamps the
+commit_hash provenance (D49, design doc §4): every observe stamps the
 session repo's git HEAD into each extracted ECU's grounding before storage,
 so §3.3's informational commit-staleness check has input.
 """
@@ -111,19 +111,19 @@ SERVER_NAME = "reverie"
 #: self-contained (Codex's documented guidance).
 SERVER_INSTRUCTIONS = """\
 Reverie is engineering memory for coding agents. Contract:
-- Query only AFTER reading the relevant code (reverie_query) — never anchor \
+- Query only AFTER reading the relevant code (query) — never anchor \
 on injected memory before grounding yourself; results are past understanding \
 to verify against the current code, not authoritative context.
 - Capture engineering conclusions when you find a non-obvious invariant, root \
-cause, decision, or wrong assumption (reverie_observe) — not for simple code \
+cause, decision, or wrong assumption (observe) — not for simple code \
 changes.
 - The user reviews every conclusion before it reaches long-term memory. Show \
 candidates fully and relay only decisions the user states \
-(reverie_review_list / reverie_review_decide) — never decide reviews for the \
+(review_list / review_decide) — never decide reviews for the \
 user.
 - The first time a tool reports this repo as undecided, ask the user once: \
 "Reverie isn't on for this repo. Turn it on? (yes / not now / never)" — and \
-record the answer with reverie_set_repo_state. Ask at most once per repo \
+record the answer with set_repo_state. Ask at most once per repo \
 per conversation.
 - Pass the workspace path as repo_path on every call.\
 """
@@ -144,7 +144,7 @@ NO_ECUS_FOUND = (
     "rephrasing. The brain may not have relevant cognition for this topic yet."
 )
 
-#: How long a review_token stays valid for reverie_review_decide (feat/flow).
+#: How long a review_token stays valid for review_decide (feat/flow).
 REVIEW_TOKEN_TTL_SECONDS = 3600
 
 #: D49 (design doc §4): how long to wait for ``git rev-parse HEAD`` when
@@ -196,14 +196,18 @@ in the Session Brain for immediate use. Call this AFTER you:
 - Make an architectural decision with rationale
 - Discover that a previous assumption was wrong
 
-Do NOT call reverie_observe for:
+Do NOT call observe for:
 - Simple code changes with no insight
 - Things already captured in existing conclusions
 - Pure factual observations (the Extractor handles the lifting to conclusions)
 
-reverie_observe runs the Extractor on your reasoning, produces candidate
+Call observe AT MOST ONCE per task — batch everything worth saving into a
+single call after you have the insight, not after every response — unless a
+separate new insight appears.
+
+observe runs the Extractor on your reasoning, produces candidate
 conclusions, and stores them in the Session Brain. They are immediately
-available for retrieval via reverie_query. The USER reviews these candidates
+available for retrieval via query. The USER reviews these candidates
 (via `reverie review` or by asking you to show them) — never promote or judge
 them yourself.
 
@@ -211,7 +215,7 @@ Sessions are automatic: in an enabled repo the session for the current
 branch resolves or is created by this call. If the response asks you to
 turn Reverie on for this repo, ask the user the question it contains
 exactly once per conversation, and record their answer with
-reverie_set_repo_state. Pass the workspace path as 'repo_path' on every call."""
+set_repo_state. Pass the workspace path as 'repo_path' on every call."""
 
 _QUERY_DESCRIPTION = """\
 Retrieve engineering conclusions relevant to your current task. Call this
@@ -260,16 +264,16 @@ branch and repo, strongest first). Use this when the user asks to see
 their Reverie candidates or wants to review memory. Show EVERY candidate's
 full conclusion text to the user before asking for their decisions, relay
 only the decisions the user actually states, and never decide on their
-behalf. Returns a short-lived review_token — pass it to reverie_review_decide.
+behalf. Returns a short-lived review_token — pass it to review_decide.
 Pass the workspace path as 'repo_path' to scope to the current repo."""
 
 _REVIEW_DECIDE_DESCRIPTION = """\
 Apply review decisions the USER stated in the chat (accept | reject | skip,
 optionally with edited_cognition they dictated). Requires the review_token
-from reverie_review_decide's sibling reverie_review_list; only candidates that were
-in that listing can be decided. Bulk-accepting every candidate is refused
-— reverie review must stay per-candidate or per-group, on the user's
-explicit instruction. Pass the workspace path as 'repo_path'."""
+returned by review_list; only candidates that appeared in that listing can
+be decided. Bulk-accepting every candidate is refused — Reverie review must
+stay per-candidate or per-group, on the user's explicit instruction. Pass
+the workspace path as 'repo_path'."""
 
 _RECONSOLIDATE_DESCRIPTION = """\
 Re-evaluate a previously retrieved conclusion in light of new evidence you discovered
@@ -284,7 +288,7 @@ immediately (the conclusion was already human-reviewed when it entered the
 Canonical Brain — reconsolidation is a confidence/evidence update, not a new
 conclusion entering the brain).
 
-Call reverie_reconsolidate when:
+Call reconsolidate when:
 - You verified a retrieved conclusion against the code and found it's no longer accurate
 - You discovered new evidence that strengthens a retrieved conclusion (it should be
   more confident)
@@ -292,11 +296,20 @@ Call reverie_reconsolidate when:
   less confident or superseded)
 - The code a conclusion is grounded in has changed, and the conclusion needs updating
 
-Do NOT call reverie_reconsolidate for:
-- New insights that aren't related to a previously retrieved conclusion (use reverie_observe)
+Do NOT call reconsolidate for:
+- New insights that aren't related to a previously retrieved conclusion (use observe)
 - Conclusions you haven't retrieved in this session (reconsolidation requires prior
   retrieval — you can't reconsolidate something you haven't looked at)
-- Simple code changes with no impact on engineering conclusions"""
+- Simple code changes with no impact on engineering conclusions
+
+Evidence standard: the evidence you pass must reference something the
+user can verify — a file path with line numbers, a test name, or a commit
+hash. Free-floating narrative ("the user said so") is not evidence.
+
+Refusals name the failed check (reason field): not_found (no conclusion
+with that id), not_canonical (it is still an unreviewed session
+candidate), not_labile (it was not retrieved in this session — query
+first)."""
 
 def _schema(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties,
@@ -326,7 +339,7 @@ def _observe_schema() -> dict:
         "reasoning_trace": {
             "type": "string",
             "description": (
-                "Your reasoning trace since the last reverie_observe call. "
+                "Your reasoning trace since the last observe call. "
                 "Include your thinking, decisions, and rationale — not "
                 "just the final code output."
             ),
@@ -401,7 +414,7 @@ def _reconsolidate_schema() -> dict:
             "type": "string",
             "enum": list(reconsolidation.VALID_RELATIONSHIPS),
             "description": (
-                "How does the new evidence relate to the ECU? If "
+                "How does the new evidence relate to the conclusion? If "
                 "omitted, the Diffuser will classify the relationship."
             ),
         },
@@ -450,7 +463,7 @@ def _review_decide_schema() -> dict:
     return _schema({
         "review_token": {
             "type": "string",
-            "description": "The token from reverie_review_list.",
+            "description": "The token from review_list.",
         },
         "decisions": {
             "type": "array",
@@ -481,37 +494,37 @@ def _review_decide_schema() -> dict:
 
 TOOLS = [
     {
-        "name": "reverie_observe",
+        "name": "observe",
         "description": _OBSERVE_DESCRIPTION,
         "inputSchema": _observe_schema(),
     },
     {
-        "name": "reverie_query",
+        "name": "query",
         "description": _QUERY_DESCRIPTION,
         "inputSchema": _query_schema(),
     },
     {
-        "name": "reverie_summary",
+        "name": "summary",
         "description": _SUMMARY_DESCRIPTION,
         "inputSchema": _summary_schema(),
     },
     {
-        "name": "reverie_reconsolidate",
+        "name": "reconsolidate",
         "description": _RECONSOLIDATE_DESCRIPTION,
         "inputSchema": _reconsolidate_schema(),
     },
     {
-        "name": "reverie_set_repo_state",
+        "name": "set_repo_state",
         "description": _REPO_STATE_DESCRIPTION,
         "inputSchema": _set_repo_state_schema(),
     },
     {
-        "name": "reverie_review_list",
+        "name": "review_list",
         "description": _REVIEW_LIST_DESCRIPTION,
         "inputSchema": _review_list_schema(),
     },
     {
-        "name": "reverie_review_decide",
+        "name": "review_decide",
         "description": _REVIEW_DECIDE_DESCRIPTION,
         "inputSchema": _review_decide_schema(),
     },
@@ -641,19 +654,19 @@ class ReverieServer:
         name = params.get("name")
         arguments = params.get("arguments") or {}
         handler = {
-            "reverie_observe": self._tool_observe,
-            "reverie_query": self._tool_query,
-            "reverie_summary": self._tool_summary,
-            "reverie_reconsolidate": self._tool_reconsolidate,
-            "reverie_set_repo_state": self._tool_set_repo_state,
-            "reverie_review_list": self._tool_review_list,
-            "reverie_review_decide": self._tool_review_decide,
+            "observe": self._tool_observe,
+            "query": self._tool_query,
+            "summary": self._tool_summary,
+            "reconsolidate": self._tool_reconsolidate,
+            "set_repo_state": self._tool_set_repo_state,
+            "review_list": self._tool_review_list,
+            "review_decide": self._tool_review_decide,
         }.get(name)
         if handler is None:
             return self._error(
                 msg_id, INVALID_PARAMS,
-                f"Unknown tool {name!r}. Available tools: reverie_observe, "
-                "reverie_query, reverie_summary, reverie_reconsolidate.",
+                f"Unknown tool {name!r}. Available tools: observe, "
+                "query, summary, reconsolidate.",
             )
         try:
             payload = handler(arguments)
@@ -729,7 +742,7 @@ class ReverieServer:
                 "error": repos.FIRST_TIME_QUESTION,
                 "instructions": (
                     "Ask the user this exact question once per conversation. "
-                    "Record their answer with reverie_set_repo_state: 'yes' -> "
+                    "Record their answer with set_repo_state: 'yes' -> "
                     "enabled, 'not now' -> not_now, 'never' -> disabled. If "
                     "they say 'not now', do not ask again in this "
                     "conversation and continue without Reverie."
@@ -822,10 +835,10 @@ class ReverieServer:
             return {
                 "status": "error",
                 "session_active": True,
-                "error": "reverie_observe requires 'user_prompt' and "
+                "error": "observe requires 'user_prompt' and "
                          "'reasoning_trace' (non-empty strings). Pass the "
                          "user's prompt and your reasoning since the last "
-                         "reverie_observe call.",
+                         "observe call.",
             }
         interaction = {
             "prompt": user_prompt,
@@ -846,12 +859,12 @@ class ReverieServer:
             result, ids = extractor.extract_and_store_session(
                 brain, row["id"], interaction,
                 embedding_model=self.embedding_model, config=self.config,
-                commit_hash=commit_hash,
+                commit_hash=commit_hash, repo_path=row["repo_path"],
             )
         except ExtractorError as exc:
             # feat/providers: the interaction is persisted so the failure
             # costs nothing — it is retried at the next successful
-            # reverie_observe (or via `reverie retry`).
+            # observe (or via `reverie retry`).
             pending_id = pending.save_pending_extraction(
                 brain, row, interaction, str(exc),
                 commit_hash=commit_hash,
@@ -859,7 +872,7 @@ class ReverieServer:
             error = EXTRACTION_FAILED.format(reason=exc) + (
                 f" The interaction was saved locally (pending id "
                 f"{pending_id[:8]}) and will be retried automatically at "
-                "the next successful reverie_observe, or via `reverie retry`."
+                "the next successful observe, or via `reverie retry`."
             )
             return {"status": "error", "session_active": True,
                     "error": error, "pending_extraction_id": pending_id}
@@ -886,6 +899,7 @@ class ReverieServer:
         )
 
         count = brain.count_session_ecus(row["id"])
+        plural = "s" if result.rejected_count != 1 else ""
         if ids:
             message = (
                 f"Extracted {len(ids)} conclusion{'s' if len(ids) != 1 else ''} into "
@@ -894,8 +908,10 @@ class ReverieServer:
             )
         else:
             message = (
-                "No engineering conclusions found in this response. This is "
-                "not an error — not every response produces ECUs."
+                f"Extracted 0 conclusions ({result.rejected_count} candidate{plural} "
+                "rejected by the Lifting Test). This is not an error — not "
+                f"every response produces conclusions. Session memory now "
+                f"holds {count}."
             )
         if retry_summary["recovered"]:
             message += (
@@ -923,7 +939,7 @@ class ReverieServer:
         }
 
     def _tool_query(self, args: dict) -> dict:
-        """The §11.3 demand-driven retrieval path (reverie_query)."""
+        """The §11.3 demand-driven retrieval path (query)."""
         gate, ctx = self._gate(args)
         if gate is not None:
             return gate
@@ -934,7 +950,7 @@ class ReverieServer:
             return {
                 "status": "error",
                 "session_active": True,
-                "error": "reverie_query requires a 'query' parameter (natural "
+                "error": "query requires a 'query' parameter (natural "
                          "language). Example: 'How does the authentication "
                          "token refresh work?'",
             }
@@ -964,7 +980,7 @@ class ReverieServer:
         return payload
 
     def _tool_summary(self, args: dict) -> dict:
-        """§16.3 reverie_summary — the nudge line included (feat/flow §4).
+        """§16.3 summary — the nudge line included (feat/flow §4).
 
         Gated on enablement when a repo resolves; works repo-less (a
         global server in the home folder still reports brain stats)."""
@@ -986,7 +1002,7 @@ class ReverieServer:
         return payload
 
     def _tool_reconsolidate(self, args: dict) -> dict:
-        """D37 — reverie_reconsolidate (design doc §5.2): re-evaluate a labile
+        """D37 — reconsolidate (design doc §5.2): re-evaluate a labile
         canonical ECU with new evidence. Writes to the Canonical Brain
         immediately; the §5.2 payload is returned verbatim."""
         gate, ctx = self._gate(args)
@@ -1003,8 +1019,8 @@ class ReverieServer:
             return {
                 "status": "error",
                 "session_active": True,
-                "error": "reverie_reconsolidate requires 'ecu_id' — the id exactly "
-                         "as it appeared in the reverie_query result.",
+                "error": "reconsolidate requires 'ecu_id' — the id exactly "
+                         "as it appeared in the query result.",
             }
         if relationship is not None \
                 and relationship not in reconsolidation.VALID_RELATIONSHIPS:
@@ -1016,20 +1032,76 @@ class ReverieServer:
                          "it to let the Diffuser classify the evidence.",
             }
 
-        # D39 soft gate: only ECUs retrieved in this session are labile.
-        if not self._ensure_manager().is_labile(row["id"], ecu_id.strip()):
+        # Refusal reasons (smoke item 46): name the check that failed —
+        # not_found (no such conclusion anywhere), not_canonical (still an
+        # unreviewed session candidate), not_labile (not retrieved this
+        # session). Checked in that order: existence first, then the D39
+        # soft gate (only ECUs retrieved in this session are labile).
+        brain = self._ensure_brain()
+        target_id = ecu_id.strip()
+        if brain.get_ecu(target_id) is None:
+            if brain.session_ecu_exists(target_id):
+                return {
+                    "status": "error",
+                    "session_active": True,
+                    "ecu_id": ecu_id,
+                    "reason": "not_canonical",
+                    "error": f"Conclusion {target_id} is still a session "
+                             "candidate — it has not been accepted through "
+                             "review, so there is no canonical belief to "
+                             "reconsolidate. The user can accept it with "
+                             "`reverie review`, or you can show it via "
+                             "review_list.",
+                }
             return {
                 "status": "error",
                 "session_active": True,
                 "ecu_id": ecu_id,
-                "error": f"Conclusion {ecu_id} was not retrieved in this session, so "
-                         "it cannot be reconsolidated — you can't "
-                         "reconsolidate something you haven't looked at. Call "
-                         "reverie_query first; if it appears in the result, "
-                         "call reverie_reconsolidate with its id.",
+                "reason": "not_found",
+                "error": f"No conclusion with id {target_id} exists. Check "
+                         "the id exactly as it appeared in the query result "
+                         "— reconsolidate can only re-evaluate conclusions "
+                         "returned by query.",
             }
 
-        brain = self._ensure_brain()
+        if not self._ensure_manager().is_labile(row["id"], target_id):
+            return {
+                "status": "error",
+                "session_active": True,
+                "ecu_id": ecu_id,
+                "reason": "not_labile",
+                "error": f"Conclusion {target_id} was not retrieved in this session, so "
+                         "it cannot be reconsolidated — you can't "
+                         "reconsolidate something you haven't looked at. Call "
+                         "query first; if it appears in the result, "
+                         "call reconsolidate with its id.",
+            }
+
+        # Item 17 (same evidence standard as item 12): a reconsolidation
+        # relationship without a file/test/commit reference is not evidence.
+        if not isinstance(evidence, str) or not evidence.strip():
+            return {
+                "status": "error",
+                "session_active": True,
+                "ecu_id": ecu_id,
+                "reason": "missing_evidence",
+                "error": "reconsolidate requires 'evidence' — your reasoning "
+                         "about what changed and why it affects the "
+                         "conclusion.",
+            }
+        if not extractor.evidence_supported(evidence):
+            return {
+                "status": "error",
+                "session_active": True,
+                "ecu_id": ecu_id,
+                "reason": "unsupported_evidence",
+                "error": "This evidence does not reference anything "
+                         "verifiable, so nothing was changed. Evidence must "
+                         "be a file path with line numbers (e.g. "
+                         "'src/auth/token.py:42'), a test name, or a commit "
+                         "hash — not free-floating narrative.",
+            }
+
         try:
             r = reconsolidation.reconsolidate(
                 brain, ecu_id.strip(), evidence,
@@ -1107,10 +1179,39 @@ class ReverieServer:
                 "repo_key": info.repo_key, "state": effective,
                 "asked_at": row["asked_at"], "message": message}
 
+    def _duplicate_notes(self, rows: list[dict]) -> dict[str, list[str]]:
+        """Item 22: rows sharing a conclusion_type AND grounding signature
+        (files + symbols, at least one reference) are near-duplicates — the
+        listing points them out so the user can decide them together.
+        Annotation only: storage and the TUI are untouched."""
+        sigs: dict[tuple, list[str]] = {}
+        for row in rows:
+            ecu_row = self._ensure_brain().get_session_ecu_row(row["id"])
+            doc = {}
+            if ecu_row is not None and ecu_row.get("document"):
+                try:
+                    doc = json.loads(ecu_row["document"])
+                except json.JSONDecodeError:
+                    doc = {}
+            grounding = doc.get("grounding") or {}
+            files = tuple(sorted(grounding.get("files") or []))
+            symbols = tuple(sorted(grounding.get("symbols") or []))
+            if not files and not symbols:
+                continue
+            sigs.setdefault((row["conclusion_type"], files, symbols),
+                            []).append(row["id"])
+        notes: dict[str, list[str]] = {}
+        for ids in sigs.values():
+            if len(ids) < 2:
+                continue
+            for cid in ids:
+                notes[cid] = [other[:8] for other in ids if other != cid]
+        return notes
+
     def _tool_review_list(self, args: dict) -> dict:
         """The review queue page for the agent channel (D57): same ordered
         candidates as `reverie review`, a compact verbatim block, and a
-        short-lived review_token for reverie_review_decide."""
+        short-lived review_token for review_decide."""
         gate, ctx = self._gate(args)
         if gate is not None:
             return gate
@@ -1139,15 +1240,24 @@ class ReverieServer:
             f"Reverie review — {total} candidate(s) "
             f"(page {page_no}/{total_pages})",
         ]
+        duplicates = self._duplicate_notes(rows)
         for i, row in enumerate(rows, start=1):
+            unsupported = " [unsupported evidence]" \
+                if row.get("evidence_status") == "unsupported" else ""
             lines.append(
                 f"{i}. [{row['confidence']:.2f}] {row['cognition']}"
+                f"{unsupported}"
             )
             lines.append(
                 f"   id: {row['id']} | type: {row['conclusion_type']} | "
                 f"scope: {row['scope_path']} | repo: {row['repo_path']} | "
                 f"branch: {row['branch']}"
             )
+            if row["id"] in duplicates:
+                lines.append(
+                    "   duplicates (same type + grounding): "
+                    + ", ".join(duplicates[row["id"]])
+                )
         if total_pages > page_no:
             lines.append(f"(more available — page {page_no + 1} of "
                          f"{total_pages})")
@@ -1163,18 +1273,25 @@ class ReverieServer:
                  "confidence": r["confidence"],
                  "conclusion_type": r["conclusion_type"],
                  "scope": r["scope_path"], "repo": r["repo_path"],
-                 "branch": r["branch"], "review_status": r["review_status"]}
+                 "branch": r["branch"], "review_status": r["review_status"],
+                 "evidence_status": r.get("evidence_status")}
                 for r in rows
             ],
             "message": message,
             "instructions": (
                 "Show every candidate's full conclusion text, then relay "
-                "only the decisions the user states via reverie_review_decide. "
-                "Never decide on the user's behalf. One listing feeds one "
-                "decide call — after it succeeds, call reverie_review_list again "
-                "for the next batch (single-use tokens; this adds friction, "
-                "it is not a security boundary). Reverie cannot verify "
-                "who made a decision; the channel is recorded as 'agent'."
+                "only the decisions the user states via review_decide. "
+                "Never decide on the user's behalf. Candidates marked "
+                "[unsupported evidence] carry no verifiable file, test, or "
+                "commit reference — point that out when showing them. "
+                "Candidates marked 'duplicates' share their conclusion type "
+                "and grounding with the listed ids — show them together so "
+                "the user can decide the near-duplicates as a set. One "
+                "listing feeds one decide call — after it succeeds, call "
+                "review_list again for the next batch (single-use tokens; "
+                "this adds friction, it is not a security boundary). "
+                "Reverie cannot verify who made a decision; the channel is "
+                "recorded as 'agent'."
             ),
         }
 
@@ -1204,7 +1321,7 @@ class ReverieServer:
             return {
                 "status": "error",
                 "error": "Unknown or expired review_token. Call "
-                         "reverie_review_list again to get a fresh listing, "
+                         "review_list again to get a fresh listing, "
                          "then decide from those ids.",
             }
         raw = args.get("decisions")
@@ -1236,7 +1353,7 @@ class ReverieServer:
                 "status": "error",
                 "error": f"Decision ids not in this listing: {unknown}. "
                          "Only candidates returned under this review_token "
-                         "can be decided — call reverie_review_list again.",
+                         "can be decided — call review_list again.",
             }
         accepts = {cid for cid, d in decisions.items()
                    if d["action"] == "accept"}
@@ -1254,7 +1371,7 @@ class ReverieServer:
         )
         # Single-use tokens (feat/flow review fix): the token is consumed
         # once a decide call succeeds, so each listing feeds exactly one
-        # decision call — the next batch needs a fresh reverie_review_list. This
+        # decision call — the next batch needs a fresh review_list. This
         # adds friction, it is not a security boundary: Reverie cannot
         # verify who is on the other end of the channel.
         del self._review_tokens[token]

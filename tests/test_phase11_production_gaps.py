@@ -359,7 +359,7 @@ class TestGroundingDeprecationSurfacing:
         assert len(notes) == 1
         assert notes[0]["kind"] == "grounding_deprecations"
         assert "auth/token.py" in notes[0]["message"]
-        assert "1 ECU(s) that depend" in notes[0]["message"]
+        assert "1 conclusion(s) that depend" in notes[0]["message"]
         assert notes[0]["ecu_ids"] == ["ecu-1"]
 
     def test_suppressed_after_review_gate_surfaced_it(self, brain):

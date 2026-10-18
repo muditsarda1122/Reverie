@@ -322,7 +322,7 @@ def _notify_propagation(brain: Brain, result: ReviewResult,
             "kind": "depends_on_at_risk",
             "ecu_ids": [dep_id],
             "message": (
-                f"ECU {dep_id} depends on a cognition that was challenged in "
+                f"Conclusion {dep_id} depends on a cognition that was challenged in "
                 f"this review and may need re-evaluation: \"{cognition}\""
             ),
         })
@@ -358,9 +358,9 @@ def _opposing_edge_notifications(brain: Brain, result: ReviewResult) -> None:
             "kind": "opposing_edges",
             "ecu_ids": [source_id, target_id],
             "message": (
-                f"ECU {source_id[:8]} both supports and contradicts ECU "
+                f"conclusion {source_id[:8]} both supports and contradicts conclusion "
                 f"{target_id[:8]}. This relationship may need decomposition "
-                "into more atomic ECUs."
+                "into more atomic conclusions."
             ),
         })
 
@@ -508,11 +508,11 @@ def apply_open_question_resolution(
     ecu_a = brain.get_ecu(id_a)
     ecu_b = brain.get_ecu(id_b) if id_b else None
     if ecu_a is None or (id_b is not None and ecu_b is None):
-        raise ReviewGateError(f"no such ECU pair: {id_a} / {id_b}")
+        raise ReviewGateError(f"no such open-question pair: {id_a} / {id_b}")
     for ecu in (ecu_a, ecu_b):
         if ecu is not None and ecu["status"] != "open_question":
             raise ReviewGateError(
-                f"ECU {ecu['id']} is {ecu['status']!r}, not open_question"
+                f"conclusion {ecu['id']} is {ecu['status']!r}, not open_question"
             )
     if choice == "b":
         if preferred_id not in (id_a, id_b):
@@ -609,7 +609,7 @@ def resolve_open_questions(
     records: list[dict] = []
     if not total:
         return records
-    print_fn(f"\nEC Review Gate — Open Questions\n\n{total} open question(s) "
+    print_fn(f"\nReverie Review Gate — Open Questions\n\n{total} open question(s) "
              "need resolution:")
     for i, pair in enumerate(found["pairs"], start=1):
         _print_open_question(pair, i, print_fn)
@@ -627,7 +627,7 @@ def resolve_open_questions(
                     while preferred_id is None:
                         try:
                             pick = input_fn(
-                                f"    Which ECU is preferred? [1] "
+                                f"    Which conclusion is preferred? [1] "
                                 f"{pair['ecu_a']['id'][:8]} / [2] "
                                 f"{pair['ecu_b']['id'][:8]}: "
                             ).strip()
@@ -721,7 +721,7 @@ def grounding_deprecation_notifications(brain: Brain,
         return []
     lines = [
         "During the last maintenance cycle, Reverie deprecated "
-        f"{len(deprecated)} ECU(s) whose grounding references are no longer "
+        f"{len(deprecated)} conclusion(s) whose grounding references are no longer "
         "present in the repository:"
     ]
     dependents: set[str] = set()
@@ -734,7 +734,7 @@ def grounding_deprecation_notifications(brain: Brain,
                      f"{missing})")
         dependents.update(d.get("challenged_dependents") or [])
     if dependents:
-        lines.append(f"{len(dependents)} ECU(s) that depend on these were "
+        lines.append(f"{len(dependents)} conclusion(s) that depend on these were "
                      "marked challenged and need re-evaluation.")
     return [{
         "kind": "grounding_deprecations",
@@ -1019,7 +1019,8 @@ def apply_review_decisions(
         f"Review complete. {len(result.accepted)} accepted, "
         f"{len(result.rejected)} rejected, {len(result.skipped)} skipped "
         f"(pending). Diffusing to Canonical Brain... done. Brain now has "
-        f"{result.canonical_total} ECUs."
+        f"{result.canonical_total} "
+        f"conclusion{'' if result.canonical_total == 1 else 's'}."
     )
     return result
 
@@ -1035,8 +1036,8 @@ def diffusion_failure_warning(result: ReviewResult) -> str | None:
         return None
     ids = ", ".join(result.undiffused)
     return (
-        f"⚠️ WARNING: {len(result.undiffused)} ECU(s) promoted without "
-        f"diffusion due to API errors: [{ids}]. These ECUs have no edges "
+        f"⚠️ WARNING: {len(result.undiffused)} conclusion(s) promoted without "
+        f"diffusion due to API errors: [{ids}]. These conclusions have no edges "
         "and unchanged confidence. Consider re-running diffusion manually."
     )
 
@@ -1097,7 +1098,7 @@ def interactive_review(
     'skip' remaining groups, 'done' exits (unreviewed become skipped)."""
     plan = group_for_review(brain, session_id, config=config)
     print_fn(
-        f"EC Review Gate — {plan.total} candidate ECUs in "
+        f"Reverie Review Gate — {plan.total} candidates in "
         f"{len(plan.groups)} groups"
     )
     decisions: dict[str, str] = {}

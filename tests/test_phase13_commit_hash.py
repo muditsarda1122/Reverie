@@ -205,7 +205,7 @@ def test_extract_and_store_session_without_hash_stays_clean(brain, model):
 
 
 # ---------------------------------------------------------------------------
-# reverie_observe end-to-end (§28.13 flow with the D49 stamp)
+# observe end-to-end (§28.13 flow with the D49 stamp)
 # ---------------------------------------------------------------------------
 
 def test_commit_hash_stamped(tmp_path, monkeypatch, server, manager, model,
@@ -220,7 +220,7 @@ def test_commit_hash_stamped(tmp_path, monkeypatch, server, manager, model,
     with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
          patch("reverie.diffuser.call_llm",
                return_value=json.dumps({"classifications": []})):
-        payload, result = call_tool(server, "reverie_observe", {
+        payload, result = call_tool(server, "observe", {
             "user_prompt": "why do sessions drop?",
             "reasoning_trace": "I traced it to the token refresh race...",
         })
@@ -248,7 +248,7 @@ def test_commit_hash_no_git_repo(tmp_path, monkeypatch, server, manager,
     with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD), \
          patch("reverie.diffuser.call_llm",
                return_value=json.dumps({"classifications": []})):
-        payload, result = call_tool(server, "reverie_observe", {
+        payload, result = call_tool(server, "observe", {
             "user_prompt": "p", "reasoning_trace": "r"})
     assert result["isError"] is False
     assert payload["status"] == "ok"

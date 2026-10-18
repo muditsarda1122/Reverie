@@ -25,10 +25,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import confidence as conf
+from . import grounding
 from .config import CONCLUSION_TYPES, SCOPE_LEVELS, get_base_prior, get_config
 from .llm import LLMError, call_llm, extract_json, model_for
 
@@ -114,17 +116,67 @@ def count_evidence_sources(evidence_pointer: str | None) -> int:
     return max(1, len([part for part in evidence_pointer.split("+") if part.strip()]))
 
 
+# Evidence standard (smoke item 12): evidence must point at something the
+# user can verify — a file path (a directory-qualified path like
+# ``reverie/brain.py`` or a bare filename with a code extension, optionally
+# with ``:line``), a test name, or a commit hash. Anything else ("the user
+# said so", "agent reasoning step 4") is stored as ``unsupported`` and
+# flagged in the review listing.
+_EVIDENCE_PATH_RE = re.compile(
+    r"(?<![\w./-])(?:[\w.-]+/)+[\w-]+\.\w+(?::\d+(?:-\d+)?)?"
+)
+_EVIDENCE_BARE_FILE_RE = re.compile(
+    r"\b[\w-]+\.(?:py|pyi|js|mjs|cjs|jsx|ts|tsx|go|rs|java|kt|kts|rb|"
+    r"c|cc|cpp|cxx|h|hpp|cs|swift|sql|sh|bash|zsh|toml|yaml|yml|json|md|"
+    r"rst|txt|cfg|ini|conf|css|scss|html|vue|svelte|proto|tf|gradle|xml)"
+    r"(?::\d+(?:-\d+)?)?\b",
+    re.IGNORECASE,
+)
+_EVIDENCE_TEST_RE = re.compile(r"\btest_\w+\b")
+_EVIDENCE_COMMIT_RE = re.compile(
+    r"\b(?=[0-9a-f]{7,40}\b)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b"
+)
+
+
+def evidence_supported(evidence_pointer: str | None) -> bool:
+    """Does this evidence string meet the evidence standard (item 12)?"""
+    if not evidence_pointer:
+        return False
+    text = str(evidence_pointer)
+    return bool(
+        _EVIDENCE_PATH_RE.search(text)
+        or _EVIDENCE_BARE_FILE_RE.search(text)
+        or _EVIDENCE_TEST_RE.search(text)
+        or _EVIDENCE_COMMIT_RE.search(text)
+    )
+
+
+def stamp_evidence_status(ecus: list[dict]) -> None:
+    """Stamp ``metadata.evidence_status`` (supported | unsupported) on each
+    candidate before storage. Unsupported candidates are still stored (and
+    reviewable) — the flag travels into the review listing so the user
+    knows the evidence could not be verified."""
+    for ecu in ecus:
+        pointers = ecu.get("evidence_pointers") or []
+        text = " + ".join(str(p) for p in pointers if p)
+        metadata = dict(ecu.get("metadata") or {})
+        metadata["evidence_status"] = (
+            "supported" if evidence_supported(text) else "unsupported"
+        )
+        ecu["metadata"] = metadata
+
+
 def validate_ecu(raw: dict) -> dict:
     """Normalize one extractor-emitted ECU and enforce §1 vocabularies.
 
     Raises ValueError on any violation — the caller skips invalid ECUs.
     """
     if not isinstance(raw, dict):
-        raise ValueError(f"ECU must be a JSON object, got {type(raw).__name__}")
+        raise ValueError(f"conclusion must be a JSON object, got {type(raw).__name__}")
 
     cognition = str(raw.get("cognition") or "").strip()
     if not cognition:
-        raise ValueError("ECU cognition must be a non-empty string")
+        raise ValueError("conclusion cognition must be a non-empty string")
 
     conclusion_type = raw.get("conclusion_type")
     if conclusion_type not in CONCLUSION_TYPES:
@@ -265,7 +317,7 @@ def extract_ecus(
             ecu = validate_ecu(raw)
         except ValueError as exc:
             result.skipped_invalid += 1
-            log.warning("skipping invalid extracted ECU: %s", exc)
+            log.warning("skipping invalid extracted conclusion: %s", exc)
             continue
         ecu["source_id"] = source_id
         ecu["origin_agent"] = origin_agent or cfg.llm.model
@@ -293,6 +345,66 @@ def stamp_grounding_commit_hash(ecus: list[dict], commit_hash: str | None) -> No
             grounding["commit_hash"] = commit_hash
 
 
+def stamp_grounding_repo_path(ecus: list[dict], repo_path: str | None) -> None:
+    """Stamp the session's repo into each candidate's
+    ``grounding.repo_path`` (smoke item 13).
+
+    ``brain.list_ecus_for_repo`` — the filter behind maintainer grounding
+    verification AND the ``reverie repos`` count — keys on
+    ``grounding.repo_path``; without this stamp every canonical conclusion
+    counted as "grounded nowhere". Never overwrites an existing value.
+    """
+    if not repo_path:
+        return
+    for ecu in ecus:
+        g = ecu.get("grounding")
+        if not isinstance(g, dict):
+            g = {}
+            ecu["grounding"] = g
+        if not g.get("repo_path"):
+            g["repo_path"] = str(repo_path)
+
+
+def validate_extracted_grounding(
+    ecus: list[dict],
+    repo_path: str | None,
+    commit_hash: str | None = None,
+) -> None:
+    """Verify each candidate's grounding references before storage (smoke
+    item 11).
+
+    Delegates to ``grounding.validate_references`` (checks at the captured
+    commit when resolvable, worktree fallback) and then *fixes* the
+    candidate: invalid files/symbols are dropped so they are never stored,
+    and the outcome is recorded under ``grounding.validation``
+    (``{"checked": "commit"|"worktree", "dropped_files": [...],
+    "dropped_symbols": [...]}``). Without a repo_path nothing can be
+    verified — references are stored untouched.
+    """
+    if not repo_path:
+        return
+    for ecu in ecus:
+        g = ecu.get("grounding")
+        if not isinstance(g, dict):
+            g = {}
+            ecu["grounding"] = g
+        files = [f for f in (g.get("files") or []) if f]
+        symbols = [s for s in (g.get("symbols") or []) if s]
+        outcome = grounding.validate_references(
+            repo_path, files, symbols,
+            commit_hash=g.get("commit_hash") or commit_hash,
+        )
+        if not outcome["checked"]:
+            continue
+        g["files"] = outcome["valid_files"]
+        g["symbols"] = outcome["valid_symbols"]
+        g["validation"] = {
+            "checked": outcome["mode"],
+            "dropped_files": outcome["invalid_files"],
+            "dropped_symbols": outcome["invalid_symbols"],
+        }
+
+
 def extract_and_store_session(
     brain,
     session_id: str,
@@ -301,6 +413,7 @@ def extract_and_store_session(
     origin_agent: str | None = None,
     config=None,
     commit_hash: str | None = None,
+    repo_path: str | None = None,
 ) -> tuple[ExtractionResult, list[str]]:
     """§28.13 live-session flow: extract, embed, store in the Session Brain.
 
@@ -308,6 +421,12 @@ def extract_and_store_session(
     ``grounding.commit_hash`` after extraction and before storage — the
     server reads it from the session repo's HEAD; see
     reverie.mcp_server._current_commit_hash.
+
+    ``repo_path``: stamped into ``grounding.repo_path`` (item 13) and used
+    to verify the candidates' grounding references before storage
+    (item 11: invalid files/symbols are dropped and recorded; without a
+    repo path nothing can be verified). The evidence standard (item 12)
+    is stamped regardless.
 
     Lightweight diffusion of the stored ECUs is a separate step
     (reverie.diffuser.diffuse_session_ecu) — the Extractor never creates edges.
@@ -318,6 +437,9 @@ def extract_and_store_session(
 
     result = extract_ecus(interaction, origin_agent=origin_agent, config=config)
     stamp_grounding_commit_hash(result.ecus, commit_hash)
+    stamp_grounding_repo_path(result.ecus, repo_path)
+    validate_extracted_grounding(result.ecus, repo_path, commit_hash)
+    stamp_evidence_status(result.ecus)
     ids = []
     for ecu in result.ecus:
         embedding = embedding_model.encode_one(ecu["cognition"])

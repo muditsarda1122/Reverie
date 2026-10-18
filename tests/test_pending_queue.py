@@ -203,7 +203,7 @@ class TestObservePersistence:
     def test_failed_observe_persists_interaction(self, server, active_session):
         with patch("reverie.extractor.call_llm",
                    side_effect=LLMError("HTTP 503: gateway down")):
-            payload, envelope = call_tool(server, "reverie_observe", OBSERVE_ARGS)
+            payload, envelope = call_tool(server, "observe", OBSERVE_ARGS)
         assert envelope["isError"] is True
         assert payload["pending_extraction_id"]
         assert "saved locally" in payload["error"]
@@ -214,10 +214,10 @@ class TestObservePersistence:
             self, server, active_session, model):
         with patch("reverie.extractor.call_llm",
                    side_effect=LLMError("HTTP 503: gateway down")):
-            failed, _ = call_tool(server, "reverie_observe", OBSERVE_ARGS)
+            failed, _ = call_tool(server, "observe", OBSERVE_ARGS)
         assert failed["status"] == "error"
         with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
-            ok, _ = call_tool(server, "reverie_observe", OBSERVE_ARGS)
+            ok, _ = call_tool(server, "observe", OBSERVE_ARGS)
         assert ok["status"] == "ok"
         assert ok["pending_recovered"] == 1
         assert "recovered" in ok["message"]
@@ -227,7 +227,7 @@ class TestObservePersistence:
     def test_successful_observe_with_no_pending_is_untouched(
             self, server, active_session):
         with patch("reverie.extractor.call_llm", return_value=EXTRACT_PAYLOAD):
-            payload, _ = call_tool(server, "reverie_observe", OBSERVE_ARGS)
+            payload, _ = call_tool(server, "observe", OBSERVE_ARGS)
         assert payload["pending_recovered"] == 0
         assert "recovered" not in payload["message"]
 
