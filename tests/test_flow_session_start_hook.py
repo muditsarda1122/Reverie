@@ -315,6 +315,12 @@ def test_install_refuses_invalid_settings_json(home, reverie_home):
     assert settings.read_text() == "{not json"   # untouched
 
 
+def test_install_dry_run_writes_nothing(home, reverie_home):
+    assert do_install(home, reverie_home, dry_run=True) == 0
+    assert not (home / ".claude").exists()       # not even the directory
+    assert not (home / ".claude.json").exists()
+
+
 # ---------------------------------------------------------------------------
 # uninstall — surgical reverse merge
 # ---------------------------------------------------------------------------
