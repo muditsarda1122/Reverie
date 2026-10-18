@@ -8,7 +8,9 @@ applies the same merge logic in reverse:
   the ``reverie`` MCP server entry in ``~/.claude.json``,
   ``~/.cursor/mcp.json``, ``~/.config/opencode/opencode.json``,
   ``~/.codex/config.toml`` and ``~/.gemini/settings.json``; the
-  ``@~/.reverie/AGENTS.md`` line in ``~/.claude/CLAUDE.md``; the reference
+  ``@~/.reverie/AGENTS.md`` line in ``~/.claude/CLAUDE.md``; the Reverie
+  SessionStart hook handler in ``~/.claude/settings.json`` (emptied matcher
+  groups and keys are dropped with it); the reference
   blocks in the OpenCode/Codex ``AGENTS.md`` and Gemini ``GEMINI.md``
   files; the user-level slash-command files (only while their content is
   still Reverie's verbatim text). Every other key, line and file stays
@@ -53,6 +55,7 @@ from .install import (
     DIST_NAME,
     REFERENCE_BLOCK_MARKER,
     _agents_ref,
+    _is_reverie_hook_handler,
     _reference_block,
     load_install_manifest,
 )
@@ -298,6 +301,82 @@ def _plan_toml_table(path: Path, home: Path, label: str,
         after=after, removed="[mcp_servers.reverie]")
 
 
+def _plan_claude_session_start(path: Path, home: Path,
+                               manifest: dict[str, str] | None = None
+                               ) -> PlannedRemoval:
+    """Remove Reverie's SessionStart hook handler — the reverse of
+    install._claude_session_start_plan.
+
+    Only matching handlers are removed; emptied matcher groups, an emptied
+    ``SessionStart`` key and an emptied ``hooks`` key are dropped with them.
+    Everything else stays byte-identical. The file itself is deleted only
+    when install created it (manifest hash) and nothing else remains."""
+    disp = _display(path, home)
+    if not path.exists():
+        return PlannedRemoval(path, "unchanged", f"{disp}: not present")
+    text = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return PlannedRemoval(
+            path, "skipped",
+            f"SKIPPED {disp}: not valid JSON ({exc}) — fix it by hand if "
+            "you want the reverie hook gone.")
+    if not isinstance(data, dict):
+        return PlannedRemoval(
+            path, "skipped",
+            f"SKIPPED {disp}: does not contain a JSON object.")
+    hooks = data.get("hooks")
+    groups = hooks.get("SessionStart") if isinstance(hooks, dict) else None
+    if not isinstance(groups, list):
+        return PlannedRemoval(
+            path, "unchanged", f"{disp}: no Reverie SessionStart hook")
+    removed_count = 0
+    kept_groups = []
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"),
+                                                         list):
+            kept_groups.append(group)
+            continue
+        kept_handlers = [h for h in group["hooks"]
+                         if not _is_reverie_hook_handler(h)]
+        removed_count += len(group["hooks"]) - len(kept_handlers)
+        if kept_handlers:
+            group = dict(group)
+            group["hooks"] = kept_handlers
+            kept_groups.append(group)
+        # an emptied matcher group is dropped with its handler
+    if removed_count == 0:
+        return PlannedRemoval(
+            path, "unchanged", f"{disp}: no Reverie SessionStart hook")
+    remaining = dict(data)
+    remaining_hooks = dict(hooks)
+    if kept_groups:
+        remaining_hooks["SessionStart"] = kept_groups
+    else:
+        del remaining_hooks["SessionStart"]
+    if remaining_hooks:
+        remaining["hooks"] = remaining_hooks
+    else:
+        del remaining["hooks"]
+    if not remaining:
+        if _owned_by_install(path, manifest):
+            return PlannedRemoval(
+                path, "delete-file",
+                f"Removed {disp} (Reverie created it; only its hook was in it)")
+        return PlannedRemoval(
+            path, "remove-entry",
+            f"Removed the Reverie SessionStart hook from {disp} (file kept — "
+            "it existed before install)",
+            after=json.dumps(remaining, indent=2) + "\n",
+            removed="hooks.SessionStart")
+    return PlannedRemoval(
+        path, "remove-entry",
+        f"Removed the Reverie SessionStart hook from {disp}",
+        after=json.dumps(remaining, indent=2) + "\n",
+        removed="hooks.SessionStart")
+
+
 def _plan_harnesses(home: Path, reverie_home: Path,
                     manifest: dict[str, str] | None = None
                     ) -> list[tuple[str, PlannedRemoval]]:
@@ -324,6 +403,9 @@ def _plan_harnesses(home: Path, reverie_home: Path,
                                  "claude_code", manifest=manifest),
                 _plan_line(home / ".claude" / "CLAUDE.md", home,
                            f"@{ref}", "claude_code", manifest=manifest),
+                _plan_claude_session_start(
+                    home / ".claude" / "settings.json", home,
+                    manifest=manifest),
             ]
             entries += [
                 _plan_verbatim_file(home / ".claude" / "commands" / name,
