@@ -80,6 +80,11 @@ def candidate_detail(brain: Brain, candidate: dict) -> dict:
         "grounding_files": grounding.get("files") or [],
         "evidence": doc.get("evidence_pointers") or [],
         "grounding_symbols": grounding.get("symbols") or [],
+        "evidence_status": (doc.get("metadata") or {}).get("evidence_status"),
+        "grounding_dropped": (grounding.get("validation") or {}).get(
+            "dropped_files") or [],
+        "symbols_dropped": (grounding.get("validation") or {}).get(
+            "dropped_symbols") or [],
     }
 
 
@@ -143,6 +148,14 @@ def render_screen(candidate: dict, detail: dict, *, index: int, total: int,
     lines.append(f"    grounded: {_muted(detail.get('grounding_files'))}"
                  f"  symbols: {_muted(detail.get('grounding_symbols'))}")
     lines.append(f"    evidence: {_muted(detail.get('evidence'))}")
+    if detail.get("evidence_status") == "unsupported":
+        lines.append("    ⚠ evidence unsupported — no file path, test name, "
+                     "or commit reference")
+    dropped = (detail.get("grounding_dropped") or []) \
+        + (detail.get("symbols_dropped") or [])
+    if dropped:
+        lines.append(f"    ⚠ unverifiable references dropped: "
+                     f"{', '.join(str(d) for d in dropped)}")
     lines.append(
         f"    repo: {candidate.get('repo_path') or '—'} "
         f"(branch {candidate.get('branch') or '—'})"

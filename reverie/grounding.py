@@ -84,22 +84,11 @@ def file_exists(repo_path: str, rel_path: str) -> bool:
     return p.exists()
 
 
-def symbol_present(repo_path: str, rel_path: str, symbol: str) -> bool:
-    """Best-effort symbol check (§3.3): substring search of ``symbol`` in the
-    file text.
-
-    Structured names like ``TokenManager::refresh`` rarely occur verbatim in
-    source, so if the full name is absent each separator-separated fragment
-    (>= 4 chars, longest first) is tried too — finding ANY fragment counts as
-    present. Errs toward keeping the ECU alive. Unreadable/missing files
-    return True (cannot establish absence → keep)."""
-    p = Path(rel_path)
-    if not p.is_absolute():
-        p = Path(repo_path) / p
-    try:
-        text = p.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return True  # unreadable ≠ absent — keep the ECU
+def _symbol_in_text(text: str, symbol: str) -> bool:
+    """Best-effort symbol search in ``text`` (§3.3): the symbol itself, or —
+    for structured names like ``TokenManager::refresh`` that rarely occur
+    verbatim — any separator-separated fragment (>= 4 chars, longest first).
+    Finding ANY fragment counts as present (errs toward keeping the ECU)."""
     if symbol in text:
         return True
     import re
@@ -109,6 +98,21 @@ def symbol_present(repo_path: str, rel_path: str, symbol: str) -> bool:
         key=len, reverse=True,
     )
     return any(f in text for f in fragments)
+
+
+def symbol_present(repo_path: str, rel_path: str, symbol: str) -> bool:
+    """Best-effort symbol check (§3.3): substring search of ``symbol`` in the
+    file text.
+
+    Unreadable/missing files return True (cannot establish absence → keep)."""
+    p = Path(rel_path)
+    if not p.is_absolute():
+        p = Path(repo_path) / p
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True  # unreadable ≠ absent — keep the ECU
+    return _symbol_in_text(text, symbol)
 
 
 def commit_distance(repo_path: str, commit_hash: str) -> int | None:
@@ -128,6 +132,121 @@ def commit_distance(repo_path: str, commit_hash: str) -> int | None:
         return int(proc.stdout.strip())
     except ValueError:
         return None
+
+
+def _commit_resolvable(repo_path: str, commit_hash: str) -> bool:
+    """Is ``commit_hash`` a commit in ``repo_path`` (best-effort)? False on
+    any git failure — callers fall back to the working tree."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet",
+             f"{commit_hash}^{{commit}}"],
+            cwd=str(repo_path), capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.debug("rev-parse %s failed in %s: %s", commit_hash, repo_path, exc)
+        return False
+    return proc.returncode == 0
+
+
+def _blob_at_commit(repo_path: str, commit_hash: str, rel_path: str
+                    ) -> str | None:
+    """Text of ``rel_path`` at ``commit_hash`` (``git cat-file -p``), or None
+    when the file did not exist then / git failed. Decoding is lossy-replace:
+    a binary blob still yields text for the substring symbol check."""
+    try:
+        proc = subprocess.run(
+            ["git", "cat-file", "-p", f"{commit_hash}:{rel_path}"],
+            cwd=str(repo_path), capture_output=True, text=True,
+            errors="replace", timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.debug("cat-file %s:%s failed in %s: %s",
+                  commit_hash, rel_path, repo_path, exc)
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+# ---------------------------------------------------------------------------
+# extraction-time reference validation (smoke: candidates stored with
+# references that never existed anywhere)
+# ---------------------------------------------------------------------------
+
+def validate_references(
+    repo_path: str,
+    files: list[str],
+    symbols: list[str],
+    commit_hash: str | None = None,
+) -> dict:
+    """Check a candidate's grounding references BEFORE storage (extraction-
+    time, unlike ``evaluate_ecu`` which re-checks canonical ECUs later).
+
+    With a resolvable ``commit_hash``, repo-relative files are checked as
+    they existed at that commit (``git cat-file -p <hash>:<path>``), so a
+    reference that was true when the conclusion was captured still counts
+    even if the file has since moved; otherwise (no commit, unknown hash,
+    no git, repo not on disk) the working tree is checked. Absolute paths
+    are always checked on disk.
+
+    Symbols are searched in the files that exist at the checked revision,
+    using the same fragment heuristic as ``symbol_present``. When no file
+    could be read, symbols are kept — absence cannot be established.
+
+    Returns ``{"checked": bool, "mode": "commit" | "worktree" |
+    "unavailable", "valid_files", "invalid_files", "valid_symbols",
+    "invalid_symbols"}``. ``checked=False`` (repo not on disk / no path)
+    means nothing was verified; callers keep every reference untouched.
+    """
+    out = {
+        "checked": True,
+        "mode": "worktree",
+        "valid_files": [], "invalid_files": [],
+        "valid_symbols": [], "invalid_symbols": [],
+    }
+    if not repo_path or not Path(repo_path).exists():
+        out["checked"] = False
+        out["mode"] = "unavailable"
+        out["valid_files"], out["valid_symbols"] = list(files), list(symbols)
+        return out
+
+    at_commit = bool(commit_hash) and _commit_resolvable(
+        repo_path, str(commit_hash))
+    if at_commit:
+        out["mode"] = "commit"
+
+    texts: list[str] = []
+    for rel in files:
+        rel = str(rel)
+        if at_commit and not Path(rel).is_absolute():
+            text = _blob_at_commit(repo_path, str(commit_hash), rel)
+            if text is None:
+                out["invalid_files"].append(rel)
+            else:
+                out["valid_files"].append(rel)
+                texts.append(text)
+            continue
+        p = Path(rel)
+        if not p.is_absolute():
+            p = Path(repo_path) / p
+        if not p.exists():
+            out["invalid_files"].append(rel)
+            continue
+        out["valid_files"].append(rel)
+        try:
+            texts.append(p.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            pass  # unreadable ≠ absent — keep the file reference
+
+    if not texts:
+        # No readable file: cannot establish absence → keep every symbol.
+        out["valid_symbols"] = list(symbols)
+        return out
+    for sym in symbols:
+        if any(_symbol_in_text(text, str(sym)) for text in texts):
+            out["valid_symbols"].append(sym)
+        else:
+            out["invalid_symbols"].append(sym)
+    return out
 
 
 # ---------------------------------------------------------------------------

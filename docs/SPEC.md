@@ -2741,6 +2741,9 @@ Do NOT call observe for:
 - Pure factual observations (e.g., "this function returns a string")
 - Every single response — only when you have engineering insight worth saving
 
+Call observe AT MOST ONCE per task — batch everything worth saving into a
+single call after you have the insight, not after every response.
+
 ## When to Call query
 
 Call query when you recognize a gap that past engineering cognition might fill.
@@ -2792,6 +2795,8 @@ Call reconsolidate when:
 
 Pass the ECU ID (from the query result), your evidence (your reasoning about
 what changed), and optionally the relationship (supports/contradicts/supersedes).
+Evidence must reference something the user can verify — a file path with
+line numbers, a test name, or a commit hash — not free-floating narrative.
 
 Do NOT call reconsolidate for:
 - New insights unrelated to a previously retrieved conclusion (use observe)

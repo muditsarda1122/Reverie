@@ -88,6 +88,7 @@ def retry_pending(
                 embedding_model=embedding_model, config=cfg,
                 origin_agent=item.get("origin_agent"),
                 commit_hash=item.get("commit_hash"),
+                repo_path=item.get("repo_path") or active["repo_path"],
             )
         except ExtractorError as exc:
             brain.mark_pending_extraction_attempt(item["id"], str(exc))

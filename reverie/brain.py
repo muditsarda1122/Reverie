@@ -1407,6 +1407,15 @@ class Brain:
         out = []
         for row in rows:
             d = dict(row)
+            doc = {}
+            if d.get("document"):
+                try:
+                    doc = json.loads(d["document"])
+                except (TypeError, ValueError):
+                    doc = {}
+            # item 12: the evidence-standard flag travels with the queue row
+            d["evidence_status"] = (doc.get("metadata") or {}).get(
+                "evidence_status")
             d.pop("document")                      # keep payloads lean
             d["document"] = None
             out.append(d)

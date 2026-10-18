@@ -553,13 +553,16 @@ class TestMcpReconsolidateTool:
 
     def test_unknown_but_labile_ecu_reports_missing(self, brain, manager,
                                                     server):
+        """Smoke item 46: existence is checked before lability — a ghost id
+        whose labile entry took the shortcut must report not_found."""
         sid = manager.start_session()["session_id"]
         manager.mark_labile(sid, ["ghost-id"])
         payload, _ = call_tool(server, "reconsolidate", {
             "ecu_id": "ghost-id", "evidence": "finding",
             "relationship": "supports"})
         assert payload["status"] == "error"
-        assert "No canonical ECU" in payload["error"]
+        assert payload["reason"] == "not_found"
+        assert "No conclusion with id ghost-id exists" in payload["error"]
 
     def test_invalid_relationship_payload_error(self, brain, model, manager,
                                                 server):

@@ -201,6 +201,9 @@ Do NOT call observe for:
 - Things already captured in existing conclusions
 - Pure factual observations (the Extractor handles the lifting to conclusions)
 
+Call observe AT MOST ONCE per task — batch everything worth saving into a
+single call after you have the insight, not after every response.
+
 observe runs the Extractor on your reasoning, produces candidate
 conclusions, and stores them in the Session Brain. They are immediately
 available for retrieval via query. The USER reviews these candidates
@@ -296,7 +299,16 @@ Do NOT call reconsolidate for:
 - New insights that aren't related to a previously retrieved conclusion (use observe)
 - Conclusions you haven't retrieved in this session (reconsolidation requires prior
   retrieval — you can't reconsolidate something you haven't looked at)
-- Simple code changes with no impact on engineering conclusions"""
+- Simple code changes with no impact on engineering conclusions
+
+Evidence standard: the evidence you pass must reference something the
+user can verify — a file path with line numbers, a test name, or a commit
+hash. Free-floating narrative ("the user said so") is not evidence.
+
+Refusals name the failed check (reason field): not_found (no conclusion
+with that id), not_canonical (it is still an unreviewed session
+candidate), not_labile (it was not retrieved in this session — query
+first)."""
 
 def _schema(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties,
@@ -846,7 +858,7 @@ class ReverieServer:
             result, ids = extractor.extract_and_store_session(
                 brain, row["id"], interaction,
                 embedding_model=self.embedding_model, config=self.config,
-                commit_hash=commit_hash,
+                commit_hash=commit_hash, repo_path=row["repo_path"],
             )
         except ExtractorError as exc:
             # feat/providers: the interaction is persisted so the failure
@@ -886,6 +898,7 @@ class ReverieServer:
         )
 
         count = brain.count_session_ecus(row["id"])
+        plural = "s" if result.rejected_count != 1 else ""
         if ids:
             message = (
                 f"Extracted {len(ids)} conclusion{'s' if len(ids) != 1 else ''} into "
@@ -894,8 +907,10 @@ class ReverieServer:
             )
         else:
             message = (
-                "No engineering conclusions found in this response. This is "
-                "not an error — not every response produces ECUs."
+                f"Extracted 0 conclusions ({result.rejected_count} candidate{plural} "
+                "rejected by the Lifting Test). This is not an error — not "
+                f"every response produces conclusions. Session memory now "
+                f"holds {count}."
             )
         if retry_summary["recovered"]:
             message += (
@@ -1016,20 +1031,51 @@ class ReverieServer:
                          "it to let the Diffuser classify the evidence.",
             }
 
-        # D39 soft gate: only ECUs retrieved in this session are labile.
-        if not self._ensure_manager().is_labile(row["id"], ecu_id.strip()):
+        # Refusal reasons (smoke item 46): name the check that failed —
+        # not_found (no such conclusion anywhere), not_canonical (still an
+        # unreviewed session candidate), not_labile (not retrieved this
+        # session). Checked in that order: existence first, then the D39
+        # soft gate (only ECUs retrieved in this session are labile).
+        brain = self._ensure_brain()
+        target_id = ecu_id.strip()
+        if brain.get_ecu(target_id) is None:
+            if brain.session_ecu_exists(target_id):
+                return {
+                    "status": "error",
+                    "session_active": True,
+                    "ecu_id": ecu_id,
+                    "reason": "not_canonical",
+                    "error": f"Conclusion {target_id} is still a session "
+                             "candidate — it has not been accepted through "
+                             "review, so there is no canonical belief to "
+                             "reconsolidate. The user can accept it with "
+                             "`reverie review`, or you can show it via "
+                             "review_list.",
+                }
             return {
                 "status": "error",
                 "session_active": True,
                 "ecu_id": ecu_id,
-                "error": f"Conclusion {ecu_id} was not retrieved in this session, so "
+                "reason": "not_found",
+                "error": f"No conclusion with id {target_id} exists. Check "
+                         "the id exactly as it appeared in the query result "
+                         "— reconsolidate can only re-evaluate conclusions "
+                         "returned by query.",
+            }
+
+        if not self._ensure_manager().is_labile(row["id"], target_id):
+            return {
+                "status": "error",
+                "session_active": True,
+                "ecu_id": ecu_id,
+                "reason": "not_labile",
+                "error": f"Conclusion {target_id} was not retrieved in this session, so "
                          "it cannot be reconsolidated — you can't "
                          "reconsolidate something you haven't looked at. Call "
                          "query first; if it appears in the result, "
                          "call reconsolidate with its id.",
             }
 
-        brain = self._ensure_brain()
         try:
             r = reconsolidation.reconsolidate(
                 brain, ecu_id.strip(), evidence,
@@ -1140,8 +1186,11 @@ class ReverieServer:
             f"(page {page_no}/{total_pages})",
         ]
         for i, row in enumerate(rows, start=1):
+            unsupported = " [unsupported evidence]" \
+                if row.get("evidence_status") == "unsupported" else ""
             lines.append(
                 f"{i}. [{row['confidence']:.2f}] {row['cognition']}"
+                f"{unsupported}"
             )
             lines.append(
                 f"   id: {row['id']} | type: {row['conclusion_type']} | "
@@ -1163,18 +1212,22 @@ class ReverieServer:
                  "confidence": r["confidence"],
                  "conclusion_type": r["conclusion_type"],
                  "scope": r["scope_path"], "repo": r["repo_path"],
-                 "branch": r["branch"], "review_status": r["review_status"]}
+                 "branch": r["branch"], "review_status": r["review_status"],
+                 "evidence_status": r.get("evidence_status")}
                 for r in rows
             ],
             "message": message,
             "instructions": (
                 "Show every candidate's full conclusion text, then relay "
                 "only the decisions the user states via review_decide. "
-                "Never decide on the user's behalf. One listing feeds one "
-                "decide call — after it succeeds, call review_list again "
-                "for the next batch (single-use tokens; this adds friction, "
-                "it is not a security boundary). Reverie cannot verify "
-                "who made a decision; the channel is recorded as 'agent'."
+                "Never decide on the user's behalf. Candidates marked "
+                "[unsupported evidence] carry no verifiable file, test, or "
+                "commit reference — point that out when showing them. One "
+                "listing feeds one decide call — after it succeeds, call "
+                "review_list again for the next batch (single-use tokens; "
+                "this adds friction, it is not a security boundary). "
+                "Reverie cannot verify who made a decision; the channel is "
+                "recorded as 'agent'."
             ),
         }
 
