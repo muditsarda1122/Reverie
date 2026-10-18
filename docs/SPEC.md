@@ -2009,7 +2009,7 @@ lightweight_diffusion:
 # Ollama is supported as a fallback for offline use (lower quality extraction).
 llm:
   provider: "opencode_zen"               # registry key: opencode_zen | anthropic | openai | google | openrouter | ollama | custom
-  model: "claude-haiku-4-5"             # best extraction quality per cost (tested); filled from the registry when omitted
+  model: "claude-haiku-5-5"             # cheap/current default; filled from the registry when omitted
   base_url: "https://opencode.ai/zen/v1"
   api_key_env: "OPENCODE_ZEN_API_KEY"   # env var name for API key
   wire_format: null                     # optional: "anthropic" | "openai" (null = derive from model name)

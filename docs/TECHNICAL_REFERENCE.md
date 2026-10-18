@@ -394,7 +394,7 @@ Agent calls MCP tool reverie_observe(user_prompt, reasoning_trace, final_output?
        │    ├─ _format_interaction → one user message (§5.2)
        │    ├─ load_extractor_prompt() → system prompt        (cached; REVERIE_EXTRACTOR_PROMPT
        │    │                                                  env override, package path, cwd)
-       │    ├─ call_llm(user_message, system=…)               (claude-haiku-4-5, temp 0.3)
+       │    ├─ call_llm(user_message, system=…)               (claude-haiku-5-5, temp 0.3)
        │    ├─ extract_json() + json.loads → {"ecus": [...], "rejected_count", "rejection_summary"}
        │    ├─ validate_ecu() per candidate                   (invalid → skipped, batch survives)
        │    ├─ _assign_priors() per valid candidate           (§5.9)
@@ -411,7 +411,7 @@ Agent calls MCP tool reverie_observe(user_prompt, reasoning_trace, final_output?
 ```yaml
 llm:
   provider: "opencode_zen"
-  model: "claude-haiku-4-5"
+  model: "claude-haiku-5-5"
   base_url: "https://opencode.ai/zen/v1"
   api_key_env: "OPENCODE_ZEN_API_KEY"
   timeout: 60

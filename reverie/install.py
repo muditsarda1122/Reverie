@@ -417,6 +417,22 @@ def _provider_guidance() -> str:
     return "\n".join(lines)
 
 
+def _existing_llm_config(reverie_home: Path) -> dict | None:
+    """The user's pre-existing ``llm`` block from ``config.yaml`` (None when
+    there is no usable one). Read BEFORE the install run writes anything so
+    a freshly bootstrapped default never counts as user configuration
+    (review fix 44)."""
+    path = reverie_home / "config.yaml"
+    if not path.exists():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return None
+    llm = data.get("llm") if isinstance(data, dict) else None
+    return llm if isinstance(llm, dict) and llm else None
+
+
 def _llm_block_config_plan(reverie_home: Path, home: Path, block: dict,
                            detail: str) -> PlannedWrite:
     """Merge a resolved ``llm`` block into ``~/.reverie/config.yaml`` (D42-style).
@@ -490,9 +506,15 @@ def _configure_provider(reverie_home: Path, home: Path, entry: providers.Provide
         if env_var:
             print_fn(f"  ✓ {env_var} is set")
         elif entry.key_required:
-            print_fn(f"  ✗ {entry.api_key_env} is not set — export it before "
-                     "using Reverie's LLM features:")
+            # review fix 43: this check runs in the SAME process as the ping,
+            # so name the variable, where it was checked, and how to make it
+            # visible here without touching any real shell config.
+            print_fn(f"  ✗ {entry.api_key_env} is not set in this process's "
+                     "environment — Reverie's LLM calls will fail until it is.")
             print_fn(f"      {_export_hint(entry)}")
+            print_fn("      Then open a new terminal (or run `source "
+                     "~/.zshrc` / `source ~/.bashrc` for your shell) and "
+                     "re-run `reverie install`.")
     if entry.key != "ollama" and ollama_path:
         print_fn(_OLLAMA_FALLBACK_NOTE)
 
@@ -509,24 +531,33 @@ def _live_ping(config) -> tuple[bool, str]:
 
 
 def _verify_provider(reverie_home: Path, *, dry_run: bool, no_verify: bool,
-                     verify_fn, print_fn) -> None:
-    """One live ping against the freshly written config (skippable)."""
+                     verify_fn, print_fn) -> bool:
+    """One live ping against the freshly written config (skippable).
+
+    Returns True when the provider answered (or verification was skipped)
+    and False only for a real ping failure — the caller reports "Reverie is
+    installed, but the LLM is not reachable" and exits non-zero (review
+    fix 1). The model name in the message comes from the config that was
+    actually written (review fix 2)."""
     if dry_run:
         print_fn("  [dry-run] would verify the provider with one cheap "
                  "live ping (skipped)")
-        return
+        return True
     if no_verify:
         print_fn("  (live verification skipped — --no-verify)")
-        return
-    print_fn("  Verifying with a live ping...")
+        return True
+    config = load_config(reverie_home / "config.yaml")
+    model = config.llm.model
+    print_fn(f"  Verifying {model} with a live ping...")
     ping = verify_fn or _live_ping
-    ok, detail = ping(load_config(reverie_home / "config.yaml"))
+    ok, detail = ping(config)
     if ok:
-        print_fn(f"  ✓ {detail!r} — Reverie's LLM features are live")
-    else:
-        print_fn(f"  ✗ Ping failed: {detail}")
-        print_fn("    The provider is configured; fix the key or model name "
-                 "and re-run `reverie install --provider <name> --no-verify`.")
+        print_fn(f"  ✓ {detail!r} — {model} is reachable")
+        return True
+    print_fn(f"  ✗ Ping failed for {model}: {detail}")
+    print_fn("    The provider is configured; fix the key or model name "
+             "and re-run `reverie install --provider <name>`.")
+    return False
 
 
 def _provider_menu(input_fn, print_fn, environ) -> str | None:
@@ -1457,6 +1488,7 @@ def _select_interactive(detected: list[AgentSpec], input_fn, print_fn
 def run(*, home: Path | None = None, reverie_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
         dry_run: bool = False, provider: str | None = None,
+        reconfigure: bool = False,
         no_verify: bool = False, verify_fn=None, import_file: str | None = None,
         check_fn=None, input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
@@ -1464,9 +1496,15 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     """§28.8 `reverie install`. Returns 0 on success, raises InstallError otherwise.
 
     ``provider`` (--provider) selects the LLM provider non-interactively
-    (registry key; ``ollama`` runs the D42 local setup). ``no_verify``
-    skips the live ping; ``verify_fn`` (returning ``(ok, detail)``) replaces
-    the ping in tests. ``runner`` executes the Ollama model pull (injectable;
+    (registry key; ``ollama`` runs the D42 local setup). ``reconfigure``
+    (--reconfigure) asks the provider question again even when
+    ``config.yaml`` already carries an ``llm`` block; without it an
+    existing block is kept and only re-verified (review fix 44).
+    ``no_verify`` skips the live ping; ``verify_fn`` (returning
+    ``(ok, detail)``) replaces the ping in tests. A failed ping makes the
+    run return 1 with "Reverie is installed, but the LLM is not
+    reachable" — no "Reverie is ready!" (review fix 1). ``runner``
+    executes the Ollama model pull (injectable;
     failures are reported, never fatal). ``check_fn`` replaces the
     end-of-install MCP server check in tests (signature ``(command, args,
     env) -> (ok, detail)``; the real one launches each written command). A
@@ -1479,6 +1517,9 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     """
     home = Path(home) if home else Path.home()
     reverie_home = Path(reverie_home) if reverie_home else _default_reverie_home()
+    # Read BEFORE anything is written: only a pre-existing llm block counts
+    # as user configuration (review fix 44).
+    existing_llm = _existing_llm_config(reverie_home)
 
     print_fn("\nReverie — Installation\n")
     if dry_run:
@@ -1535,7 +1576,9 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             created_paths.append(write.path)
 
     # -- ~/.reverie bootstrap (§28.2) -------------------------------------------
-    print_fn(f"\nCreating {_display(reverie_home, home)}/ directory...")
+    # review fix 48: only announce directory creation when it happens.
+    if not reverie_home.exists():
+        print_fn(f"\nCreating {_display(reverie_home, home)}/ directory...")
     for write in _reverie_home_plans(home, reverie_home):
         _emit(write, home, dry_run, print_fn)
         if not dry_run and write.action in ("create", "create-db"):
@@ -1550,6 +1593,7 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     ollama_path = which(OLLAMA_BINARY)
 
     chosen: providers.Provider | None = None
+    verify_existing = False
     if provider is not None:
         entry = providers.get(provider)
         if entry is None or provider == "custom":
@@ -1558,6 +1602,17 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
                 f"{', '.join(providers.provider_names())}"
             )
         chosen = entry
+    elif existing_llm is not None and not reconfigure:
+        # review fix 44: a config that already carries an llm block is the
+        # user's setup — keep it and only re-verify. --provider and
+        # --reconfigure are the explicit ways to change it.
+        keep_provider = existing_llm.get("provider") or "(provider unset)"
+        keep_model = existing_llm.get("model") or "(model unset)"
+        print_fn(f"  · already configured for {keep_provider} — keeping "
+                 f"{_display(reverie_home / 'config.yaml', home)}")
+        print_fn(f"    ({keep_model}; pass --provider <name> or "
+                 "--reconfigure to change it)")
+        verify_existing = True
     else:
         detected = [
             key for key in providers.MENU_KEYS
@@ -1581,7 +1636,19 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             menu_choice = _provider_menu(input_fn, print_fn, environ)
             chosen = providers.get(menu_choice)
 
-    if chosen is None:
+    ping_ok = True
+    if chosen is not None:
+        _configure_provider(reverie_home, home, chosen, dry_run=dry_run,
+                            print_fn=print_fn, environ=environ,
+                            runner=runner, ollama_path=ollama_path)
+        ping_ok = _verify_provider(reverie_home, dry_run=dry_run,
+                                   no_verify=no_verify, verify_fn=verify_fn,
+                                   print_fn=print_fn)
+    elif verify_existing:
+        ping_ok = _verify_provider(reverie_home, dry_run=dry_run,
+                                   no_verify=no_verify, verify_fn=verify_fn,
+                                   print_fn=print_fn)
+    else:
         print_fn("\nNo provider configured — Reverie's LLM features stay off "
                  "until one is set.")
         print_fn(_provider_guidance())
@@ -1592,12 +1659,6 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             print_fn(_OLLAMA_CONFIG_SNIPPET)
         else:
             print_fn(_OLLAMA_INSTALL_INSTRUCTIONS)
-    else:
-        _configure_provider(reverie_home, home, chosen, dry_run=dry_run,
-                            print_fn=print_fn, environ=environ,
-                            runner=runner, ollama_path=ollama_path)
-        _verify_provider(reverie_home, dry_run=dry_run, no_verify=no_verify,
-                         verify_fn=verify_fn, print_fn=print_fn)
 
     # Record what this run created (folded in, hashes as written) so the
     # uninstaller can distinguish Reverie-created files from user files.
@@ -1644,6 +1705,13 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             print_fn("The harness entries above point at a command that does "
                      "not run. Fix it, then re-run `reverie install`.")
             return 1
+
+    # -- LLM reachability decides success (review fix 1) -------------------
+    if not ping_ok:
+        print_fn("\nReverie is installed, but the LLM is not reachable.")
+        print_fn("  The harness entries are in place. Fix the key or model "
+                 "above, then re-run `reverie install` to re-verify.")
+        return 1
 
     # -- per-harness summary: what was written, what to do next -----------
     print_fn("\nReverie is ready!\n")
@@ -1728,6 +1796,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--provider", default=None, metavar="PROVIDER",
                         help="LLM provider to configure without prompting "
                              f"({', '.join(providers.provider_names())})")
+    parser.add_argument("--reconfigure", action="store_true",
+                        help="ask the LLM provider question again even when "
+                             "config.yaml already carries an llm block "
+                             "(by default an existing configuration is kept "
+                             "and only re-verified)")
     parser.add_argument("--no-verify", action="store_true",
                         help="skip the live ping after provider setup")
     parser.add_argument("--import", dest="import_file", metavar="FILE",
@@ -1745,6 +1818,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.only else None,
             dry_run=args.dry_run,
             provider=args.provider,
+            reconfigure=args.reconfigure,
             no_verify=args.no_verify,
             import_file=args.import_file,
         )

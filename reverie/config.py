@@ -185,7 +185,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # behaviour: every field is used as written below).
     "llm": {
         "provider": "opencode_zen",
-        "model": "claude-haiku-4-5",
+        "model": "claude-haiku-5-5",
         "base_url": "https://opencode.ai/zen/v1",
         "api_key_env": "OPENCODE_ZEN_API_KEY",
         # Overrides the model-name wire-format rule (D48) when set:

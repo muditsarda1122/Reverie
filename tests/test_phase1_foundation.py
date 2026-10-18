@@ -28,7 +28,7 @@ def make_ecu(cognition: str, **overrides) -> dict:
         "provenance": {
             "source_type": "debugging",
             "source_id": "session-test",
-            "origin_agent": "claude-haiku-4-5",
+            "origin_agent": "claude-haiku-5-5",
             "origin_engineer": None,
         },
         "grounding": {
@@ -88,7 +88,7 @@ class TestConfig:
         assert cfg.activation.decay_factor == 0.5
         assert cfg.activation.normalization == "divide_by_max"
         # llm
-        assert cfg.llm.model == "claude-haiku-4-5"
+        assert cfg.llm.model == "claude-haiku-5-5"
         assert cfg.llm.temperature == 0.3
         assert cfg.llm.temperature_mode_detection == 0.0
         assert cfg.llm.api_key_env == "OPENCODE_ZEN_API_KEY"
@@ -131,7 +131,7 @@ class TestConfig:
         assert cfg.ranking.w_relevance == 0.9          # overridden
         assert cfg.ranking.w_confidence == 0.15      # untouched default kept
         assert cfg.llm.timeout == 5                  # overridden
-        assert cfg.llm.model == "claude-haiku-4-5"   # untouched default kept
+        assert cfg.llm.model == "claude-haiku-5-5"   # untouched default kept
 
     def test_source_prior_aliases(self):
         # extractor emits "review"/"session"; §15 names "code_review"
@@ -175,7 +175,7 @@ class TestBrain:
         assert got["scope"]["level"] == "repo"
         assert got["scope"]["path"].endswith("module:routing")
         assert got["provenance"]["source_type"] == "debugging"
-        assert got["provenance"]["origin_agent"] == "claude-haiku-4-5"
+        assert got["provenance"]["origin_agent"] == "claude-haiku-5-5"
         assert got["provenance"]["created_at"]  # auto-populated ISO 8601
         assert got["grounding"]["files"] == ["fastapi/routing.py"]
         assert got["confidence"] == pytest.approx(0.72)

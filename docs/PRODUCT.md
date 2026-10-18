@@ -299,7 +299,7 @@ Implementation: `reverie/extractor.py` + the prompt `reverie/prompts/extractor_p
 
 | Aspect | Actual behavior | Evidence |
 |---|---|---|
-| Model | `claude-haiku-4-5` via OpenCode Zen (`https://opencode.ai/zen/v1`), temperature **0.3**, max_tokens 4096, timeout 60 s | `reverie/config.py:175-184` |
+| Model | `claude-haiku-5-5` via OpenCode Zen (`https://opencode.ai/zen/v1`), temperature **0.3**, max_tokens 4096, timeout 60 s | `reverie/config.py:175-184` |
 | Prompt | `reverie/prompts/extractor_prompt.md` loaded at runtime (env override → package path → cwd; cached). **613 lines / 34,225 chars.** Header claims MIT license, v1.0, "Open Tier" | `extractor.py:37-98`; `wc` |
 | Prompt contents | ECU definition; Information-vs-Conclusion distinction; 3-part **Lifting Test** ("So What?" / "Future Session" / "Independence"); 8 conclusion types; 10 "do not extract" rules; **atomization rule** (one conclusion per ECU); signal catalog (architecture/decision/pattern/constraint/debugging/implementation/workflow); hypothesis handling (validated/disproven/unresolved); extraction priority; multi-source corroboration via `+`-separated `evidence_pointer`; output schema; 15 few-shot examples incl. a zero-ECU example; 11-step execution process; **self-review pass** ("could an engineer obtain this by reading the code?"); critical reminders ("Zero ECUs is a valid output", "resist the urge to produce") | the file itself |
 | Input format | One user message of sections: `## Session Context`, `## Developer Prompt`, `## Agent Reasoning Trace`, `## Agent Final Output` (at least one required) | `extractor.py:195-215` |
