@@ -346,3 +346,36 @@ class TestReconsolidateReasons:
         payload, _ = call_tool(server, "reconsolidate",
                                {"ecu_id": cid, "evidence": "a.py:1"})
         assert payload["reason"] == "not_labile"
+
+    def _labile(self, brain, manager, model, cognition="A labile belief"):
+        sid = manager.ensure_session(REPO, BRANCH)["id"]
+        cid = brain.insert_ecu({
+            "cognition": cognition,
+            "conclusion_type": "invariant",
+            "scope": {"level": "repo", "path": "repo:x"},
+            "provenance": {"source_type": "debugging"},
+            "confidence": 0.7,
+        }, embedding=model.encode_one(cognition))
+        manager.mark_labile(sid, [cid])
+        return cid
+
+    # item 17 — same evidence standard as item 12
+    def test_unsupported_evidence_refused(self, server, brain, manager,
+                                          model):
+        cid = self._labile(brain, manager, model)
+        before = brain.get_ecu(cid)["confidence"]
+        payload, _ = call_tool(server, "reconsolidate", {
+            "ecu_id": cid, "evidence": "the user said so",
+            "relationship": "supports"})
+        assert payload["status"] == "error"
+        assert payload["reason"] == "unsupported_evidence"
+        assert brain.get_ecu(cid)["confidence"] == before
+
+    def test_verifiable_evidence_accepted(self, server, brain, manager,
+                                          model):
+        cid = self._labile(brain, manager, model)
+        payload, _ = call_tool(server, "reconsolidate", {
+            "ecu_id": cid,
+            "evidence": "auth/token.py:12 confirms the refresh ordering",
+            "relationship": "supports"})
+        assert payload["status"] == "ok", payload

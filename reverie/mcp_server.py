@@ -202,7 +202,8 @@ Do NOT call observe for:
 - Pure factual observations (the Extractor handles the lifting to conclusions)
 
 Call observe AT MOST ONCE per task — batch everything worth saving into a
-single call after you have the insight, not after every response.
+single call after you have the insight, not after every response — unless a
+separate new insight appears.
 
 observe runs the Extractor on your reasoning, produces candidate
 conclusions, and stores them in the Session Brain. They are immediately
@@ -1074,6 +1075,31 @@ class ReverieServer:
                          "reconsolidate something you haven't looked at. Call "
                          "query first; if it appears in the result, "
                          "call reconsolidate with its id.",
+            }
+
+        # Item 17 (same evidence standard as item 12): a reconsolidation
+        # relationship without a file/test/commit reference is not evidence.
+        if not isinstance(evidence, str) or not evidence.strip():
+            return {
+                "status": "error",
+                "session_active": True,
+                "ecu_id": ecu_id,
+                "reason": "missing_evidence",
+                "error": "reconsolidate requires 'evidence' — your reasoning "
+                         "about what changed and why it affects the "
+                         "conclusion.",
+            }
+        if not extractor.evidence_supported(evidence):
+            return {
+                "status": "error",
+                "session_active": True,
+                "ecu_id": ecu_id,
+                "reason": "unsupported_evidence",
+                "error": "This evidence does not reference anything "
+                         "verifiable, so nothing was changed. Evidence must "
+                         "be a file path with line numbers (e.g. "
+                         "'src/auth/token.py:42'), a test name, or a commit "
+                         "hash — not free-floating narrative.",
             }
 
         try:

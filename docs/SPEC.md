@@ -2742,7 +2742,8 @@ Do NOT call observe for:
 - Every single response — only when you have engineering insight worth saving
 
 Call observe AT MOST ONCE per task — batch everything worth saving into a
-single call after you have the insight, not after every response.
+single call after you have the insight, not after every response — unless a
+separate new insight appears.
 
 ## When to Call query
 

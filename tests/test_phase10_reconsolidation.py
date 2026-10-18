@@ -582,7 +582,7 @@ class TestMcpReconsolidateTool:
         with patch("reverie.diffuser.call_llm",
                    side_effect=DiffuserError("no API key")):
             payload, _ = call_tool(server, "reconsolidate", {
-                "ecu_id": old, "evidence": "some finding"})   # no relationship
+                "ecu_id": old, "evidence": "auth/token.py:12 confirms it"})
         assert payload["status"] == "error"
         assert "explicit relationship" in payload["error"]
         assert brain.get_ecu(old)["confidence"] == pytest.approx(0.5)
