@@ -404,10 +404,10 @@ def diffuse_ecu(brain, ecu_id: str, embedding_model=None, config=None) -> Diffus
 
     new_ecu = brain.get_ecu(ecu_id)
     if new_ecu is None:
-        raise DiffuserError(f"no canonical ECU with id {ecu_id}")
+        raise DiffuserError(f"no canonical conclusion with id {ecu_id}")
     if new_ecu["status"] not in RETRIEVABLE_STATUSES:
         raise DiffuserError(
-            f"ECU {ecu_id} has status {new_ecu['status']!r}; only live ECUs diffuse"
+            f"conclusion {ecu_id} has status {new_ecu['status']!r}; only live conclusions diffuse"
         )
     return _diffuse_against_brain(brain, new_ecu, embedding_model, cfg)
 
@@ -559,9 +559,9 @@ def _check_opposing_edges(brain, source_id, target_id, new_type):
             or brain.get_edges_between(source_id, target_id, "contradicts")
         ),
         "message": (
-            f"ECU {source_id[:8]} both supports and contradicts ECU "
+            f"conclusion {source_id[:8]} both supports and contradicts conclusion "
             f"{target_id[:8]}. This relationship may need decomposition "
-            "into more atomic ECUs."
+            "into more atomic conclusions."
         ),
     }
 
@@ -737,10 +737,10 @@ def diffuse_session_ecu(
 
     new_ecu = brain.get_session_ecu(ecu_id)
     if new_ecu is None:
-        raise DiffuserError(f"no session ECU with id {ecu_id}")
+        raise DiffuserError(f"no session conclusion with id {ecu_id}")
     if new_ecu["session_id"] != session_id:
         raise DiffuserError(
-            f"session ECU {ecu_id} belongs to session {new_ecu['session_id']}, "
+            f"session conclusion {ecu_id} belongs to session {new_ecu['session_id']}, "
             f"not {session_id}"
         )
 

@@ -403,7 +403,7 @@ class TestRanking:
         assert groups["A"]["core_ecu"]["status"] == "challenged"
         assert "⚠️ This cognition is challenged" in challenged["formatted"]
         assert f"See: [B]" in challenged["formatted"]
-        assert any("1 ECU is challenged" == w for w in challenged["warnings"])
+        assert any("1 conclusion is challenged" == w for w in challenged["warnings"])
 
     def test_mode_reweighting(self, brain, model):
         text = "PostgreSQL was chosen over MongoDB for flexible indexing needs"
@@ -614,7 +614,7 @@ class TestResultFormat:
             brain, "does the session store lose data on deploy",
             mode="investigation", embedding_model=model)
         text = result["formatted"]
-        assert "⚠️ Low confidence — this cognition is uncertain." in text
+        assert "⚠️ Low confidence — this conclusion is uncertain." in text
         assert "⚠️ Very low confidence" in text
         assert any("low confidence" in w for w in result["warnings"])
         labels = {g["core_ecu"]["id"]: g["core_ecu"]["confidence_label"]
@@ -626,7 +626,7 @@ class TestResultFormat:
                                    embedding_model=model)
         assert empty["status"] == "ok"
         assert empty["groups_retrieved"] == 0
-        assert "No relevant engineering cognition" in empty["message"]
+        assert "No relevant engineering conclusions" in empty["message"]
         assert "=== End Engineering Cognition ===" in empty["formatted"]
 
         insert(brain, model, make_ecu(

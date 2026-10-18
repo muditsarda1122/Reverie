@@ -330,7 +330,7 @@ def main_import(argv: list[str] | None = None) -> int:
 
 def main_reset(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="ec reset",
+        prog="reverie reset",
         description="Reset the Reverie brain. Always takes an automatic "
                     "backup export first and prints its path.",
     )

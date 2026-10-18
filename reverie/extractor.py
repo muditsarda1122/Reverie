@@ -172,11 +172,11 @@ def validate_ecu(raw: dict) -> dict:
     Raises ValueError on any violation — the caller skips invalid ECUs.
     """
     if not isinstance(raw, dict):
-        raise ValueError(f"ECU must be a JSON object, got {type(raw).__name__}")
+        raise ValueError(f"conclusion must be a JSON object, got {type(raw).__name__}")
 
     cognition = str(raw.get("cognition") or "").strip()
     if not cognition:
-        raise ValueError("ECU cognition must be a non-empty string")
+        raise ValueError("conclusion cognition must be a non-empty string")
 
     conclusion_type = raw.get("conclusion_type")
     if conclusion_type not in CONCLUSION_TYPES:
@@ -317,7 +317,7 @@ def extract_ecus(
             ecu = validate_ecu(raw)
         except ValueError as exc:
             result.skipped_invalid += 1
-            log.warning("skipping invalid extracted ECU: %s", exc)
+            log.warning("skipping invalid extracted conclusion: %s", exc)
             continue
         ecu["source_id"] = source_id
         ecu["origin_agent"] = origin_agent or cfg.llm.model

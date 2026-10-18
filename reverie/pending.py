@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="re-run diffusion for undiffused conclusions instead of "
                              "retrying pending extractions")
     parser.add_argument("--ecu-id", metavar="ECU_ID", default=None,
-                        help="with --rediffuse: only this conclusion id (ECU id)")
+                        help="with --rediffuse: only this conclusion id")
     parser.add_argument("--repo", default=None,
                         help="only items for this repo path (default: all)")
     parser.add_argument("--branch", default=None,

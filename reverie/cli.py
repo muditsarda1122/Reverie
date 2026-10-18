@@ -214,7 +214,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="re-run diffusion for undiffused conclusions instead of "
                         "retrying pending extractions")
     p.add_argument("--ecu-id", metavar="ECU_ID", default=None,
-                   help="with --rediffuse: only this conclusion id (ECU id)")
+                   help="with --rediffuse: only this conclusion id")
     p.add_argument("--repo", default=None,
                    help="only items for this repo path (default: all)")
     p.add_argument("--branch", default=None,

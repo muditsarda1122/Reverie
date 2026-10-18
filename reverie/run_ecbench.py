@@ -426,7 +426,7 @@ def run_condition(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m reverie.run_ecbench",
-        description="EC-Bench runner: N prompts x M sessions, with-EC vs "
+        description="EC-Bench runner: N prompts x M sessions, with-Reverie vs "
                     "baseline, transcripts + manifest for scoring.",
     )
     parser.add_argument("--spec", required=True, help="benchmark spec JSON")
@@ -513,7 +513,7 @@ def main(argv: list[str] | None = None) -> int:
                                           encoding="utf-8")
         if condition == "ec":
             stats = manifest.get("ec_stats", {})
-            print(f"  [{condition}] canonical ECUs: "
+            print(f"  [{condition}] canonical conclusions: "
                   f"{stats.get('canonical_ecus')}, edges: "
                   f"{stats.get('edges')}, retrieval events: "
                   f"{stats.get('retrieval_events')}")

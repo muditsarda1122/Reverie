@@ -2678,13 +2678,12 @@ This is the complete `~/.reverie/AGENTS.md` file. The install script writes this
 # Reverie — Agent Instructions
 
 Reverie is an MCP server providing engineering memory for your codebase.
-It stores engineering conclusions (the internal record is an Engineering
-Cognition Unit, ECU) — conclusions, not facts — and retrieves them when
+It stores engineering conclusions, not facts, and retrieves them when
 you need them.
 
 Reverie provides seven MCP tools:
 - observe: Extract engineering conclusions from your reasoning
-- query: Retrieve relevant engineering cognition
+- query: Retrieve relevant engineering conclusions
 - summary: Get brain statistics at session start
 - reconsolidate: Update a retrieved conclusion with new evidence
 - set_repo_state: Record the user's enablement answer for a repo
@@ -2747,7 +2746,7 @@ separate new insight appears.
 
 ## When to Call query
 
-Call query when you recognize a gap that past engineering cognition might fill.
+Call query when you recognize a gap that past engineering conclusions might fill.
 Read the relevant code files FIRST. Do NOT call query before you have grounded
 yourself in the repository. Reverie's memory is a supplement to your
 understanding, not a replacement for reading the code.
@@ -2794,7 +2793,7 @@ Call reconsolidate when:
 - You discovered new evidence that contradicts a retrieved conclusion
 - The code a conclusion is grounded in has changed, and the conclusion needs updating
 
-Pass the ECU ID (from the query result), your evidence (your reasoning about
+Pass the conclusion ID (from the query result), your evidence (your reasoning about
 what changed), and optionally the relationship (supports/contradicts/supersedes).
 Evidence must reference something the user can verify — a file path with
 line numbers, a test name, or a commit hash — not free-floating narrative.

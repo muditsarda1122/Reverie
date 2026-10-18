@@ -110,7 +110,7 @@ class TestUpdateGrounding:
         assert doc["grounding"]["files"] == ["auth/new.py"]
 
     def test_unknown_ecu_raises(self, brain):
-        with pytest.raises(BrainError, match="no ECU with id"):
+        with pytest.raises(BrainError, match="no conclusion with id"):
             brain.update_ecu_grounding("no-such-id", {"files": []})
 
     def test_non_dict_grounding_rejected(self, brain):
@@ -163,7 +163,7 @@ class TestAddEvidencePointer:
         assert "slack://eng-auth/threads/99" in doc["evidence_pointers"]
 
     def test_unknown_ecu_raises(self, brain):
-        with pytest.raises(BrainError, match="no ECU with id"):
+        with pytest.raises(BrainError, match="no conclusion with id"):
             brain.add_evidence_pointer("no-such-id", "ref")
 
     def test_empty_pointer_rejected(self, brain):

@@ -127,7 +127,7 @@ def _plan_json_entry(path: Path, home: Path, section: str,
     node = data.get(section)
     if not isinstance(node, dict) or "reverie" not in node:
         return PlannedRemoval(
-            path, "unchanged", f"{disp}: no ec entry in '{section}'")
+            path, "unchanged", f"{disp}: no reverie entry in '{section}'")
     node = dict(node)
     node.pop("reverie")
     remaining = dict(data)
@@ -151,7 +151,7 @@ def _plan_json_entry(path: Path, home: Path, section: str,
     return PlannedRemoval(
         path, "remove-entry",
         f"Removed the reverie MCP server from {disp} ('{section}' preserved)",
-        after=after, removed=f"[{section}].ec")
+        after=after, removed=f"[{section}].reverie")
 
 
 def _plan_line(path: Path, home: Path, line: str, label: str,
@@ -198,11 +198,11 @@ def _plan_block(path: Path, home: Path, block: str, marker: str, label: str,
     text = path.read_text(encoding="utf-8")
     if marker not in text:
         return PlannedRemoval(
-            path, "unchanged", f"{disp}: no EC reference block")
+            path, "unchanged", f"{disp}: no Reverie reference block")
     if block not in text:
         return PlannedRemoval(
             path, "skipped",
-            f"SKIPPED {disp}: the EC reference block was edited after "
+            f"SKIPPED {disp}: the Reverie reference block was edited after "
             "install — remove it by hand if you want it gone.")
     before = text[:text.index(block)]
     remainder = before + text[text.index(block) + len(block):]
@@ -218,12 +218,12 @@ def _plan_block(path: Path, home: Path, block: str, marker: str, label: str,
                 "block was in it)")
         return PlannedRemoval(
             path, "remove-block",
-            f"Removed the EC reference block from {disp} (empty file kept — "
+            f"Removed the Reverie reference block from {disp} (empty file kept — "
             "it existed before install)",
             after="", removed=block.strip().splitlines()[0] + " …")
     remainder = remainder.rstrip("\n") + "\n"
     return PlannedRemoval(
-        path, "remove-block", f"Removed the EC reference block from {disp}",
+        path, "remove-block", f"Removed the Reverie reference block from {disp}",
         after=remainder, removed=block.strip().splitlines()[0] + " …")
 
 

@@ -165,7 +165,7 @@ def test_accept_promotes_and_diffuses(brain, model, session_id):
     assert brain.get_ecu(target)["confidence"] == pytest.approx(expected, abs=1e-3)
     assert edges[0]["confidence_delta"] == pytest.approx(delta, abs=1e-3)
     assert result.canonical_total == 2
-    assert "Brain now has 2 ECUs." in result.message
+    assert "Brain now has 2 conclusions." in result.message
 
 
 def test_accept_with_edit(brain, model, session_id):
@@ -202,7 +202,7 @@ def test_accept_diffusion_failure_still_promotes(brain, model, session_id):
     # the failure is tracked for the prominent CLI warning
     assert result.undiffused == [s]
     warning = diffusion_failure_warning(result)
-    assert "1 ECU(s) promoted without diffusion due to API errors" in warning
+    assert "1 conclusion(s) promoted without diffusion due to API errors" in warning
     assert s in warning
     assert "no edges and unchanged confidence" in warning
     assert "re-running diffusion manually" in warning
@@ -228,7 +228,7 @@ def test_interactive_review_prints_diffusion_warning(brain, model, session_id):
         )
     assert len(result.undiffused) == 1
     text = "\n".join(printed)
-    assert "⚠️ WARNING: 1 ECU(s) promoted without diffusion" in text
+    assert "⚠️ WARNING: 1 conclusion(s) promoted without diffusion" in text
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +485,7 @@ def test_review_closes_session_and_logs(brain, model, session_id):
 
     assert result.message == (
         "Review complete. 1 accepted, 1 rejected, 1 skipped (pending). "
-        "Diffusing to Canonical Brain... done. Brain now has 1 ECUs."
+        "Diffusing to Canonical Brain... done. Brain now has 1 conclusion."
     )
     row = brain.get_session(session_id)
     assert row["status"] == "closed"
@@ -520,6 +520,6 @@ def test_interactive_review_driver(brain, model, session_id):
     assert brain.get_ecu(e1) is not None and brain.get_ecu(e3) is not None
     assert brain.get_ecu(e2) is None
     text = "\n".join(printed)
-    assert "EC Review Gate — 3 candidate ECUs in 2 groups" in text
+    assert "Reverie Review Gate — 3 candidates in 2 groups" in text
     assert "provenance:" in text  # the 'd' detail print
     assert "Cleaning up Session Brain..." in text

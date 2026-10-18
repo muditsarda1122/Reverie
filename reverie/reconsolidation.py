@@ -210,7 +210,7 @@ def _materialize_evidence_ecu(brain, target: dict, evidence: str, session_id,
     ecu_id = brain.insert_ecu(ecu, embedding=embedding)
     stored = brain.get_ecu(ecu_id)
     if stored is None:                       # pragma: no cover - defensive
-        raise ReconsolidationError(f"materialized ECU {ecu_id} vanished")
+        raise ReconsolidationError(f"materialized conclusion {ecu_id} vanished")
     return stored
 
 
@@ -236,21 +236,21 @@ def reconsolidate(
     if not isinstance(evidence, str) or not evidence.strip():
         raise ReconsolidationError(
             "reconsolidate requires 'evidence' (a non-empty description of "
-            "what you found and why it affects the ECU)"
+            "what you found and why it affects the conclusion)"
         )
     evidence = evidence.strip()
 
     target = brain.get_ecu(ecu_id)
     if target is None:
         raise ReconsolidationError(
-            f"No canonical ECU with id {ecu_id}. Use the ecu_id exactly as it "
+            f"No canonical conclusion with id {ecu_id}. Use the ecu_id exactly as it "
             "appeared in the query result."
         )
     if target["status"] not in RETRIEVABLE_STATUSES:
         raise ReconsolidationError(
-            f"ECU {ecu_id} has status {target['status']!r} and can no longer "
+            f"conclusion {ecu_id} has status {target['status']!r} and can no longer "
             "be reconsolidated (only active, challenged, or open_question "
-            "ECUs are revisable)"
+            "conclusions are revisable)"
         )
 
     if embedding_model is None:
@@ -331,7 +331,7 @@ def reconsolidate(
         result.edges_created += len(dres.edges_created)
     except DiffuserError as exc:
         # The target update stands; enriching related ECUs is best-effort.
-        log.warning("related-ECU diffusion failed for %s: %s", ecu_id, exc)
+        log.warning("related-conclusion diffusion failed for %s: %s", ecu_id, exc)
         result.diffusion_error = str(exc)
 
     result.edges_created += len(scratch.edges_created)
@@ -348,19 +348,19 @@ def _message_for(r: ReconsolidationResult) -> str:
             f"Evidence recorded as support; confidence "
             f"{r.old_confidence:.2f} → {r.new_confidence:.2f}."),
         ACTION_CHALLENGED: (
-            f"Evidence contradicts the ECU; it is now challenged "
+            f"Evidence contradicts the conclusion; it is now challenged "
             f"(confidence {r.old_confidence:.2f} → {r.new_confidence:.2f})."),
         ACTION_SUPERSEDED: (
-            f"Evidence supersedes the ECU; new ECU {r.new_ecu_id} replaces it "
+            f"Evidence supersedes the conclusion; new conclusion {r.new_ecu_id} replaces it "
             "(the old belief is frozen for audit)."),
         ACTION_NO_CHANGE: (
-            "The evidence was classified as unrelated to this ECU; nothing "
+            "The evidence was classified as unrelated to this conclusion; nothing "
             "was changed."),
     }[r.action_taken]
     extra = ""
     if r.related_updates:
-        extra = (f" {len(r.related_updates)} related ECU(s) also updated.")
+        extra = (f" {len(r.related_updates)} related conclusion(s) also updated.")
     if r.diffusion_error:
-        extra += (f" Note: related-ECU diffusion failed ({r.diffusion_error}); "
+        extra += (f" Note: related-conclusion diffusion failed ({r.diffusion_error}); "
                   "the main update was applied.")
     return what + extra

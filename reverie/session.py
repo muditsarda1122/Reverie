@@ -321,7 +321,7 @@ class SessionManager:
         message = f"Started a session on branch {branch} in {repo_name}."
         if moved:
             message += (
-                f" ({len(moved)} unreviewed ECU{'s' if len(moved) != 1 else ''} "
+                f" ({len(moved)} unreviewed conclusion{'s' if len(moved) != 1 else ''} "
                 "carried over from a previous session.)"
             )
         row = self.brain.get_session(session_id)
@@ -358,7 +358,7 @@ class SessionManager:
                 ecus_affected=result.ecus_affected)
             if result.ecus_affected:
                 log.info(
-                    "EC grounding: %d ECU(s) affected on %s",
+                    "Grounding check: %d conclusion(s) affected on %s",
                     result.ecus_affected, repo_path)
         except Exception:
             log.exception("Reverie: post-start grounding check failed (ignored)")

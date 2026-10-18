@@ -298,7 +298,7 @@ class TestReconsolidateRelatedAndValidation:
         assert brain.edge_count(related) == 0
 
     def test_unknown_ecu_guidance(self, brain, model):
-        with pytest.raises(ReconsolidationError, match="No canonical ECU"):
+        with pytest.raises(ReconsolidationError, match="No canonical conclusion"):
             reconsolidate(brain, "missing-id", "evidence",
                           embedding_model=model)
 

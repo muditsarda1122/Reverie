@@ -59,7 +59,7 @@ class EmbeddingModel:
         except Exception as exc:
             raise EmbeddingError(
                 f"Failed to load embedding model {self.model_name!r}: {exc}. "
-                "EC requires this model for ECU storage and retrieval."
+                "Reverie requires this model for conclusion storage and retrieval."
             ) from exc
 
     def encode(self, texts: list[str]) -> np.ndarray:

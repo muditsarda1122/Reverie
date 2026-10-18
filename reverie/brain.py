@@ -155,7 +155,7 @@ class Brain:
         confidence: float,
     ) -> None:
         if not cognition or not cognition.strip():
-            raise ValueError("ECU cognition must be a non-empty string")
+            raise ValueError("conclusion cognition must be a non-empty string")
         if conclusion_type not in CONCLUSION_TYPES:
             raise ValueError(
                 f"invalid conclusion_type {conclusion_type!r}; "
@@ -263,7 +263,7 @@ class Brain:
             )
             self._conn.commit()
         except sqlite3.IntegrityError as exc:
-            raise BrainError(f"could not insert ECU {ecu_id}: {exc}") from exc
+            raise BrainError(f"could not insert conclusion {ecu_id}: {exc}") from exc
         return ecu_id
 
     @staticmethod
@@ -385,7 +385,7 @@ class Brain:
             "UPDATE ecus SET confidence = ? WHERE id = ?", (new_confidence, ecu_id)
         )
         if cur.rowcount == 0:
-            raise BrainError(f"no ECU with id {ecu_id}")
+            raise BrainError(f"no conclusion with id {ecu_id}")
         self._rewrite_document(ecu_id)
         self._conn.commit()
 
@@ -399,7 +399,7 @@ class Brain:
             "UPDATE ecus SET status = ? WHERE id = ?", (new_status, ecu_id)
         )
         if cur.rowcount == 0:
-            raise BrainError(f"no ECU with id {ecu_id}")
+            raise BrainError(f"no conclusion with id {ecu_id}")
         self._rewrite_document(ecu_id)
         self._conn.commit()
 
@@ -409,7 +409,7 @@ class Brain:
             "SELECT metadata_json FROM ecus WHERE id = ?", (ecu_id,)
         ).fetchone()
         if row is None:
-            raise BrainError(f"no ECU with id {ecu_id}")
+            raise BrainError(f"no conclusion with id {ecu_id}")
         metadata = json.loads(row["metadata_json"])
         metadata.update(fields)
         self._conn.execute(
@@ -435,7 +435,7 @@ class Brain:
             "SELECT grounding_json FROM ecus WHERE id = ?", (ecu_id,)
         ).fetchone()
         if row is None:
-            raise BrainError(f"no ECU with id {ecu_id}")
+            raise BrainError(f"no conclusion with id {ecu_id}")
         merged = {**json.loads(row["grounding_json"]), **new_grounding}
         self._conn.execute(
             "UPDATE ecus SET grounding_json = ? WHERE id = ?",
@@ -457,7 +457,7 @@ class Brain:
             "SELECT evidence_pointers_json FROM ecus WHERE id = ?", (ecu_id,)
         ).fetchone()
         if row is None:
-            raise BrainError(f"no ECU with id {ecu_id}")
+            raise BrainError(f"no conclusion with id {ecu_id}")
         pointers = json.loads(row["evidence_pointers_json"])
         if pointer not in pointers:
             pointers.append(pointer)
@@ -491,7 +491,7 @@ class Brain:
             raise ValueError(f"invalid edge type {type!r}; expected one of {EDGE_TYPES}")
         for role, ecu_id in (("source", source_id), ("target", target_id)):
             if not self.ecu_exists(ecu_id):
-                raise BrainError(f"{role} ECU {ecu_id} does not exist")
+                raise BrainError(f"{role} conclusion {ecu_id} does not exist")
         if type == "supersedes":
             if supersession_type not in ("cosmetic", "semantic"):
                 supersession_type = "semantic"
@@ -729,7 +729,7 @@ class Brain:
             "SELECT document FROM session_ecus WHERE id = ?", (ecu_id,)
         ).fetchone()
         if row is None:
-            raise BrainError(f"no session ECU with id {ecu_id}")
+            raise BrainError(f"no session conclusion with id {ecu_id}")
         doc = json.loads(row["document"])
         doc["confidence"] = new_confidence
         self._conn.execute(
@@ -776,12 +776,12 @@ class Brain:
         if target_type not in ("session_ecu", "canonical_ecu"):
             raise ValueError(f"invalid target_type {target_type!r}")
         if not self.session_ecu_exists(source_id):
-            raise BrainError(f"source session ECU {source_id} does not exist")
+            raise BrainError(f"source session conclusion {source_id} does not exist")
         if target_type == "session_ecu":
             if not self.session_ecu_exists(target_id):
-                raise BrainError(f"target session ECU {target_id} does not exist")
+                raise BrainError(f"target session conclusion {target_id} does not exist")
         elif not self.ecu_exists(target_id):
-            raise BrainError(f"target canonical ECU {target_id} does not exist")
+            raise BrainError(f"target canonical conclusion {target_id} does not exist")
 
         existing = self._conn.execute(
             "SELECT id, weight FROM session_edges "
@@ -878,7 +878,7 @@ class Brain:
                 f"got {relationship_type!r}"
             )
         if not self.ecu_exists(canonical_ecu_id):
-            raise BrainError(f"canonical ECU {canonical_ecu_id} does not exist")
+            raise BrainError(f"canonical conclusion {canonical_ecu_id} does not exist")
         update_id = str(uuid.uuid4())
         self._conn.execute(
             """
@@ -1041,7 +1041,7 @@ class Brain:
             else (status, ecu_id),
         )
         if cur.rowcount == 0:
-            raise BrainError(f"no session ECU with id {ecu_id}")
+            raise BrainError(f"no session conclusion with id {ecu_id}")
         self._conn.commit()
 
     def delete_session_edges_for(self, ecu_ids: list[str]) -> int:
@@ -1744,7 +1744,7 @@ class Brain:
         """Attach an ECU to a cluster (weight = cluster stability). Idempotent
         per (ecu_id, cluster_id); unknown ids raise BrainError."""
         if not self.ecu_exists(ecu_id):
-            raise BrainError(f"no ECU with id {ecu_id}")
+            raise BrainError(f"no conclusion with id {ecu_id}")
         if self._conn.execute(
             "SELECT 1 FROM clusters WHERE id = ?", (cluster_id,)
         ).fetchone() is None:

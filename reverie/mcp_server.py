@@ -414,7 +414,7 @@ def _reconsolidate_schema() -> dict:
             "type": "string",
             "enum": list(reconsolidation.VALID_RELATIONSHIPS),
             "description": (
-                "How does the new evidence relate to the ECU? If "
+                "How does the new evidence relate to the conclusion? If "
                 "omitted, the Diffuser will classify the relationship."
             ),
         },
