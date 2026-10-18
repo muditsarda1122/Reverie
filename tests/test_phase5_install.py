@@ -594,6 +594,107 @@ def test_existing_llm_block_skips_provider_question(home, reverie_home):
     assert data["llm"]["provider"] == "google"    # untouched
 
 
+def test_install_migrates_old_default_llm_model(home, reverie_home):
+    """Review fix 2 follow-up: configs written by older installers still say
+    llm.model: claude-haiku-4-5 (the retired default). Install updates that
+    one value to the current default, says so, and pings the new model."""
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    (reverie_home / "config.yaml").write_text(
+        "llm:\n"
+        "  provider: opencode_zen\n"
+        "  model: claude-haiku-4-5\n"
+        "  base_url: https://opencode.ai/zen/v1\n"
+        "  api_key_env: OPENCODE_ZEN_API_KEY\n")
+
+    pinged = []
+
+    def verify(cfg):
+        pinged.append(cfg.llm.model)
+        return True, "OK"
+
+    code, out = run_install_result(
+        home, reverie_home, all_agents=True, no_verify=False, verify_fn=verify)
+    assert code == 0
+    assert ("Updated ~/.reverie/config.yaml: llm.model claude-haiku-4-5 "
+            "→ claude-haiku-5-5 (the old installer default; only this value "
+            "changed)") in out
+    # the migration line is the only place the old model may appear — the
+    # keep-message and the ping below must use the migrated value
+    assert out.count("claude-haiku-4-5") == 1
+    assert "already configured for opencode_zen — keeping" in out
+    assert "claude-haiku-5-5 is reachable" in out
+    assert pinged == ["claude-haiku-5-5"]
+    import yaml
+    data = yaml.safe_load((reverie_home / "config.yaml").read_text())
+    assert data["llm"]["provider"] == "opencode_zen"   # untouched
+    assert data["llm"]["model"] == "claude-haiku-5-5"
+
+
+def test_install_keeps_custom_llm_model(home, reverie_home):
+    """Review fix 2 follow-up: any other model is the user's explicit choice
+    — the old-default migration leaves it (and the file) alone."""
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed = ("llm:\n"
+            "  provider: opencode_zen\n"
+            "  model: my-custom-haiku\n"
+            "  api_key_env: OPENCODE_ZEN_API_KEY\n")
+    (reverie_home / "config.yaml").write_text(seed)
+
+    pinged = []
+
+    def verify(cfg):
+        pinged.append(cfg.llm.model)
+        return True, "OK"
+
+    code, out = run_install_result(
+        home, reverie_home, all_agents=True, no_verify=False, verify_fn=verify)
+    assert code == 0
+    assert "Updated" not in out
+    assert "already exists — kept" in out
+    assert "my-custom-haiku is reachable" in out
+    assert pinged == ["my-custom-haiku"]
+    assert (reverie_home / "config.yaml").read_text() == seed
+
+
+def test_old_default_under_other_provider_is_kept(home, reverie_home):
+    """Review fix 2 follow-up/scope: the migration only touches an
+    opencode_zen block — the same model name under another provider is the
+    user's choice and stays."""
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed = ("llm:\n"
+            "  provider: anthropic\n"
+            "  model: claude-haiku-4-5\n")
+    (reverie_home / "config.yaml").write_text(seed)
+    out = run_install(home, reverie_home, all_agents=True)
+    assert "Updated" not in out
+    assert "already exists — kept" in out
+    assert (reverie_home / "config.yaml").read_text() == seed
+
+
+def test_old_default_migration_is_byte_surgical(home, reverie_home):
+    """Review fix 2 follow-up: the migrated file is byte-identical to the
+    original except that one scalar — comments, key order, indentation and
+    quoting all survive (no YAML re-dump)."""
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed = (
+        "# hand-tuned config — keep these notes\n"
+        "extraction:\n"
+        "  temperature: 0.25\n"
+        "llm:\n"
+        "  provider: opencode_zen\n"
+        "  model: claude-haiku-4-5   # the retired default\n"
+        "  api_key_env: OPENCODE_ZEN_API_KEY\n"
+        "clustering:\n"
+        "  min_size: 3\n")
+    (reverie_home / "config.yaml").write_text(seed)
+    out = run_install(home, reverie_home, all_agents=True)
+    expected = seed.replace("claude-haiku-4-5", "claude-haiku-5-5", 1)
+    assert (reverie_home / "config.yaml").read_text() == expected
+    assert "claude-haiku-4-5" not in (reverie_home
+                                      / "config.yaml").read_text()
+    assert "Updated ~/.reverie/config.yaml" in out
+
+
 def test_reconfigure_flag_asks_again(home, reverie_home):
     """Review fix 44: --reconfigure (and --provider) are the explicit ways
     to change an existing llm block."""

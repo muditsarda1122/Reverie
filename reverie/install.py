@@ -35,6 +35,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1400,6 +1401,63 @@ _AGENTS_BY_KEY = {a.key: a for a in AGENTS}
 # ~/.reverie bootstrap (§28.2)
 # ---------------------------------------------------------------------------
 
+#: The retired installer default for the opencode_zen llm block (review fix
+#: 2 follow-up). Configs written before the default moved to Haiku 5.5 are
+#: migrated — only when they still carry exactly this model.
+OLD_DEFAULT_LLM_MODEL = "claude-haiku-4-5"
+
+#: One `model:` scalar inside the top-level `llm:` mapping.
+_LLM_MODEL_LINE = re.compile(r"^(\s+model\s*:\s*)(\S+)(.*)$")
+
+
+def _migrate_old_llm_default(text: str) -> str | None:
+    """Migrate config.yaml whose opencode_zen block still names the retired
+    installer default (review fix 2, follow-up).
+
+    Returns the rewritten text, or None when the migration does not apply.
+    Only that one scalar is replaced: comments, key order, quoting, spacing
+    and every other byte survive untouched. Any other provider or model is
+    the user's explicit choice and is left alone.
+    """
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    llm = data.get("llm")
+    if not isinstance(llm, dict):
+        return None
+    if llm.get("provider") != "opencode_zen":
+        return None
+    if llm.get("model") != OLD_DEFAULT_LLM_MODEL:
+        return None
+    new_model = DEFAULT_CONFIG["llm"]["model"]
+    lines = text.splitlines(keepends=True)
+    in_block = False
+    for i, line in enumerate(lines):
+        body = line.rstrip("\r\n")
+        ending = line[len(body):]
+        if body and not body[0].isspace() and not body.startswith("#"):
+            in_block = bool(re.match(r"llm\s*:", body))
+            continue
+        if not in_block:
+            continue
+        match = _LLM_MODEL_LINE.match(body)
+        if match is None:
+            continue
+        token = match.group(2)
+        quote, value = "", token
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+            quote, value = token[0], token[1:-1]
+        if value != OLD_DEFAULT_LLM_MODEL:
+            return None           # a hand-picked model line — keep the file
+        lines[i] = (f"{match.group(1)}{quote}{new_model}{quote}"
+                    f"{match.group(3)}{ending}")
+        return "".join(lines)
+    return None
+
+
 def _reverie_home_plans(home: Path, reverie_home: Path) -> list[PlannedWrite]:
     db = reverie_home / "reverie.db"
     plans = [
@@ -1411,9 +1469,17 @@ def _reverie_home_plans(home: Path, reverie_home: Path) -> list[PlannedWrite]:
     ]
     cfg = reverie_home / "config.yaml"
     if cfg.exists():
-        plans.append(PlannedWrite(
-            cfg, "unchanged", None,
-            f"{_display(cfg, home)} already exists — kept"))
+        migrated = _migrate_old_llm_default(cfg.read_text(encoding="utf-8"))
+        if migrated is not None:
+            plans.append(PlannedWrite(
+                cfg, "update", migrated,
+                f"Updated {_display(cfg, home)}: llm.model "
+                f"{OLD_DEFAULT_LLM_MODEL} → {DEFAULT_CONFIG['llm']['model']} "
+                "(the old installer default; only this value changed)"))
+        else:
+            plans.append(PlannedWrite(
+                cfg, "unchanged", None,
+                f"{_display(cfg, home)} already exists — kept"))
     else:
         plans.append(PlannedWrite(
             cfg, "create",
@@ -1525,6 +1591,7 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     # Read BEFORE anything is written: only a pre-existing llm block counts
     # as user configuration (review fix 44).
     existing_llm = _existing_llm_config(reverie_home)
+    config_existed = (reverie_home / "config.yaml").exists()
 
     print_fn("\nReverie — Installation\n")
     if dry_run:
@@ -1588,6 +1655,11 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
         _emit(write, home, dry_run, print_fn)
         if not dry_run and write.action in ("create", "create-db"):
             created_paths.append(write.path)
+    if config_existed and not dry_run:
+        # review fix 2 (follow-up): the plan above may have migrated an old
+        # installer-default llm.model. Keep the snapshot in step with disk so
+        # the messages below and the re-verify ping use the migrated config.
+        existing_llm = _existing_llm_config(reverie_home) or existing_llm
 
     # -- brain import (feat/flow --import, D58) -----------------------------
     if import_file is not None and not dry_run:
