@@ -85,11 +85,11 @@ def snapshot(home: Path) -> dict[str, bytes]:
     }
 
 
-def do_install(home, reverie_home, **kwargs):
+def do_install(home, reverie_home, which=None, **kwargs):
     kwargs.setdefault("check_fn", lambda *a, **k: (True, "check skipped (test)"))
     return install.run(
         home=home, reverie_home=reverie_home, all_agents=True, no_verify=True,
-        which=lambda _b: None, input_fn=lambda _p="": "",
+        which=which or (lambda _b: None), input_fn=lambda _p="": "",
         print_fn=lambda s: None, environ={}, **kwargs)
 
 
@@ -101,6 +101,11 @@ def do_uninstall(home, reverie_home, **kwargs):
     code = uninstall.run(home=home, reverie_home=reverie_home, print_fn=out.append,
                          **kwargs)
     return code, "\n".join(out)
+
+
+def opencode_which(binary):
+    """Detects only OpenCode (so a fresh home has exactly one agent)."""
+    return "/usr/bin/opencode" if binary == "opencode" else None
 
 
 # ---------------------------------------------------------------------------
@@ -143,9 +148,10 @@ def test_uninstall_removes_entries_it_created(home, reverie_home):
 
 
 def test_uninstall_removes_absolute_path_entries(home, reverie_home):
-    """Install now writes the ABSOLUTE reverie-mcp path into every harness
-    config; uninstall matches by entry name, never by command value, so it
-    removes those entries cleanly."""
+    """Install writes the ABSOLUTE reverie-mcp path into every harness
+    config; uninstall matches by entry name, never by command value. A
+    hand-written file that carried ONLY the entry survives (review fix
+    39): install did not create it, so it is never deleted."""
     absolute = str(home / "venv" / "bin" / "reverie-mcp")
     (home / ".claude.json").write_text(json_text({
         "mcpServers": {
@@ -163,8 +169,70 @@ def test_uninstall_removes_absolute_path_entries(home, reverie_home):
     claude = json.loads((home / ".claude.json").read_text())
     assert "reverie" not in claude["mcpServers"]
     assert claude["mcpServers"]["other"] == {"command": "other-server"}
-    # cursor held only the reverie entry -> the file is removed
-    assert not (home / ".cursor" / "mcp.json").exists()
+    # cursor held only the (hand-written) reverie entry -> kept, reset to
+    # an empty object instead of deleting a file the installer never made
+    cursor = home / ".cursor" / "mcp.json"
+    assert cursor.exists()
+    assert json.loads(cursor.read_text()) == {}
+    assert "existed before install" in transcript
+
+
+def test_uninstall_removes_files_the_installer_created(home, reverie_home):
+    """Review fix 39: a file install itself created (recorded in the
+    install manifest with a matching hash) is removed whole."""
+    which = opencode_which
+    assert do_install(home, reverie_home, which=which) == 0
+    oc = home / ".config" / "opencode" / "opencode.json"
+    assert "reverie" in json.loads(oc.read_text())["mcp"]
+    manifest = json.loads(
+        (reverie_home / "install_manifest.json").read_text())
+    assert str(oc.resolve()) in manifest["files"]        # recorded as ours
+
+    code, transcript = do_uninstall(home, reverie_home)
+    assert code == 0
+    assert not oc.exists()
+    assert "Reverie created it" in transcript
+
+
+def test_schema_only_handwritten_file_survives(home, reverie_home):
+    """Review fix 39's exact acceptance case: a hand-written file holding
+    only ``$schema`` plus reverie's entry must survive with a clean
+    ``$schema`` object — never be deleted."""
+    schema = {"$schema": "https://opencode.ai/config.json"}
+    oc = home / ".config" / "opencode" / "opencode.json"
+    oc.parent.mkdir(parents=True)
+    oc.write_text(json_text(schema))
+    which = opencode_which
+    assert do_install(home, reverie_home, which=which) == 0
+    assert "reverie" in json.loads(oc.read_text())["mcp"]
+    manifest = json.loads(
+        (reverie_home / "install_manifest.json").read_text())
+    assert str(oc.resolve()) not in manifest["files"]    # it was here first
+
+    code, transcript = do_uninstall(home, reverie_home)
+    assert code == 0
+    assert oc.exists()
+    assert json.loads(oc.read_text()) == schema
+    assert "existed before install" in transcript
+
+
+def test_edited_installer_created_file_survives(home, reverie_home):
+    """The manifest is not a licence to delete user edits: a file install
+    created but the user then changed keeps everything except the reverie
+    entry."""
+    which = opencode_which
+    assert do_install(home, reverie_home, which=which) == 0
+    oc = home / ".config" / "opencode" / "opencode.json"
+    data = json.loads(oc.read_text())
+    data["theme"] = "dark"
+    oc.write_text(json_text(data))
+
+    code, _ = do_uninstall(home, reverie_home)
+    assert code == 0
+    assert oc.exists()
+    kept = json.loads(oc.read_text())
+    assert "reverie" not in kept.get("mcp", {})
+    assert kept["theme"] == "dark"
 
 
 # ---------------------------------------------------------------------------

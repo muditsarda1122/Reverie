@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -805,6 +806,49 @@ def _display(path: Path, home: Path) -> str:
         return str(path)
 
 
+#: Where install records the files IT created (ABS path → sha256 at write
+#: time). Uninstall deletes such a file only while the hash still matches;
+#: a file that existed before install is never recorded, so it is never
+#: deleted — only Reverie's entry is removed from it (review fix 39).
+INSTALL_MANIFEST_NAME = "install_manifest.json"
+
+
+def install_manifest_path(reverie_home: Path) -> Path:
+    return Path(reverie_home) / INSTALL_MANIFEST_NAME
+
+
+def load_install_manifest(reverie_home: Path) -> dict[str, str]:
+    """The installer-created file hashes ({} when absent/unreadable)."""
+    try:
+        data = json.loads(install_manifest_path(reverie_home).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    files = data.get("files") if isinstance(data, dict) else None
+    if not isinstance(files, dict):
+        return {}
+    return {k: v for k, v in files.items() if isinstance(v, str)}
+
+
+def _record_install_manifest(reverie_home: Path,
+                             created_paths: list[Path]) -> None:
+    """Record sha256 hashes for files this run CREATED. Existing entries
+    keep their original hash (a user edit must never be re-owned), so this
+    is merge-only and idempotent."""
+    files = load_install_manifest(reverie_home)
+    for path in created_paths:
+        try:
+            digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        except OSError:
+            continue
+        files.setdefault(str(Path(path).resolve()), digest)
+    manifest = install_manifest_path(reverie_home)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps({"version": 1, "files": files}, indent=2) + "\n",
+        encoding="utf-8")
+
+
 def _json_merge(path: Path, home: Path, section: str, entry: dict,
                 detail: str, schema: str | None = None) -> PlannedWrite:
     """Merge ``entry`` into ``data[section]["reverie"]`` — never overwriting siblings."""
@@ -1481,16 +1525,21 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             writes.append((agent.name, write))
 
     current_agent: str | None = None
+    created_paths: list[Path] = []
     for agent_name, write in writes:
         if agent_name != current_agent:
             print_fn(f"\nConfiguring {agent_name}...")
             current_agent = agent_name
         _emit(write, home, dry_run, print_fn)
+        if not dry_run and write.action in ("create", "create-db"):
+            created_paths.append(write.path)
 
     # -- ~/.reverie bootstrap (§28.2) -------------------------------------------
     print_fn(f"\nCreating {_display(reverie_home, home)}/ directory...")
     for write in _reverie_home_plans(home, reverie_home):
         _emit(write, home, dry_run, print_fn)
+        if not dry_run and write.action in ("create", "create-db"):
+            created_paths.append(write.path)
 
     # -- brain import (feat/flow --import, D58) -----------------------------
     if import_file is not None and not dry_run:
@@ -1549,6 +1598,11 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
                             runner=runner, ollama_path=ollama_path)
         _verify_provider(reverie_home, dry_run=dry_run, no_verify=no_verify,
                          verify_fn=verify_fn, print_fn=print_fn)
+
+    # Record what this run created (folded in, hashes as written) so the
+    # uninstaller can distinguish Reverie-created files from user files.
+    if not dry_run:
+        _record_install_manifest(reverie_home, created_paths)
 
     if dry_run:
         if selected:
