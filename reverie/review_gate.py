@@ -35,10 +35,6 @@ from . import confidence as conf
 from .activation import _parse_iso
 from .brain import Brain, _now_iso
 from .config import get_config
-# NOTE: .diffuser is NOT imported at module level — it pulls llm → requests,
-# and `reverie hook session-start` imports this module through the repos →
-# session chain and must stay fast (no network stack, ~0.2s saved per hook).
-# It is imported lazily inside apply_review_decisions, its only consumer.
 
 log = logging.getLogger("reverie.review_gate")
 
@@ -904,8 +900,9 @@ def apply_review_decisions(
     # triggers it once).
     model_box = [embedding_model]
 
-    # The diffuser (llm → requests chain) also loads lazily — see the module
-    # header: only accepts ever reach it.
+    # The diffuser (llm → requests chain) loads lazily too: only accepts
+    # ever reach it, and `reverie hook session-start` imports this module
+    # through the repos → session chain (keeping it import-light).
     from . import diffuser
     from .diffuser import DiffuserError
 
