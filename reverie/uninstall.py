@@ -397,6 +397,16 @@ def _apply(removal: PlannedRemoval) -> None:
     removal.path.write_text(removal.after or "", encoding="utf-8")
 
 
+def _future_detail(detail: str) -> str:
+    """Item 41: dry-run lines speak in the future tense ("Removed …" reads
+    as done; a dry run must say "would remove …")."""
+    for past, future in (("Removed ", "would remove "),
+                         ("SKIPPED ", "would skip: ")):
+        if detail.startswith(past):
+            return future + detail[len(past):]
+    return detail
+
+
 def _emit(removal: PlannedRemoval, home: Path, dry_run: bool, print_fn,
           mark: str) -> None:
     """Print a planned removal (with exact before/after in dry-run), then
@@ -408,10 +418,7 @@ def _emit(removal: PlannedRemoval, home: Path, dry_run: bool, print_fn,
         print_fn(f"  ! {removal.detail}")
         return
     if dry_run:
-        print_fn(f"  [dry-run] {removal.action}: "
-                 f"{_display(removal.path, home)} — {removal.detail}")
-        if removal.removed is not None:
-            print_fn(f"      removed: {removal.removed}")
+        print_fn(f"  [dry-run] {mark}: {_future_detail(removal.detail)}")
         if removal.after is not None:
             print_fn("      after:")
             for line in removal.after.rstrip("\n").splitlines() or [""]:
@@ -460,14 +467,55 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
 
     print_fn("\nReverie — Uninstall\n")
     if dry_run:
-        print_fn("(dry run — showing exactly what would be removed; "
-                 "no files will be changed)\n")
+        print_fn("(dry run — nothing will be changed; the plan below is "
+                 "printed once, in future tense)\n")
 
     # -- 1. the plan, computed pure and printed BEFORE anything changes ---
     harness_plans = _plan_harnesses(home, reverie_home,
                                     load_install_manifest(reverie_home))
     export_path: Path | None = None
     will_delete = delete_data and reverie_home.exists()
+    if delete_data and reverie_home.exists():
+        target_base = Path(export_dir) if export_dir else Path.cwd()
+        export_path = target_base / (
+            "reverie-final-export-"
+            + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            + ".zip")
+
+    if dry_run:
+        # Item 41: ONE pass over the plan, all future tense; no separate
+        # summary block (that printed every line twice), no walk-through.
+        print_fn("Would remove:")
+        for agent_name, removal in harness_plans:
+            _emit(removal, home, dry_run=True, print_fn=print_fn,
+                  mark=agent_name)
+        memory = _display(reverie_home, home)
+        if delete_data:
+            if not reverie_home.exists():
+                print_fn(f"  · {memory}: not present — nothing to remove")
+            elif no_export:
+                print_fn(f"  · Your memory ({memory}): would be REMOVED "
+                         "(no final export — --no-export)")
+            else:
+                print_fn(f"  · Your memory ({memory}): would be REMOVED "
+                         f"after a final export to {export_path}")
+        else:
+            print_fn(f"  · Your memory ({memory}): would be KEPT (default) "
+                     "— a reinstall picks up where you left off. Pass "
+                     "--delete-data to remove it (a final export is taken "
+                     "first).")
+        if will_delete and not no_export:
+            print_fn(f"\n[dry-run] would write a final export to "
+                     f"{export_path}")
+        print_fn("\nUninstall report:")
+        print_fn("  Dry run — nothing was removed.")
+        if not delete_data:
+            print_fn(f"  Kept: {memory} (your memory)")
+        print_fn("\nLast step, run by hand:")
+        print_fn(f"  {package_removal_command()}")
+        print_fn(f"  (Reverie's published package name is {DIST_NAME}; the "
+                 "running package cannot remove itself)")
+        return 0
 
     print_fn("The plan:")
     for agent_name, removal in harness_plans:
@@ -479,11 +527,6 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             print_fn(f"  - {_display(reverie_home, home)}: not present — "
                      "nothing to remove")
         else:
-            target_base = Path(export_dir) if export_dir else Path.cwd()
-            export_path = target_base / (
-                "reverie-final-export-"
-                + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-                + ".zip")
             print_fn(f"  - {_display(reverie_home, home)}: "
                      + ("REMOVED after a final export to "
                         f"{export_path}" if not no_export else
@@ -507,27 +550,24 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     # -- 3. the export happens FIRST: a failed export aborts the whole
     #       uninstall so nothing is removed without a backup ---------------
     if will_delete and not no_export:
-        if dry_run:
-            print_fn(f"\n[dry-run] would write a final export to "
-                     f"{export_path}")
-        else:
+        try:
+            brain = Brain(reverie_home / "reverie.db")
             try:
-                brain = Brain(reverie_home / "reverie.db")
-                try:
-                    transport.export_brain(brain, export_path)
-                finally:
-                    brain.close()
-            except Exception as exc:
-                print_fn(f"  ✗ Final export FAILED ({exc}) — nothing was "
-                         "removed. Free space or choose another location "
-                         "and re-run.")
-                return 1
-            print_fn(f"  ✓ Final export written to {export_path}")
+                transport.export_brain(brain, export_path)
+            finally:
+                brain.close()
+        except Exception as exc:
+            print_fn(f"  ✗ Final export FAILED ({exc}) — nothing was "
+                     "removed. Free space or choose another location "
+                     "and re-run.")
+            return 1
+        print_fn(f"  ✓ Final export written to {export_path}")
 
     # -- 4. harness entries (merge logic in reverse) -----------------------
     print_fn("\nRemoving Reverie from your coding agents...")
     for agent_name, removal in harness_plans:
-        _emit(removal, home, dry_run, print_fn, agent_name)
+        _emit(removal, home, dry_run=False, print_fn=print_fn,
+              mark=agent_name)
 
     # -- 5. your memory (~/.reverie) ---------------------------------------
     print_fn(f"\nYour memory ({_display(reverie_home, home)})...")
@@ -537,26 +577,19 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
         print_fn("  · KEPT (default) — a reinstall picks up where you "
                  "left off. Run `reverie uninstall --delete-data` to remove "
                  "it (a final export is taken first).")
-    elif dry_run:
-        print_fn(f"  [dry-run] would remove {_display(reverie_home, home)} "
-                 "entirely")
     else:
         shutil.rmtree(reverie_home)
         print_fn(f"  ✓ Removed {_display(reverie_home, home)}")
 
     # -- 6. report ---------------------------------------------------------
     print_fn("\nUninstall report:")
-    if not dry_run:
-        print_fn("  Removed: Reverie's MCP entries, instruction references "
-                 "and command files from the agents above.")
-    else:
-        print_fn("  (dry run — nothing above was actually removed)")
+    print_fn("  Removed: Reverie's MCP entries, instruction references "
+             "and command files from the agents above.")
     if not delete_data:
         print_fn(f"  Kept: {_display(reverie_home, home)} (your memory)")
-    elif not dry_run:
+    else:
         print_fn(f"  Removed: {_display(reverie_home, home)} (your memory)")
-    if delete_data and export_path is not None and not dry_run \
-            and not no_export:
+    if delete_data and export_path is not None and not no_export:
         print_fn(f"  Final export: {export_path}")
     print_fn("\nLast step, run by hand:")
     print_fn(f"  {package_removal_command()}")

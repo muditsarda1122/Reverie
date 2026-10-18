@@ -245,6 +245,32 @@ def test_run_tui_skips_through_and_quits(brain):
     assert len(screens) == 2                     # q shows the next screen first
 
 
+def test_run_tui_q_key_quits_cleanly(brain):
+    """Item 18: 'q' RETURNED by the reader (a real terminal, not the
+    scripted reader's Quit exception) must exit the loop — never crash."""
+    sid = make_session(brain)
+    c1 = make_candidate(brain, sid, "first", confidence=0.9)
+    c2 = make_candidate(brain, sid, "second", confidence=0.5)
+    printed: list[str] = []
+    outcome = run_tui(brain, build_queue(brain),
+                      key_reader=lambda: "q", print_fn=printed.append)
+    assert outcome["progress"]["accepted"] == 0
+    assert outcome["remaining"] == 2             # c1 was NOT decided either
+    assert brain.get_session_ecu(c1)["review_status"] == "pending"
+    assert brain.get_session_ecu(c2)["review_status"] == "pending"
+
+
+def test_run_tui_q_after_skip_reports_true_undecided(brain):
+    sid = make_session(brain)
+    make_candidate(brain, sid, "first", confidence=0.9)
+    c2 = make_candidate(brain, sid, "second", confidence=0.5)
+    outcome = run_tui(brain, build_queue(brain),
+                      key_reader=scripted_reader(["s", "q"]))
+    assert outcome["progress"]["skipped"] == 1
+    assert outcome["remaining"] == 1             # only c2 left
+    assert brain.get_session_ecu(c2)["review_status"] == "pending"
+
+
 def test_run_tui_page_flow_shows_more(brain):
     sid = make_session(brain)
     for i in range(11):

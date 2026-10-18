@@ -45,6 +45,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import review_gate
 from .activation import ActivationState
@@ -52,6 +53,9 @@ from .brain import Brain, BrainError
 from .config import SCOPE_LEVELS, get_config
 
 log = logging.getLogger("reverie.session")
+
+if TYPE_CHECKING:                      # repos imports session at module level
+    from . import repos
 
 _REPO_ENV, _BRANCH_ENV = "REVERIE_REPO_PATH", "REVERIE_BRANCH"
 
@@ -113,8 +117,27 @@ def detect_repo_branch(cwd: str | Path | None = None) -> tuple[str, str]:
 # brain summary — summary payload (§16.3), awareness without anchoring
 # ---------------------------------------------------------------------------
 
+def _fmt_count(n: int, word: str) -> str:
+    """Item 25: "1 conclusion", never "1 conclusions"."""
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _local_time(ts: str | None) -> str:
+    """Item 26: status timestamps render in local time WITH the offset."""
+    if not ts:
+        return "never"
+    try:
+        parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return str(ts)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone().isoformat(timespec="seconds")
+
+
 def brain_summary(brain: Brain, session_row: dict | None = None,
-                  session_brain_count: int | None = None) -> dict:
+                  session_brain_count: int | None = None,
+                  branch: str | None = None) -> dict:
     """§16.3 summary body: brain statistics, never individual ECUs."""
     total = brain.count_ecus()
     by_scope_raw = brain.count_ecus_by_scope()
@@ -128,13 +151,10 @@ def brain_summary(brain: Brain, session_row: dict | None = None,
     active = session_row is not None
     if active and session_brain_count is None:
         session_brain_count = brain.count_session_ecus(session_row["id"])
-    # §28.10 step 3: pending review count, scoped to the session's working
-    # context when one is active, brain-wide otherwise.
-    if active:
-        pending = brain.pending_review_count(session_row["repo_path"],
-                                             session_row["branch"])
-    else:
-        pending = brain.pending_review_count()
+    # Item 23: the review queue is one queue across all sessions (D57) —
+    # the pending number is always brain-wide, and it is kept separate from
+    # the session-memory count.
+    pending = brain.pending_review_count()
     session_block = {
         "active": active,
         "session_brain_count": session_brain_count if active else 0,
@@ -144,23 +164,39 @@ def brain_summary(brain: Brain, session_row: dict | None = None,
     }
 
     nonzero = [f"{level}: {n}" for level, n in by_scope.items() if n]
-    message = f"The brain holds {total} conclusions"
+    message = f"The brain holds {_fmt_count(total, 'conclusion')}"
     if nonzero:
         message += f" ({', '.join(nonzero)})"
     message += (
-        f". Last maintenance run: {last_maintenance or 'never'}; "
-        f"last conclusion added: {last_added or 'never'}."
+        f". Last maintenance run: {_local_time(last_maintenance)}; "
+        f"last conclusion added: {_local_time(last_added)}."
     )
     if active:
+        started = _local_time(session_row["started_at"]) \
+            if session_row.get("started_at") else "unknown"
         message += (
             f" Active session on branch '{session_row['branch']}' "
-            f"({session_row['repo_path']}) — {session_brain_count} "
-            "conclusions in session memory."
+            f"({session_row['repo_path']}), started {started} — "
+            f"{_fmt_count(session_brain_count, 'conclusion')} in this "
+            "session's memory; "
+            f"{_fmt_count(pending, 'candidate')} awaiting review "
+            "(all sessions)."
         )
+    elif branch:
+        # Item 27: a branch with no session names the branch and what
+        # happens next.
+        message += (
+            f" No session on branch {branch} yet; one starts on the next "
+            "Reverie call."
+        )
+        if pending:
+            message += (f" {_fmt_count(pending, 'candidate')} awaiting "
+                        "review (all sessions).")
     else:
         message += " No active session."
-    if pending:
-        message += f" {pending} conclusion(s) awaiting review."
+        if pending:
+            message += (f" {_fmt_count(pending, 'candidate')} awaiting "
+                        "review (all sessions).")
 
     return {
         "canonical_brain": {
@@ -410,6 +446,40 @@ def _print_report(report: dict, print_fn=print) -> None:
     print_fn(report["summary"]["message"])
 
 
+def _resolve_status_repo(args) -> repos.RepoInfo:
+    """The repo status reports on: explicit --repo/--branch, else git/env
+    detection (same precedence as everywhere else)."""
+    from . import repos
+    if args.repo and args.branch:
+        path = str(Path(args.repo).expanduser().resolve())
+        return repos.RepoInfo(repo_path=path, branch=args.branch,
+                              repo_key=path, url=None, via_git=False)
+    return repos.resolve_repo(cwd=args.repo)
+
+
+def _print_status_all(brain: Brain, print_fn=print) -> None:
+    """Item 28: `reverie status --all` — every enabled repo's active
+    session, one line each."""
+    enabled = [row for row in brain.list_repos()
+               if row.get("state") == "enabled"]
+    lines: list[str] = []
+    for repo in enabled:
+        for session in brain.list_sessions(repo_path=repo["path"],
+                                           status="active"):
+            lines.append(
+                f"{session['repo_path']} [{session['branch']}] — active "
+                f"since {_local_time(session['started_at'])}, "
+                f"{_fmt_count(brain.count_session_ecus(session['id']), 'conclusion')} "
+                "in session memory"
+            )
+    print_fn(f"Reverie status — all repos ({len(enabled)} enabled).")
+    if lines:
+        for line in lines:
+            print_fn(line)
+    else:
+        print_fn("No active sessions in any enabled repo.")
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "bench-close":
@@ -427,6 +497,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repo", default=None, help="repo path (default: git detect)")
     parser.add_argument("--branch", default=None, help="branch (default: git detect)")
+    parser.add_argument("--all", action="store_true",
+                        help="every enabled repo's active sessions")
     args = parser.parse_args(argv)
 
     try:
@@ -435,12 +507,24 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     try:
+        from . import repos
+        from .install import report_configured_servers
+        if args.all:
+            _print_status_all(brain)
+            report_configured_servers()
+            return 0
+        info = _resolve_status_repo(args)
+        print(f"Reverie status — {info.repo_path} (branch {info.branch}).")
+        if repos.state_of(brain, info) == "disabled":
+            # Item 37: off means off — no session reported, nothing active.
+            print("Reverie is off for this repo. Existing memory is kept; "
+                  "`reverie enable` turns it back on.")
+            return 0
         manager = SessionManager(brain)
-        row = manager.current_session(args.repo, args.branch)
-        print(brain_summary(brain, row)["message"])
+        row = manager.current_session(info.repo_path, info.branch)
+        print(brain_summary(brain, row, branch=info.branch)["message"])
         # Stale-path check (install fix): a moved/deleted venv breaks the
         # absolute command written to each harness config.
-        from .install import report_configured_servers
         report_configured_servers()
         return 0
     except (SessionError, review_gate.ReviewGateError, BrainError) as exc:

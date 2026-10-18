@@ -415,6 +415,29 @@ def test_dry_run_writes_nothing(home, reverie_home):
     assert "REMOVED after a final export" in transcript
 
 
+def test_dry_run_speaks_future_and_prints_the_plan_once(home, reverie_home):
+    """Items 41/42: the dry run says "would remove …" (no past-tense
+    "Removed …" lines as if it had run) and the plan appears exactly once
+    (no summary block + walk-through duplication)."""
+    seed_files(home)
+    reverie_home.mkdir(parents=True, exist_ok=True)
+    seed_brain(reverie_home)
+    assert do_install(home, reverie_home) == 0
+    code, transcript = do_uninstall(home, reverie_home, dry_run=True,
+                                    yes=True, delete_data=True)
+    assert code == 0
+    assert "Would remove:" in transcript
+    assert "would remove the reverie MCP server" in transcript
+    assert "Removed the reverie MCP server" not in transcript
+    assert "The plan:" not in transcript            # one pass, not two
+    assert "Removing Reverie from your coding agents" not in transcript
+    # every JSON harness entry is described once — nothing is repeated
+    assert (transcript.count("would remove the reverie MCP server")
+            == transcript.count("the reverie MCP server from") > 0)
+    # the report says what a dry run means, consistently
+    assert "Dry run — nothing was removed." in transcript
+
+
 def test_uninstall_twice_is_harmless(home, reverie_home):
     seed_files(home)
     do_install(home, reverie_home)

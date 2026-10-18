@@ -1179,6 +1179,35 @@ class ReverieServer:
                 "repo_key": info.repo_key, "state": effective,
                 "asked_at": row["asked_at"], "message": message}
 
+    def _duplicate_notes(self, rows: list[dict]) -> dict[str, list[str]]:
+        """Item 22: rows sharing a conclusion_type AND grounding signature
+        (files + symbols, at least one reference) are near-duplicates — the
+        listing points them out so the user can decide them together.
+        Annotation only: storage and the TUI are untouched."""
+        sigs: dict[tuple, list[str]] = {}
+        for row in rows:
+            ecu_row = self._ensure_brain().get_session_ecu_row(row["id"])
+            doc = {}
+            if ecu_row is not None and ecu_row.get("document"):
+                try:
+                    doc = json.loads(ecu_row["document"])
+                except json.JSONDecodeError:
+                    doc = {}
+            grounding = doc.get("grounding") or {}
+            files = tuple(sorted(grounding.get("files") or []))
+            symbols = tuple(sorted(grounding.get("symbols") or []))
+            if not files and not symbols:
+                continue
+            sigs.setdefault((row["conclusion_type"], files, symbols),
+                            []).append(row["id"])
+        notes: dict[str, list[str]] = {}
+        for ids in sigs.values():
+            if len(ids) < 2:
+                continue
+            for cid in ids:
+                notes[cid] = [other[:8] for other in ids if other != cid]
+        return notes
+
     def _tool_review_list(self, args: dict) -> dict:
         """The review queue page for the agent channel (D57): same ordered
         candidates as `reverie review`, a compact verbatim block, and a
@@ -1211,6 +1240,7 @@ class ReverieServer:
             f"Reverie review — {total} candidate(s) "
             f"(page {page_no}/{total_pages})",
         ]
+        duplicates = self._duplicate_notes(rows)
         for i, row in enumerate(rows, start=1):
             unsupported = " [unsupported evidence]" \
                 if row.get("evidence_status") == "unsupported" else ""
@@ -1223,6 +1253,11 @@ class ReverieServer:
                 f"scope: {row['scope_path']} | repo: {row['repo_path']} | "
                 f"branch: {row['branch']}"
             )
+            if row["id"] in duplicates:
+                lines.append(
+                    "   duplicates (same type + grounding): "
+                    + ", ".join(duplicates[row["id"]])
+                )
         if total_pages > page_no:
             lines.append(f"(more available — page {page_no + 1} of "
                          f"{total_pages})")
@@ -1248,7 +1283,10 @@ class ReverieServer:
                 "only the decisions the user states via review_decide. "
                 "Never decide on the user's behalf. Candidates marked "
                 "[unsupported evidence] carry no verifiable file, test, or "
-                "commit reference — point that out when showing them. One "
+                "commit reference — point that out when showing them. "
+                "Candidates marked 'duplicates' share their conclusion type "
+                "and grounding with the listed ids — show them together so "
+                "the user can decide the near-duplicates as a set. One "
                 "listing feeds one decide call — after it succeeds, call "
                 "review_list again for the next batch (single-use tokens; "
                 "this adds friction, it is not a security boundary). "

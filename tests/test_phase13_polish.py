@@ -198,7 +198,7 @@ class TestPendingReviewCount:
 # ---------------------------------------------------------------------------
 
 class TestSummaryIntegration:
-    def test_active_session_scopes_the_count(self, brain):
+    def test_active_session_reports_both_counts_separately(self, brain):
         sid = brain.create_session(REPO_A, BRANCH)
         for i in range(3):
             _pending_ecu(brain, sid, f"Finding {i}")
@@ -207,16 +207,19 @@ class TestSummaryIntegration:
         summary = brain_summary(brain, row)
 
         assert summary["canonical_brain"]["pending_review_count"] == 3
-        assert "3 conclusion(s) awaiting review" in summary["message"]
+        assert "3 candidates awaiting review (all sessions)" \
+            in summary["message"]
+        assert "3 conclusions in this session's memory" in summary["message"]
 
-    def test_zero_pending_adds_no_sentence(self, brain):
+    def test_zero_pending_still_shows_the_zero_count(self, brain):
         brain.create_session(REPO_A, BRANCH)
         row = brain.get_active_session(REPO_A, BRANCH)
 
         summary = brain_summary(brain, row)
 
         assert summary["canonical_brain"]["pending_review_count"] == 0
-        assert "awaiting review" not in summary["message"]
+        assert "0 candidates awaiting review (all sessions)" \
+            in summary["message"]
 
     def test_sessionless_reports_brain_wide_count(self, brain):
         s_a = brain.create_session(REPO_A, BRANCH)
@@ -228,7 +231,8 @@ class TestSummaryIntegration:
         summary = brain_summary(brain, None)      # no active session
 
         assert summary["canonical_brain"]["pending_review_count"] == 3
-        assert "3 conclusion(s) awaiting review" in summary["message"]
+        assert "3 candidates awaiting review (all sessions)" \
+            in summary["message"]
 
     def test_status_cli_prints_pending_line(self, tmp_path, monkeypatch,
                                             capsys):
@@ -247,4 +251,4 @@ class TestSummaryIntegration:
         out = capsys.readouterr().out
 
         assert code == 0
-        assert "2 conclusion(s) awaiting review" in out
+        assert "2 candidates awaiting review (all sessions)" in out

@@ -658,6 +658,22 @@ class TestResultFormat:
             retrieval.retrieve(brain, "  ", mode="debugging", embedding_model=model)
 
 
+def test_format_group_includes_conclusion_id():
+    """Item 38: every group prints its conclusion id right after the
+    conclusion — the handle the agent passes to reconsolidate."""
+    ecu = make_ecu("Optimistic token refresh avoids retry storms")
+    ecu["id"] = "11111111-2222-3333-4444-555555555555"
+    group = {
+        "core": {"ecu": ecu, "rank": 0.9, "brain": "canonical"},
+        "supporting_evidence": [], "contradictions": [],
+        "dependencies": [], "superseded_by": [], "truncated": False,
+    }
+    text = retrieval._format_group(group, 1, get_config())
+    assert f'ID: {ecu["id"]}' in text
+    assert text.index("CONCLUSION:") < text.index("ID:") < \
+        text.index("CONFIDENCE:")
+
+
 # ---------------------------------------------------------------------------
 # Live (requires OPENCODE_ZEN_API_KEY)
 # ---------------------------------------------------------------------------

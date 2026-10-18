@@ -130,21 +130,27 @@ Exit: `0` reviewed/no candidates; `1` when a `--decide` id was not applied
 ## reverie status
 
 The session + brain report: brain statistics, the session for the current
-(repo, branch), and the pending-review count. Also emitted by the
-`summary` MCP tool. Additionally checks that the server command
-written to each harness config still exists — a moved or deleted virtualenv
-breaks the absolute path, and the report then says to run
+(repo, branch), the session-memory conclusion count, and the brain-wide
+pending-review count ("all sessions"). If no session exists yet for the
+branch it says so and notes one starts on the next Reverie call. If the
+repo is disabled the report says `Reverie is off for this repo.` and no
+session is reported. Timestamps show local time with the UTC offset. Also
+emitted by the `summary` MCP tool. Additionally checks that the server
+command written to each harness config still exists — a moved or deleted
+virtualenv breaks the absolute path, and the report then says to run
 `reverie install` again.
 
 ```bash
 reverie status
 reverie status --repo ~/work/api --branch main
+reverie status --all                   # every enabled repo's active sessions
 ```
 
 | Flag | Effect |
 |---|---|
 | `--repo PATH` | repo path (default: git detect) |
 | `--branch NAME` | branch (default: git detect) |
+| `--all` | every enabled repo's active sessions, one line each |
 
 Exit: `0` always (reports "No active session." when none).
 

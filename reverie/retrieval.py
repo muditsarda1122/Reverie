@@ -480,6 +480,7 @@ def _format_group(group: dict, number: int, config) -> str:
 
     lines = [f"--- Group {number} (rank: {rank:.4f}) ---"]
     lines.append(f'CONCLUSION: "{core["cognition"]}"')
+    lines.append(f'ID: {core["id"]}')
     conf_flag = _confidence_flag(conf, config)
     lines.append(
         f"CONFIDENCE: {conf} ({confidence_label(conf)}, {brain}, {reviewed})"

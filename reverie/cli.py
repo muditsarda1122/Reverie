@@ -158,6 +158,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="repo path (default: git detect)")
     p.add_argument("--branch", default=None,
                    help="branch (default: git detect)")
+    p.add_argument("--all", action="store_true",
+                   help="every enabled repo's active sessions")
 
     p = sub.add_parser("export", help="export the brain to one ZIP file")
     p.add_argument("file", nargs="?",
