@@ -49,36 +49,38 @@ Run the same checklist per harness. Time: ~15 minutes each.
 | Step | Action | Expected |
 |---|---|---|
 | 5.1 | `reverie review`, press `a` on the candidate | "Accepted: promoted to the Canonical Brain" (a diffusion warning can appear offline — see limits). The candidate leaves the queue |
-| 5.2 | `reverie review` again | "No pending candidates — nothing to review." |
+| 5.2 | `reverie review` again | If the observe step produced more candidates, the next one opens as **"candidate 1 of N"** (the queue is re-counted after each decision). Only when the queue is truly empty: "No pending candidates — nothing to review." |
 
 ## 6. A new conversation retrieves it
 
 | Step | Action | Expected |
 |---|---|---|
-| 6.1 | Open a NEW conversation in the same repo; let the agent read the relevant code first, then ask a question that touches the stored conclusion | The agent calls `query` AFTER reading code; the result includes the accepted conclusion with its confidence, status and grounding references, framed as past understanding to verify |
+| 6.1 | Open a NEW conversation in the same repo; let the agent read the relevant code first, then ask a **decision-type question** about it — e.g. "why did we settle on the stale-then-invalidate ordering, and is that still the right call?" Retrieval is demand-driven: the agent calls `query` when it needs past conclusions to answer, not for every code question | The agent calls `query` AFTER reading code; the result includes the accepted conclusion with its **conclusion ID**, confidence, status and grounding references, framed as past understanding to verify |
 | 6.2 | Sanity-check the anti-anchoring framing | The agent verifies against the code rather than trusting the memory blindly |
 
 ## 7. A branch switch
 
 | Step | Action | Expected |
 |---|---|---|
-| 7.1 | `git checkout -b smoke-test-branch` in the scratch repo; continue the conversation | Session memory switches with the branch; nothing errors. Long-term memory stays shared |
-| 7.2 | `reverie status` | The active session now reports the new branch |
+| 7.1 | `git checkout -b smoke-test-branch` in the scratch repo, then make the agent perform a Reverie call (e.g. ask it to summarize what the brain knows) | Sessions resolve **on the first Reverie call**, not on the branch switch itself — a session starts for the new branch and nothing errors. Long-term memory stays shared |
+| 7.2 | `reverie status` | The first line names the repo and branch; the active session reports the new branch, with its start time in local time (offset shown) |
 | 7.3 | `git checkout -` (switch back) | Sessions resolve again per branch; no manual action needed |
+| 7.4 | (optional) `reverie status --all` | Lists every enabled repo's active session, one line each ("<repo> [<branch>] — active since …") |
 
 ## 8. `reverie disable`, then `reverie enable`
 
 | Step | Action | Expected |
 |---|---|---|
 | 8.1 | `reverie disable` | "Reverie is off for … Fully off: nothing is captured, retrieved, or injected here. Existing memory is kept…" |
-| 8.2 | Use the agent in the repo | Tool calls return the structured "disabled" response; nothing is captured |
-| 8.3 | `reverie enable` | Back on; everything intact (the accepted conclusion is still retrievable) |
+| 8.2 | `reverie status` | Says **"Reverie is off for this repo. Existing memory is kept; `reverie enable` turns it back on."** and does NOT report a session as active |
+| 8.3 | Use the agent in the repo | Tool calls return the structured "disabled" response; nothing is captured |
+| 8.4 | `reverie enable` | Back on; everything intact (the accepted conclusion is still retrievable) |
 
 ## 9. Uninstall — dry run, then real
 
 | Step | Action | Expected |
 |---|---|---|
-| 9.1 | `reverie uninstall --dry-run` | The full plan prints — every harness entry with its exact before/after — and NOTHING changes (harness configs still contain the entry) |
+| 9.1 | `reverie uninstall --dry-run` | One pass in future tense — every harness entry as "would remove …" with its exact before/after — and NOTHING changes (harness configs still contain the entry). The report ends "Dry run — nothing was removed." |
 | 9.2 | `reverie uninstall` | The same plan, then ONE confirmation question. Answer `y`. The harness entries, instruction references and command files are removed; `~/.reverie` is kept |
 | 9.3 | Restart the harness | The `reverie` server is gone; your other MCP servers are untouched |
 | 9.4 | `reverie uninstall --delete-data` (optional — destructive) | Plan shows the final-export path + removal; confirm once; `~/.reverie` is gone, an export ZIP remains |
