@@ -63,13 +63,13 @@ Cognition Unit, ECU) — conclusions, not facts — and retrieves them when
 you need them.
 
 Reverie provides seven MCP tools:
-- reverie_observe: Extract engineering conclusions from your reasoning
-- reverie_query: Retrieve relevant engineering cognition
-- reverie_summary: Get brain statistics at session start
-- reverie_reconsolidate: Update a retrieved conclusion with new evidence
-- reverie_set_repo_state: Record the user's enablement answer for a repo
-- reverie_review_list: Show the user's pending review candidates
-- reverie_review_decide: Apply review decisions the user stated
+- observe: Extract engineering conclusions from your reasoning
+- query: Retrieve relevant engineering cognition
+- summary: Get brain statistics at session start
+- reconsolidate: Update a retrieved conclusion with new evidence
+- set_repo_state: Record the user's enablement answer for a repo
+- review_list: Show the user's pending review candidates
+- review_decide: Apply review decisions the user stated
 
 ## Repo Path — Pass It on Every Call
 
@@ -85,7 +85,7 @@ a tool call reports that a repo is undecided, ask the user exactly:
 Reverie isn't on for this repo. Turn it on? (yes / not now / never)
 
 Ask this question AT MOST ONCE per conversation. Record the answer with
-reverie_set_repo_state:
+set_repo_state:
 - "yes" -> state="enabled"
 - "not now" -> state="not_now" (stays off for now; do not ask again in
   this conversation)
@@ -103,9 +103,9 @@ branches mid-conversation switches session memory; long-term memory
 stays shared across branches. Never suggest starting or stopping a
 session — there is nothing to start or stop.
 
-## When to Call reverie_observe
+## When to Call observe
 
-Call reverie_observe AFTER you:
+Call observe AFTER you:
 - Discover a non-obvious invariant or dependency
 - Debug a tricky issue and find the root cause
 - Make an architectural decision with rationale
@@ -115,20 +115,20 @@ Call reverie_observe AFTER you:
 Pass your reasoning trace (your thinking, decisions, and rationale) — not
 just the final code output. The Extractor lifts observations into conclusions.
 
-Do NOT call reverie_observe for:
+Do NOT call observe for:
 - Simple code changes with no insight
 - Things already captured in existing conclusions
 - Pure factual observations (e.g., "this function returns a string")
 - Every single response — only when you have engineering insight worth saving
 
-## When to Call reverie_query
+## When to Call query
 
-Call reverie_query when you recognize a gap that past engineering cognition might fill.
-Read the relevant code files FIRST. Do NOT call reverie_query before you have grounded
+Call query when you recognize a gap that past engineering cognition might fill.
+Read the relevant code files FIRST. Do NOT call query before you have grounded
 yourself in the repository. Reverie's memory is a supplement to your
 understanding, not a replacement for reading the code.
 
-Call reverie_query AFTER reading the code, when:
+Call query AFTER reading the code, when:
 - You're about to make a decision between multiple approaches
 - You're debugging and the cause isn't obvious from the code alone
 - You see a pattern in the code you don't recognise
@@ -138,7 +138,7 @@ Call reverie_query AFTER reading the code, when:
 - You're planning an architectural change and want to check for existing
   architectural decisions or constraints
 
-Do NOT call reverie_query:
+Do NOT call query:
 - Before you have read the relevant code files (this causes anchoring bias)
 - For simple code changes with no engineering insight needed
 - On every single response — only when you genuinely need past context
@@ -154,37 +154,37 @@ Pass a natural language query describing what you want to know. Be specific.
 than "dependency injection." The query is embedded and compared semantically —
 precise engineering questions retrieve better than single keywords.
 
-If reverie_query returns no results, proceed normally — this means Reverie
+If query returns no results, proceed normally — this means Reverie
 has no relevant memory yet. It starts empty and builds up over sessions.
 
-## When to Call reverie_reconsolidate
+## When to Call reconsolidate
 
-Call reverie_reconsolidate when you discover that a previously retrieved
+Call reconsolidate when you discover that a previously retrieved
 conclusion needs updating based on what you've found in the current
 codebase. This is how Reverie stays current — beliefs that are no longer
 accurate get corrected.
 
-Call reverie_reconsolidate when:
+Call reconsolidate when:
 - You verified a retrieved conclusion against the code and found it's no longer accurate
 - You discovered new evidence that strengthens a retrieved conclusion
 - You discovered new evidence that contradicts a retrieved conclusion
 - The code a conclusion is grounded in has changed, and the conclusion needs updating
 
-Pass the ECU ID (from the reverie_query result), your evidence (your reasoning about
+Pass the ECU ID (from the query result), your evidence (your reasoning about
 what changed), and optionally the relationship (supports/contradicts/supersedes).
 
-Do NOT call reverie_reconsolidate for:
-- New insights unrelated to a previously retrieved conclusion (use reverie_observe)
-- Conclusions you haven't retrieved in this session (reverie_query first)
+Do NOT call reconsolidate for:
+- New insights unrelated to a previously retrieved conclusion (use observe)
+- Conclusions you haven't retrieved in this session (query first)
 - Simple code changes with no impact on engineering conclusions
 
-If reverie_reconsolidate is not available, use reverie_observe to record
+If reconsolidate is not available, use observe to record
 the new finding — the Diffuser will handle the relationship at review time.
 
-## When to Call reverie_summary
+## When to Call summary
 
-Call reverie_summary ONCE at session start to see what Reverie already
-knows. This helps you decide whether to reverie_query for specific context
+Call summary ONCE at session start to see what Reverie already
+knows. This helps you decide whether to query for specific context
 before starting work. Returns brain statistics, not individual conclusions.
 
 If the response contains a pending-review backlog line (counts only),
@@ -198,11 +198,11 @@ Observations are stored as review candidates, never promoted
 automatically. The user reviews them:
 - in a terminal with `reverie review`, or
 - through you: when the user asks to see their Reverie candidates, call
-  reverie_review_list and show EVERY candidate's full conclusion text before
+  review_list and show EVERY candidate's full conclusion text before
   asking what they want to do.
 
 Rules for review through you:
-- Relay ONLY the decisions the user actually states, via reverie_review_decide.
+- Relay ONLY the decisions the user actually states, via review_decide.
 - NEVER decide on the user's behalf.
 - NEVER bulk-accept unless the user explicitly asked for that group.
 - Be honest about the limits: Reverie cannot verify who made a decision;
@@ -210,7 +210,7 @@ Rules for review through you:
 
 ## Reading Reverie Output
 
-When reverie_query returns conclusions, interpret them as follows:
+When query returns conclusions, interpret them as follows:
 
 ### Confidence levels:
 - High (>0.7): Reliable, act on this. Verify grounding if the decision is critical.
@@ -232,12 +232,12 @@ If the referenced file or symbol no longer exists, it may be stale.
 
 Reverie's Maintainer periodically verifies grounding references against the
 live repository and deprecates conclusions whose grounding has disappeared.
-Deprecated conclusions are not returned by reverie_query. If you discover
+Deprecated conclusions are not returned by query. If you discover
 that a conclusion's grounding is stale before the Maintainer has caught it,
-call reverie_reconsolidate to update it with what you've found.
+call reconsolidate to update it with what you've found.
 
 ### Warnings:
-reverie_query may return warnings (e.g., "2 conclusions have low
+query may return warnings (e.g., "2 conclusions have low
 confidence", "1 conclusion is challenged"). Read these warnings and adjust
 your trust accordingly.
 
@@ -262,7 +262,7 @@ Reverie's memory is framed as "past beliefs to verify against current
 code," NOT as authoritative context. Always verify conclusions against the
 live codebase.
 Do not anchor on past beliefs if the current code contradicts them.
-If you notice a contradiction, call reverie_observe to record the new finding.
+If you notice a contradiction, call observe to record the new finding.
 
 Observations are stored in the Session Brain, not the Canonical Brain. The
 user reviews the candidates — via `reverie review` in a terminal, or through you
@@ -276,17 +276,17 @@ uncertain — the review gate filters it.
 # user-level slash commands (Phase 3) — installed in each harness's own
 # location and format. Two commands: /reverie-review (ask the agent to list
 # review candidates and relay decisions) and /reverie-status (the session +
-# brain report through reverie_summary).
+# brain report through summary).
 # ---------------------------------------------------------------------------
 
 _REVIEW_COMMAND_BODY = """Review your pending Reverie conclusions (the human decides).
 
 Steps:
-1. Call reverie_review_list to get the pending candidates
+1. Call review_list to get the pending candidates
    (pass the workspace path as repo_path).
 2. Show EVERY candidate's full conclusion text, one at a time.
 3. Ask what the user wants to do with each (accept / reject / skip).
-4. Relay ONLY the decisions the user states, via reverie_review_decide
+4. Relay ONLY the decisions the user states, via review_decide
    (pass the review_token from the listing).
 5. Never decide on the user's behalf; never bulk-accept unless the user
    explicitly asked for that group.
@@ -295,7 +295,7 @@ Steps:
 _STATUS_COMMAND_BODY = """Show the current Reverie status.
 
 Steps:
-1. Call reverie_summary (pass the workspace path as repo_path).
+1. Call summary (pass the workspace path as repo_path).
 2. Report: brain statistics, session state for the current (repo, branch),
    and the pending-review count. Statistics only — never candidate
    contents unless the user asks for a review (use /reverie-review).
@@ -1136,9 +1136,9 @@ def _reference_block(agents_ref: str) -> str:
         f"## Reverie\n\n"
         f"Follow the Reverie agent instructions at {agents_ref}. Reverie is "
         f"an MCP server (`reverie`) providing engineering memory via "
-        f"reverie_observe, reverie_query, reverie_summary, "
-        f"reverie_reconsolidate, reverie_set_repo_state, "
-        f"reverie_review_list, and reverie_review_decide. Sessions are "
+        f"observe, query, summary, "
+        f"reconsolidate, set_repo_state, "
+        f"review_list, and review_decide. Sessions are "
         f"automatic per branch — never suggest starting or stopping a "
         f"session. Pass the workspace path as repo_path on every call. The "
         f"user reviews candidates via `reverie review` or by asking the "

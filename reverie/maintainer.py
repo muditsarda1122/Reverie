@@ -33,7 +33,7 @@ updates ``maintenance_state`` (last_run_at, last_run_ecu_count) so the
 trigger checks can compare future brain state against this baseline.
 
 The user never sees any of this: no CLI command, no user action. The only
-visible surface is ``last_maintenance_run`` in ``reverie_summary``.
+visible surface is ``last_maintenance_run`` in ``summary``.
 """
 
 from __future__ import annotations

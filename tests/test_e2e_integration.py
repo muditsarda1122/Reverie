@@ -18,16 +18,16 @@ The LIVE test's flow (steps a–g):
   a. fresh brain (REVERIE_HOME=/tmp/ec_e2e_test); the repo is enabled via the
      real `reverie enable` CLI subprocess (repo /tmp/fastapi, branch main) —
      NO session is created by enabling
-  b. the first reverie_observe auto-creates the session (D56)
-  c. a realistic 2-paragraph FastAPI routing investigation through reverie_observe
+  b. the first observe auto-creates the session (D56)
+  c. a realistic 2-paragraph FastAPI routing investigation through observe
      (extract -> store -> lightweight diffuse, all live LLM calls)
   d. ECUs extracted + stored in the session brain
   e. edges created (session edges / pending updates during observe — reported;
       firm supports/depends_on assertion on CANONICAL edges after promotion)
-  f. reverie_query "How does FastAPI routing work?" — groups contain the
+  f. query "How does FastAPI routing work?" — groups contain the
      extracted ECUs; the relevance gate filters a deliberately irrelevant
      session ECU; activation normalized; §11.8 formatted structure
-  g. review through the review queue: reverie_review_list → reverie_review_decide,
+  g. review through the review queue: review_list → review_decide,
      decisions applied, the agent channel recorded, tokens single-use;
      accepted ECUs promoted to the Canonical Brain (full diffuser)
   h. retrieval in a LATER conversation on the same branch: the SAME session
@@ -288,21 +288,21 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
     assert brain.get_active_session(RESOLVED_REPO, BRANCH) is None
     print("[a] repo enabled via `reverie enable`; no session yet (automatic)")
 
-    # (b) the FIRST reverie_observe auto-creates the session (D56) ----------------
+    # (b) the FIRST observe auto-creates the session (D56) ----------------
     # Ollama sampling variance (temperature 0.3): a 14B local model
     # sometimes returns an empty extraction for one trace. The product's
-    # answer is to observe again (reverie_observe is cumulative by design), so
+    # answer is to observe again (observe is cumulative by design), so
     # the test retries while nothing has been extracted. The ">= 1"
     # assertion itself is NOT relaxed.
     extracted_total = 0
     for attempt in range(3):
-        observe = _call_tool(server, "reverie_observe", {
+        observe = _call_tool(server, "observe", {
             "user_prompt": USER_PROMPT,
             "reasoning_trace": REASONING_TRACE,
             "final_output": FINAL_OUTPUT,
         })
         assert observe["status"] == "ok", observe
-        print("[c] reverie_observe payload:", json.dumps(observe, indent=None))
+        print("[c] observe payload:", json.dumps(observe, indent=None))
         if attempt == 0:
             session_row = brain.get_active_session(RESOLVED_REPO, BRANCH)
             assert session_row is not None, \
@@ -342,9 +342,9 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         model.encode_one(QUERY) @ model.encode_one(OFFTOPIC_ECU["cognition"]))
     assert off_sim < 0.3, f"off-topic fixture too similar to the query: {off_sim}"
 
-    # (f) reverie_query — relevant query via the MCP tool --------------------------
-    result = _call_tool(server, "reverie_query", {"query": QUERY})
-    print("[f] reverie_query: mode=%s groups=%d filtered_out=%d fallback=%s"
+    # (f) query — relevant query via the MCP tool --------------------------
+    result = _call_tool(server, "query", {"query": QUERY})
+    print("[f] query: mode=%s groups=%d filtered_out=%d fallback=%s"
           % (result.get("mode"), result.get("groups_retrieved"),
              result.get("filtered_out"), result.get("fallback")))
     assert result["status"] == "ok", result
@@ -387,7 +387,7 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
           "SOURCE/GROUNDING + framing note)")
 
     # (g) review through the review queue (agent channel, D57) ----------------
-    listing = _call_tool(server, "reverie_review_list", {"all": True})
+    listing = _call_tool(server, "review_list", {"all": True})
     assert listing["status"] == "ok"
     candidates = [c["id"] for c in listing["candidates"]]
     assert set(candidates) == extracted_ids | {offtopic_id}
@@ -400,11 +400,11 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         {"id": cid, "action": "reject" if cid == offtopic_id else "accept"}
         for cid in candidates if cid != held
     ]
-    payload = _call_tool(server, "reverie_review_decide", {
+    payload = _call_tool(server, "review_decide", {
         "review_token": token, "decisions": decisions})
     assert payload["status"] == "ok", payload
     # single-use: the token is consumed even though a valid id remains
-    payload2 = _call_tool(server, "reverie_review_decide", {
+    payload2 = _call_tool(server, "review_decide", {
         "review_token": token,
         "decisions": [{"id": held, "action": "accept"}]})
     assert payload2["status"] == "error"
@@ -413,9 +413,9 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         "a refused second call must not decide anything")
     # the next batch needs a FRESH listing — and it holds exactly the
     # held-back candidate
-    listing2 = _call_tool(server, "reverie_review_list", {"all": True})
+    listing2 = _call_tool(server, "review_list", {"all": True})
     assert [c["id"] for c in listing2["candidates"]] == [held]
-    payload3 = _call_tool(server, "reverie_review_decide", {
+    payload3 = _call_tool(server, "review_decide", {
         "review_token": listing2["review_token"],
         "decisions": [{"id": held, "action": "accept"}]})
     assert payload3["status"] == "ok", payload3
@@ -464,7 +464,7 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
     # session resumes — nothing is closed (D56) -------------------------------
     manager2 = SessionManager(brain)  # fresh activation state
     server2 = ReverieServer(brain=brain, manager=manager2)
-    result2 = _call_tool(server2, "reverie_query", {"query": QUERY})
+    result2 = _call_tool(server2, "query", {"query": QUERY})
     assert result2["status"] == "ok" and result2["groups_retrieved"] >= 1
     row = brain.get_active_session(RESOLVED_REPO, BRANCH)
     assert row is not None and row["id"] == session_id, (
@@ -482,7 +482,7 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
 
     # (i) a branch switch picks the OTHER branch's session ---------------------
     monkeypatch.setenv("REVERIE_BRANCH", "feature")
-    _call_tool(server2, "reverie_query", {"query": QUERY})
+    _call_tool(server2, "query", {"query": QUERY})
     feature_row = brain.get_active_session(RESOLVED_REPO, "feature")
     assert feature_row is not None, "the branch switch must auto-create ITS session"
     assert feature_row["id"] != session_id
@@ -640,7 +640,7 @@ class TestE2EOffline:
         finally:
             eco.server.stop_maintenance()
 
-        payload = _call_tool(eco.server, "reverie_query", {
+        payload = _call_tool(eco.server, "query", {
             "query": "How does auth token refresh work?",
             "mode": "debugging"})
         assert payload["status"] == "ok", payload.get("error")
@@ -855,7 +855,7 @@ class TestE2EOffline:
             metadata={"competing_since": days_ago(31)})
         brain.add_edge(p1_id, p2_id, "contradicts")
 
-        payload = _call_tool(eco.server, "reverie_query", {
+        payload = _call_tool(eco.server, "query", {
             "query": "How does auth token refresh work?",
             "mode": "debugging"})
         assert payload["status"] == "ok"
@@ -900,7 +900,7 @@ class TestE2EOffline:
                 == pytest.approx(parked["confidence"])
 
         # …and still retrievable, flagged as open questions (§17.5).
-        oq_payload = _call_tool(eco.server, "reverie_query", {
+        oq_payload = _call_tool(eco.server, "query", {
             "query": "How does the API rate limiting work per user?",
             "mode": "debugging"})
         assert oq_payload["status"] == "ok"
@@ -909,8 +909,8 @@ class TestE2EOffline:
 
     def test_e2e_offline_reconsolidation_via_mcp(self, offline_ecosystem):
         # 3. The full D37/D39 loop through the MCP tool surface:
-        #    reverie_query surfaces a canonical ECU → it becomes labile AND gets
-        #    the reinforcement bump → reverie_reconsolidate with contradicting
+        #    query surfaces a canonical ECU → it becomes labile AND gets
+        #    the reinforcement bump → reconsolidate with contradicting
         #    evidence challenges it in the Canonical Brain immediately;
         #    a never-retrieved ECU is refused by the labile gate.
         eco = offline_ecosystem
@@ -924,7 +924,7 @@ class TestE2EOffline:
             "PostgreSQL autovacuum scale factors must be tuned per table "
             "based on churn rate", confidence=0.6)
 
-        payload = _call_tool(eco.server, "reverie_query", {
+        payload = _call_tool(eco.server, "query", {
             "query": "How does the auth token refresh work?",
             "mode": "debugging"})
         assert payload["status"] == "ok"
@@ -944,7 +944,7 @@ class TestE2EOffline:
         assert target["metadata"]["last_reinforced"]
 
         # labile gate refuses what was never retrieved this session
-        refusal = _call_tool(eco.server, "reverie_reconsolidate", {
+        refusal = _call_tool(eco.server, "reconsolidate", {
             "ecu_id": unretrieved_id, "relationship": "contradicts",
             "evidence": "autovacuum tuning was verified differently"})
         assert refusal["status"] == "error"
@@ -954,7 +954,7 @@ class TestE2EOffline:
 
         # contradicting evidence lands in the Canonical Brain immediately
         count_before = brain.count_ecus()
-        result = _call_tool(eco.server, "reverie_reconsolidate", {
+        result = _call_tool(eco.server, "reconsolidate", {
             "ecu_id": target_id, "relationship": "contradicts",
             "evidence": "auth/token.py now refreshes lazily only after a "
                         "401 — optimistic refresh no longer holds"})
@@ -966,7 +966,7 @@ class TestE2EOffline:
         assert updated["confidence"] < expected_bump
         notes = updated["metadata"]["reconsolidations"]
         assert len(notes) == 1 and notes[0]["relationship"] == "contradicts"
-        assert notes[0]["via"] == "reverie_reconsolidate"
+        assert notes[0]["via"] == "reconsolidate"
         assert brain.count_ecus() == count_before, \
             "the pseudo-ECU must never be stored"
         assert brain.edge_count(target_id) == 0, \

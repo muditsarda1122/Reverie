@@ -224,7 +224,7 @@ def test_double_stop_raises(manager, brain):
 
 
 # ---------------------------------------------------------------------------
-# brain summary (§16.3 reverie_summary)
+# brain summary (§16.3 summary)
 # ---------------------------------------------------------------------------
 
 def test_brain_summary_stats(brain):

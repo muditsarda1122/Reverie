@@ -19,28 +19,28 @@ Run the same checklist per harness. Time: ~15 minutes each.
 | 1.3 | Inspect what was written | The harness config contains the `reverie` MCP server entry (e.g. `~/.claude.json` has `mcpServers.reverie`; `~/.codex/config.toml` has `[mcp_servers.reverie]`; `~/.config/opencode/opencode.json` has `mcp.reverie`; `~/.cursor/mcp.json` has `mcpServers.reverie`; `~/.gemini/settings.json` has `mcpServers.reverie`) |
 | 1.4 | Check `~/.reverie/` | Contains `reverie.db`, `config.yaml`, `AGENTS.md` — no `commands/` directory (commands live per harness now) |
 | 1.5 | Check the harness command directory | `~/.claude/commands/reverie-review.md` + `reverie-status.md`, or `~/.codex/prompts/…`, or `~/.config/opencode/commands/…`, or `~/.cursor/commands/…`, or `~/.gemini/commands/*.toml` |
-| 1.6 | Start the harness fresh (restart it so the MCP server loads) | The harness's MCP log/panel shows a `reverie` server with 7 tools: `reverie_observe`, `reverie_query`, `reverie_summary`, `reverie_reconsolidate`, `reverie_set_repo_state`, `reverie_review_list`, `reverie_review_decide` |
+| 1.6 | Start the harness fresh (restart it so the MCP server loads) | The harness's MCP log/panel shows a `reverie` server with 7 tools: `observe`, `query`, `summary`, `reconsolidate`, `set_repo_state`, `review_list`, `review_decide` |
 
 ## 2. The agent asks to turn Reverie on
 
 | Step | Action | Expected |
 |---|---|---|
 | 2.1 | Open a scratch repo with your agent; ask it anything | The first Reverie tool call returns the enablement question instead of acting; the agent asks you exactly once: **"Reverie isn't on for this repo. Turn it on? (yes / not now / never)"** |
-| 2.2 | Answer **yes** | The agent records it (`reverie_set_repo_state`); no further asking this conversation |
+| 2.2 | Answer **yes** | The agent records it (`set_repo_state`); no further asking this conversation |
 | 2.3 | `reverie repos` | The repo is listed with `state: enabled` |
 
 ## 3. A conclusion gets captured
 
 | Step | Action | Expected |
 |---|---|---|
-| 3.1 | Give the agent a task with a non-obvious decision (e.g. "add caching but think hard about stale-then-invalidate ordering"), let it work | The agent calls `reverie_observe` with its reasoning; the tool result reports "Extracted N conclusion(s) into session memory (… rejected by the Lifting Test)" |
+| 3.1 | Give the agent a task with a non-obvious decision (e.g. "add caching but think hard about stale-then-invalidate ordering"), let it work | The agent calls `observe` with its reasoning; the tool result reports "Extracted N conclusion(s) into session memory (… rejected by the Lifting Test)" |
 | 3.2 | Ask the agent what it stored | It can describe the captured conclusion (counts/text via the tool result); not every response produces one — that's normal |
 
 ## 4. Both review paths show it
 
 | Step | Action | Expected |
 |---|---|---|
-| 4.1 | Type `/reverie-review` in the harness chat (Codex: `/prompts:reverie-review`) | The agent calls `reverie_review_list`, shows the candidate's full conclusion text, and asks what to do — it does NOT decide for you |
+| 4.1 | Type `/reverie-review` in the harness chat (Codex: `/prompts:reverie-review`) | The agent calls `review_list`, shows the candidate's full conclusion text, and asks what to do — it does NOT decide for you |
 | 4.2 | In a terminal: `reverie review` | The same candidate appears in the TUI, strongest first, one at a time with a/r/s hints. Press `q` to quit without deciding (leave it for step 5) |
 | 4.3 | (optional) `reverie status` | The brain report shows the pending-review count |
 
@@ -55,7 +55,7 @@ Run the same checklist per harness. Time: ~15 minutes each.
 
 | Step | Action | Expected |
 |---|---|---|
-| 6.1 | Open a NEW conversation in the same repo; let the agent read the relevant code first, then ask a question that touches the stored conclusion | The agent calls `reverie_query` AFTER reading code; the result includes the accepted conclusion with its confidence, status and grounding references, framed as past understanding to verify |
+| 6.1 | Open a NEW conversation in the same repo; let the agent read the relevant code first, then ask a question that touches the stored conclusion | The agent calls `query` AFTER reading code; the result includes the accepted conclusion with its confidence, status and grounding references, framed as past understanding to verify |
 | 6.2 | Sanity-check the anti-anchoring framing | The agent verifies against the code rather than trusting the memory blindly |
 
 ## 7. A branch switch

@@ -129,7 +129,7 @@ Two commands are installed in every harness that has a user-level command
 mechanism: **`/reverie-review`** (asks the agent to list review candidates,
 show every candidate's full text, and relay only the decisions you state)
 and **`/reverie-status`** (the session + brain report through
-`reverie_summary`). Formats: plain markdown for Claude Code and Cursor;
+`summary`). Formats: plain markdown for Claude Code and Cursor;
 markdown + YAML frontmatter for OpenCode; frontmatter markdown under
 `~/.codex/prompts/` for Codex (custom prompts are deprecated upstream —
 still the user-level mechanism); TOML (`prompt` string) for Gemini CLI.

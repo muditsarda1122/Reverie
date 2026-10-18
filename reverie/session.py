@@ -22,7 +22,7 @@ Session-creation logic (§28.5):
 
 Review is independent of sessions (§29.4): one queue across every session,
 branch and repo — ``reverie review`` in a terminal or the
-reverie_review_list / reverie_review_decide MCP tools; nothing needs closing.
+review_list / review_decide MCP tools; nothing needs closing.
 
 The ``python -m reverie.session`` CLI exposes ``status`` (the report behind
 ``reverie status``) plus the bench-only ``bench-start`` / ``bench-close``
@@ -31,7 +31,7 @@ server (reverie/mcp_server.py) resolves the current session from the
 database per call (decision D15).
 
 Labile ECUs (design doc §5.4, D39): the SessionManager keeps an in-memory
-set per session of canonical ECU ids surfaced by reverie_query. reverie_reconsolidate
+set per session of canonical ECU ids surfaced by query. reconsolidate
 checks this set — only retrieved (labile) ECUs can be reconsolidated.
 """
 
@@ -110,12 +110,12 @@ def detect_repo_branch(cwd: str | Path | None = None) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# brain summary — reverie_summary payload (§16.3), awareness without anchoring
+# brain summary — summary payload (§16.3), awareness without anchoring
 # ---------------------------------------------------------------------------
 
 def brain_summary(brain: Brain, session_row: dict | None = None,
                   session_brain_count: int | None = None) -> dict:
-    """§16.3 reverie_summary body: brain statistics, never individual ECUs."""
+    """§16.3 summary body: brain statistics, never individual ECUs."""
     total = brain.count_ecus()
     by_scope_raw = brain.count_ecus_by_scope()
     by_scope = {level: by_scope_raw.get(level, 0) for level in SCOPE_LEVELS}
@@ -189,10 +189,10 @@ class SessionManager:
     session and the next ``current_session`` lookup simply misses.
 
     It also tracks each session's *labile* canonical ECUs (design doc §5.4,
-    D39): ECUs retrieved via reverie_query during this session. Like the
+    D39): ECUs retrieved via query during this session. Like the
     activation state this is session memory, not the database — retrieval
     makes a belief revisable only while the retrieval is in living memory.
-    ``reverie_reconsolidate`` refuses ECU ids that are not labile.
+    ``reconsolidate`` refuses ECU ids that are not labile.
     """
 
     def __init__(self, brain: Brain, config=None, embedding_model=None):
@@ -227,7 +227,7 @@ class SessionManager:
     # -- labile ECUs (D39 — §5.4) ------------------------------------------
 
     def mark_labile(self, session_id: str, ecu_ids) -> None:
-        """Record canonical ECUs surfaced by reverie_query as revisable."""
+        """Record canonical ECUs surfaced by query as revisable."""
         bucket = self._labile.setdefault(session_id, set())
         bucket.update(ecu_ids)
 

@@ -284,12 +284,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # (kept, never deleted; still usable in session memory; revived only
         # via `reverie review --expired`). 0 disables expiry.
         "expire_after_days": 21,
-        # reverie_summary nudge: one counts-only line when the unreviewed
+        # summary nudge: one counts-only line when the unreviewed
         # backlog exceeds this many candidates...
         "nudge_threshold": 10,
         # ...or the oldest unreviewed candidate is older than this many days.
         "nudge_age_days": 5,
-        # Page size for `reverie review` and reverie_review_list (never a filter —
+        # Page size for `reverie review` and review_list (never a filter —
         # "more" is always available).
         "page_size": 10,
     },

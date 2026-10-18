@@ -12,9 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package (`reverie`), the CLI (`reverie` with subcommands `install`,
   `enable`, `disable`, `repos`, `review`, `status`, `export`, `import`,
   `reset`, `retry`, `repair`, `uninstall`), the MCP server (`reverie-mcp`),
-  the seven MCP tools (`reverie_observe`, `reverie_query`, `reverie_summary`,
-  `reverie_reconsolidate`, `reverie_set_repo_state`, `reverie_review_list`,
-  `reverie_review_decide`), the data directory (`~/.reverie`), the database
+  the seven MCP tools (`observe`, `query`, `summary`,
+  `reconsolidate`, `set_repo_state`, `review_list`,
+  `review_decide`), the data directory (`~/.reverie`), the database
   (`reverie.db`), the env vars (`REVERIE_HOME`, `REVERIE_REPO_PATH`,
   `REVERIE_BRANCH`) and the PyPI name (`reverie` — verified free;
   `reverie-memory` is an unrelated package). One clean rename — no
@@ -68,7 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first tool call in an undecided repo returns a short, structured
   ask-the-user response ("Reverie isn't on for this repo. Turn it on?
   (yes / not now / never)"); the agent records the answer via the new
-  `reverie_set_repo_state` MCP tool. `reverie enable` / `reverie disable` switch it
+  `set_repo_state` MCP tool. `reverie enable` / `reverie disable` switch it
   directly; `reverie repos` lists every known repo with state and counts.
   Disabled = fully off (no capture, no retrieval; data kept).
 - **Repo identity (D58):** the git common directory, so worktrees share
@@ -88,8 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   10 with "more" available. Non-interactive flags: `--list [--json]`,
   `--decide <id>=<accept|reject|skip>`, `--repo/--branch/--all`,
   `--by-topic`, `--expired` (revive expired candidates).
-- **Agent review channel (D57):** `reverie_review_list` returns the ordered
-  page plus a short-lived `review_token`; `reverie_review_decide` applies
+- **Agent review channel (D57):** `review_list` returns the ordered
+  page plus a short-lived `review_token`; `review_decide` applies
   only decisions stated by the user, refuses a bulk accept-all, and
   records the channel (`tui`/`agent`/`cli`) in a new `review_decisions`
   audit table.
@@ -97,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `review.expire_after_days` (default 21, 0 disables) become `expired`
   — kept, still usable in session memory, revived only via
   `ec review --expired`.
-- **The nudge (D57):** `reverie_summary` adds one counts-only line when
+- **The nudge (D57):** `summary` adds one counts-only line when
   the backlog exceeds `review.nudge_threshold` (10) or the oldest
   unreviewed candidate is older than `review.nudge_age_days` (5).
 - **Transport (D58):** `reverie export [file]` (ZIP: consistent snapshot +
@@ -137,16 +137,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   violations raise a real exception that rolls everything back (an
   `assert` after the commit was stripped under `python -O` and checked
   too late anyway).
-- **Review tokens are single-use.** A successful `reverie_review_decide`
+- **Review tokens are single-use.** A successful `review_decide`
   consumes the token, so the "no bulk accept-all" guard cannot be
   bypassed by accepting part of a listing, then the rest with the same
   token in a second call — the next batch requires a fresh
-  `reverie_review_list`. This adds friction; it is not a security boundary
+  `review_list`. This adds friction; it is not a security boundary
   (the docs say so).
-- **The nudge line matches the listing.** `reverie_summary`'s review
+- **The nudge line matches the listing.** `summary`'s review
   backlog line splits the count when a repo is known — "14 conclusions
   waiting for review (3 in this repo, oldest 6 days)" — because
-  `reverie_review_list` defaults to the current repo; outside a repo it
+  `review_list` defaults to the current repo; outside a repo it
   stays global-only.
 - **Bare `reverie` shows help** instead of running the installer, and a
   mistyped first word (`reverie reveiw`) is an error with a "did you mean"

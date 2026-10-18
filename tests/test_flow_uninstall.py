@@ -247,7 +247,7 @@ def test_uninstall_skips_invalid_and_edited_files(home, reverie_home):
     edited = home / ".config" / "opencode" / "AGENTS.md"
     text = edited.read_text()
     edited.write_text(text.replace(
-        "engineering memory via reverie_observe", "MY OWN EDIT LIVES HERE"))
+        "engineering memory via observe", "MY OWN EDIT LIVES HERE"))
     before = {
         p: p.read_bytes()
         for p in (home / ".claude.json", home / ".codex" / "config.toml",

@@ -43,7 +43,7 @@
 - **Who it is for:** developers using MCP-capable coding agents (Claude Code, Cursor, OpenCode, Codex are the four the installer supports — `reverie/install.py:698`).
 - **Problem it solves:** an agent re-derives the same engineering understanding every session. Reverie extracts the *conclusions* an agent reaches while working ("auth correctness depends on optimistic token refresh…"), stores them in a local SQLite brain, and re-serves them — with confidence and status flags — to future agent sessions on demand.
 - **What it connects to:** one stdio MCP server per agent process (`reverie/mcp_server.py`), a session-lifecycle CLI, and one LLM endpoint for extraction/classification (OpenCode Zen / Claude Haiku 4.5 by default; Ollama as offline fallback — `reverie/llm.py`, `reverie/install.py:286-310`).
-- **What happens when an agent uses it:** the agent calls `reverie_observe` after reaching engineering conclusions (extraction → session brain → lightweight diffusion), calls `reverie_query` when it needs past cognition (demand-driven retrieval over both brains), and the user closes the loop with `/ec-stop`, which walks a human review gate before anything reaches the durable "Canonical Brain".
+- **What happens when an agent uses it:** the agent calls `observe` after reaching engineering conclusions (extraction → session brain → lightweight diffusion), calls `query` when it needs past cognition (demand-driven retrieval over both brains), and the user closes the loop with `/ec-stop`, which walks a human review gate before anything reaches the durable "Canonical Brain".
 - **What persists between sessions:** the Canonical Brain (`ecus` + `edges` tables), closed session rows, unreviewed/skipped session ECUs (carried into the next session on the same repo+branch), maintenance logs, and per-ECU retrieval metadata. What does **not** persist: activation scores (deleted at stop), the "labile" set of retrieved ECUs (in-memory only).
 - **What it does that chat history does not:**
   - It stores *irreducible conclusions* with an explicit Lifting Test that rejects raw facts, code descriptions, and process steps (`reverie/prompts/extractor_prompt.md`).
@@ -133,7 +133,7 @@ export OPENCODE_ZEN_API_KEY='your-key'   # https://opencode.ai/auth
 
 cd your-project                 # must be a git repo (branch detection)
 ec-start                        # start/resume session; prints brain summary
-# ... work with your agent; it calls reverie_observe / reverie_query via MCP ...
+# ... work with your agent; it calls observe / query via MCP ...
 ec-stop                         # interactive review gate; or --all-accept / --all-skip
 ec-status                       # anytime
 ```
@@ -148,24 +148,24 @@ Modes: **local-only** (single machine, single user). There is no server/producti
 
 - **Transport:** stdio, **newline-delimited JSON-RPC 2.0** (one message per line), protocol version `2024-11-05`, server name `reverie` (`mcp_server.py:79-80`). Hand-rolled — the `mcp` SDK is deliberately not a dependency (D14). Logging goes to stderr only; stdout is protocol-only.
 - **Implemented methods:** `initialize`, `ping`, `tools/list`, `tools/call`. Notifications are never answered. **Not implemented:** batching, progress, cancellation, `resources/*`, `prompts/*` — Reverie exposes **tools only, no resources and no prompts** (`handle_message`, `mcp_server.py:419-440`).
-- **Session model:** the server never creates sessions. It resolves the current session per call via `(repo, branch)` detection (git, or `REVERIE_REPO_PATH`/`REVERIE_BRANCH`), reading the same SQLite DB the CLI uses — WAL makes CLI/MCP interoperation safe (D15). Without an active session, `reverie_observe`/`reverie_query` return the verbatim error: *"No active Reverie session. Suggest the user run /ec-start to begin a session."* (`mcp_server.py:83-85`).
+- **Session model:** the server never creates sessions. It resolves the current session per call via `(repo, branch)` detection (git, or `REVERIE_REPO_PATH`/`REVERIE_BRANCH`), reading the same SQLite DB the CLI uses — WAL makes CLI/MCP interoperation safe (D15). Without an active session, `observe`/`query` return the verbatim error: *"No active Reverie session. Suggest the user run /ec-start to begin a session."* (`mcp_server.py:83-85`).
 - **Lifecycle side effects inside the server:**
   - Startup: if maintenance is overdue, it runs synchronously **before** serving, then a daemon `MaintainerThread` runs for the process lifetime (`start_maintenance`, `mcp_server.py:366-391`).
-  - After each successful `reverie_query`: canonical ECUs that were surfaced get `last_retrieved`/`retrieval_count` stamped, **stored confidence bumped** by `alpha_retrieval` (log-odds), `last_reinforced` reset (the lazy-decay clock restarts), and the ids marked *labile* (reconsolidatable). Frozen-status ECUs keep the bookkeeping but skip the bump (`_record_retrieval_metadata`, `mcp_server.py:481-526`).
-  - Every `reverie_observe` stamps the session repo's git HEAD (12-char short hash) into each extracted ECU's grounding before storage (D49, `mcp_server.py:101-123,565`).
+  - After each successful `query`: canonical ECUs that were surfaced get `last_retrieved`/`retrieval_count` stamped, **stored confidence bumped** by `alpha_retrieval` (log-odds), `last_reinforced` reset (the lazy-decay clock restarts), and the ids marked *labile* (reconsolidatable). Frozen-status ECUs keep the bookkeeping but skip the bump (`_record_retrieval_metadata`, `mcp_server.py:481-526`).
+  - Every `observe` stamps the session repo's git HEAD (12-char short hash) into each extracted ECU's grounding before storage (D49, `mcp_server.py:101-123,565`).
 
 ### 3.2 The four MCP tools (complete surface)
 
 | Tool | Purpose | Input parameters | Output (payload keys) | When the agent should use it | Implementation |
 |---|---|---|---|---|---|
-| **`reverie_observe`** | Extract conclusions from the agent's own reasoning → Session Brain → lightweight diffusion | `user_prompt`* (string), `reasoning_trace`* (string), `final_output` (optional string) | `status, session_active, ecus_extracted, ecus_rejected, rejection_summary, session_brain_count, message, skipped_invalid, diffusion_failures` | After discovering an invariant/root cause/decision/changed assumption — not for simple code changes | `mcp_server.py:530-607` → `extractor.extract_and_store_session` → `diffuser.diffuse_session_ecu` |
-| **`reverie_query`** | Demand-driven retrieval of past cognition (both brains) | `query`* (string), `scope` (enum of 6 levels), `mode` (enum of 5 modes) | `status, mode, mode_detected, budget, budget_used, groups_retrieved, groups[] (core_ecu + 4 edge slots), warnings, brain_source, message, formatted, fallback, filtered_out, cross_group_dedup_count, session_active` | After reading relevant code, before decisions/debugging/architecture work — never before grounding in the repo (anti-anchoring, verbatim in tool description) | `mcp_server.py:609-646` → `retrieval.retrieve` |
-| **`reverie_summary`** | Brain statistics, once at session start ("awareness without anchoring") | none | `canonical_brain{total_ecus, by_scope, by_status, last_maintenance_run, last_ecu_added, pending_review_count}, session{active, session_brain_count, started_at, repo, branch}, message` | Once per session start; works **without** an active session | `mcp_server.py:648-654` → `session.brain_summary` |
-| **`reverie_reconsolidate`** | Re-evaluate a *previously retrieved* canonical ECU with new evidence; writes to Canonical Brain immediately | `ecu_id`* (string), `evidence`* (string), `relationship` (optional: supports/contradicts/supersedes) | `status, session_active, ecu_id, action_taken (confidence_updated\|challenged\|superseded\|no_change), new_confidence, old_confidence, edges_created, message` | When verified evidence shows a retrieved ECU is wrong/outdated/needs strengthening | `mcp_server.py:656-735` → `reconsolidation.reconsolidate` |
+| **`observe`** | Extract conclusions from the agent's own reasoning → Session Brain → lightweight diffusion | `user_prompt`* (string), `reasoning_trace`* (string), `final_output` (optional string) | `status, session_active, ecus_extracted, ecus_rejected, rejection_summary, session_brain_count, message, skipped_invalid, diffusion_failures` | After discovering an invariant/root cause/decision/changed assumption — not for simple code changes | `mcp_server.py:530-607` → `extractor.extract_and_store_session` → `diffuser.diffuse_session_ecu` |
+| **`query`** | Demand-driven retrieval of past cognition (both brains) | `query`* (string), `scope` (enum of 6 levels), `mode` (enum of 5 modes) | `status, mode, mode_detected, budget, budget_used, groups_retrieved, groups[] (core_ecu + 4 edge slots), warnings, brain_source, message, formatted, fallback, filtered_out, cross_group_dedup_count, session_active` | After reading relevant code, before decisions/debugging/architecture work — never before grounding in the repo (anti-anchoring, verbatim in tool description) | `mcp_server.py:609-646` → `retrieval.retrieve` |
+| **`summary`** | Brain statistics, once at session start ("awareness without anchoring") | none | `canonical_brain{total_ecus, by_scope, by_status, last_maintenance_run, last_ecu_added, pending_review_count}, session{active, session_brain_count, started_at, repo, branch}, message` | Once per session start; works **without** an active session | `mcp_server.py:648-654` → `session.brain_summary` |
+| **`reconsolidate`** | Re-evaluate a *previously retrieved* canonical ECU with new evidence; writes to Canonical Brain immediately | `ecu_id`* (string), `evidence`* (string), `relationship` (optional: supports/contradicts/supersedes) | `status, session_active, ecu_id, action_taken (confidence_updated\|challenged\|superseded\|no_change), new_confidence, old_confidence, edges_created, message` | When verified evidence shows a retrieved ECU is wrong/outdated/needs strengthening | `mcp_server.py:656-735` → `reconsolidation.reconsolidate` |
 
 \* required. Schemas are in `TOOLS` (`mcp_server.py:207-324`); tool descriptions are verbatim from spec §28.3 and are the primary way agents learn usage.
 
-**Labile gate (D39):** `reverie_reconsolidate` refuses ECU ids that were not surfaced by `reverie_query` in the current server process lifetime ("you can't reconsolidate something you haven't looked at") — `session.SessionManager._labile` is an **in-memory** dict (`reverie/session.py:200-238`).
+**Labile gate (D39):** `reconsolidate` refuses ECU ids that were not surfaced by `query` in the current server process lifetime ("you can't reconsolidate something you haven't looked at") — `session.SessionManager._labile` is an **in-memory** dict (`reverie/session.py:200-238`).
 
 ### 3.3 Supported agents & other interfaces
 
@@ -192,7 +192,7 @@ flowchart TD
 
     A -- NDJSON JSON-RPC 2.0 stdio --> B[ECServer<br/>reverie/mcp_server.py]
 
-    B -- reverie_observe --> C[extractor.extract_and_store_session<br/>reverie/extractor.py]
+    B -- observe --> C[extractor.extract_and_store_session<br/>reverie/extractor.py]
     C -- system=prompts/extractor_prompt.md --> D[call_llm<br/>Claude Haiku 4.5 via OpenCode Zen<br/>reverie/llm.py]
     D -- JSON {ecus, rejected_count} --> C
     C -- validate_ecu + initial_prior §5.9 --> E[brain.insert_session_ecu<br/>+ embedding via all-MiniLM-L6-v2]
@@ -200,7 +200,7 @@ flowchart TD
     F -- session targets --> G[(session_ecus + session_edges)]
     F -- canonical targets --> H[(pending_updates)]
 
-    B -- reverie_query --> I[retrieval.retrieve<br/>14-step pipeline, reverie/retrieval.py]
+    B -- query --> I[retrieval.retrieve<br/>14-step pipeline, reverie/retrieval.py]
     I -- find_similar both brains --> J[(ecus + session_ecus embeddings)]
     I -- ranking + grouping + budget --> K[ActivationState.spread<br/>reverie/activation.py]
     B -- post-query --> L[_record_retrieval_metadata<br/>reinforcement + labile marks]
@@ -335,7 +335,7 @@ Two real implementations (`reverie/diffuser.py`), plus one reuse of the full pip
 
 ### 7.1 Lightweight diffuser — Session Brain (§4.4) — `diffuse_session_ecu`
 
-- Trigger: after every `reverie_observe` extraction (per stored ECU).
+- Trigger: after every `observe` extraction (per stored ECU).
 - Candidates: `find_similar(threshold=0.7, top_k=10)` across **both brains** (session + canonical).
 - Classification: one batched LLM call, **3-way** (`supports | contradicts | unrelated`), temp 0.0. Unparseable/omitted pairs default to `unrelated` (the safe direction — spurious edges are the harmful failure mode, §8.6).
 - Session targets: `session_edge` created (supports|contradicts only) + simple bump on the **target**: `c' = clamp(c ± 0.1 × similarity, 0.05, 0.95)`.
@@ -413,7 +413,7 @@ The agent's evidence becomes a **pseudo-ECU** (confidence 0.5, scope/type/ground
 - **Pending updates:** cross-brain evidence recorded as intent, applied with exact recomputed deltas only when the *source* ECU is accepted at the gate (§7.2/D16 above).
 - **Activation:** per-session spreading-activation state, persisted with per-ECU timestamps, decays exponentially `exp(-0.1 × elapsed_hours)` across breaks and quiet periods; deleted when the session closes ("fresh slate", §12.2) (`reverie/activation.py`, `review_gate.py:953`).
 - **Session → canonical transition (the only one):** review-gate accept. The ECU is promoted **with the same id** (D21), optionally with an edited cognition (original preserved in `metadata.review_edit`, re-embedded), then run through the full diffuser. Promotion stands even if diffusion fails offline (recorded in `result.undiffused` + a prominent CLI warning, `review_gate.py:892-908,974-988`).
-- **Labile set:** canonical ECUs surfaced by `reverie_query` in the current server process — in-memory only; dies on server restart or session close.
+- **Labile set:** canonical ECUs surfaced by `query` in the current server process — in-memory only; dies on server restart or session close.
 
 ---
 
@@ -461,7 +461,7 @@ Flow (`reverie/review_gate.py`, `reverie/session.py:378-464`):
 6. After decisions: pending updates applied/discarded with exact deltas (D16), opposing-edge decomposition notifications, §17.5 persistence sweep, grounding-deprecation notifications accumulated since the last gate (§3.6 — read from `maintenance_log`), cleanup of accepted/rejected session rows + edges, session closed, activation dropped, `review_gate` row logged.
 7. Non-interactive: `--all-accept`, `--all-skip`, `--resolve-open-questions auto|skip|archive`. Diffusion failures produce `⚠️ WARNING: N ECU(s) promoted without diffusion…` (`diffusion_failure_warning`).
 
-How the user learns what to review: the pending count is surfaced in `reverie_summary` / `ec-status` (`brain.pending_review_count`, scoped to the working context when a session is active).
+How the user learns what to review: the pending count is surfaced in `summary` / `ec-status` (`brain.pending_review_count`, scoped to the working context when a session is active).
 
 ---
 
@@ -531,11 +531,11 @@ Weights: canonical edges accumulate `min(1.0, w1+w2)` on repeat evidence; `confi
 
 ## 13. Retrieval
 
-`reverie/retrieval.py` — the `reverie_query` pipeline (14 documented steps in the module docstring; all present in `retrieve()`).
+`reverie/retrieval.py` — the `query` pipeline (14 documented steps in the module docstring; all present in `retrieve()`).
 
 | Aspect | Actual behavior |
 |---|---|
-| Query interface | MCP tool `reverie_query(query, scope?, mode?)` → `retrieval.retrieve()`. Demand-driven only; nothing injects cognition proactively |
+| Query interface | MCP tool `query(query, scope?, mode?)` → `retrieval.retrieve()`. Demand-driven only; nothing injects cognition proactively |
 | Mode detection | LLM (temp 0.0, 16 tokens) when a key exists; keyword fallback (scored keyword lists per mode, phrases weigh double); default `investigation` |
 | Embedding model | `all-MiniLM-L6-v2`, 384-dim, L2-normalized; query encoded fresh per call |
 | Semantic search | `Brain.find_similar`: brute-force numpy dot product over float32 BLOBs of **both brains** (canonical filtered to `active/challenged/open_question`; session filtered to `session_id` when given). Threshold −1.0 (everything); no vector DB (explicit §28.14 decision) |
@@ -686,10 +686,10 @@ Everything a developer can inspect today:
 | `edges.confidence_delta` | The exact log-odds effect each edge applied — the raw material for a confidence-evolution visualization | `schema.sql:48` |
 | `maintenance_log` | One JSON row per maintenance task + `full_run` summary + review-gate runs + grounding runs (deprecated lists, dependents challenged) | `reverie/maintainer.py:416-450`, `review_gate.py:956-964` |
 | `maintenance_state` | Trigger baselines + per-repo grounding clocks | `brain.py:1160-1173` |
-| `ec-status` / `reverie_summary` | Totals, scope distribution, status counts, last maintenance run, last ECU added, pending review count, session state | `reverie/session.py:114-174` |
+| `ec-status` / `summary` | Totals, scope distribution, status counts, last maintenance run, last ECU added, pending review count, session state | `reverie/session.py:114-174` |
 | `ec-repair --dry-run` | DB health report (6 checks) | `reverie/repair.py:62-198` |
 | stderr logging | MCP server INFO logs (maintenance, diffusion failures, mode-detection fallbacks, classification warnings) | `mcp_server.main()` |
-| Tool payloads | `reverie_observe` returns `rejection_summary`, `skipped_invalid`, `diffusion_failures`; `reverie_query` returns per-candidate `rank` in the structured group + `filtered_out`, `fallback`, warnings; `reverie_reconsolidate` returns old/new confidence, action, edges | various |
+| Tool payloads | `observe` returns `rejection_summary`, `skipped_invalid`, `diffusion_failures`; `query` returns per-candidate `rank` in the structured group + `filtered_out`, `fallback`, warnings; `reconsolidate` returns old/new confidence, action, edges | various |
 | Benchmark artifacts | Per-prompt JSONL transcripts, `.meta.json` (durations, tokens), session CLI logs, manifest with brain stats, `scores.json` with per-metric judge rationales | `runs/<id>/` |
 | **Missing (confirmed absent)** | Retrieval traces per query, diffusion traces per candidate, confidence *history* over time (only current values + last-changed timestamps), a CLI to dump/inspect individual ECUs (only the review gate's `d` view and raw sqlite) | verified |
 
@@ -767,7 +767,7 @@ Everything a first-time discoverer could be shown, verified against code, with a
 | 10 | Demand-driven retrieval, 5 modes, scope hierarchy, anti-anchoring framing | ✅ | retrieval.py | **DEMO-WORTHY** |
 | 11 | Local-first: one SQLite file, no cloud, no vector DB | ✅ | schema/brain | **DEMO-WORTHY** |
 | 12 | Offline LLM fallback (Ollama qwen2.5-coder:14b, auto-configured) | ✅ | install.py | WEBSITE-WORTHY |
-| 13 | Brain summary CLI/MCP (`ec-status`, `reverie_summary`) | ✅ | session.py | WEBSITE-WORTHY |
+| 13 | Brain summary CLI/MCP (`ec-status`, `summary`) | ✅ | session.py | WEBSITE-WORTHY |
 | 14 | `reverie repair` integrity tool | ✅ | repair.py | TECHNICAL-DETAIL |
 | 15 | EC-Bench harness (30 prompts, 2 conditions, LLM judge, 5 metrics) | ✅ | run_ecbench + bench/ | WEBSITE-WORTHY (results: see §22) |
 | 16 | Maintenance background hygiene (4 tasks, logged) | ✅ | maintainer.py | TECHNICAL-DETAIL |
@@ -786,7 +786,7 @@ Everything a first-time discoverer could be shown, verified against code, with a
 Ranked for a product page, all verifiable:
 
 1. **"Works with MCP-compatible agents"** — installer + stdio MCP server, 4 tools (`reverie/install.py`, `reverie/mcp_server.py`).
-2. **"Stores conclusions, not facts"** — the Lifting Test extraction prompt with visible rejections (`reverie/prompts/extractor_prompt.md`, `reverie_observe` payload).
+2. **"Stores conclusions, not facts"** — the Lifting Test extraction prompt with visible rejections (`reverie/prompts/extractor_prompt.md`, `observe` payload).
 3. **"Nothing enters long-term memory without human review"** — the review gate is the only path into the Canonical Brain (`reverie/review_gate.py:1-23`).
 4. **"Beliefs have calibrated confidence that evolves"** — log-odds Bayesian updates, edge-stored reversible deltas, retrieval reinforcement, lazy scope decay (`reverie/confidence.py`).
 5. **"Contradictions are surfaced, never silently overwritten"** — challenged status, 2-stage adjudication, open-question parking with scope-dependent timeouts and a/b/c/d resolution (`reverie/diffuser.py`, `reverie/review_gate.py`, `reverie/maintainer.py`).
@@ -824,7 +824,7 @@ Ranked for a product page, all verifiable:
 2. **Extraction is single-shot, no retries, no self-correction** — an LLM hiccup loses that observation window entirely; the tool returns a soft "not an error" message.
 3. **Promoted-but-un-diffused ECUs.** If diffusion fails at accept time (offline), the ECU is canonical with no edges and unchanged confidence; only a CLI warning exists, no retry/rediffuse command (`review_gate.py:900-908,974-988`).
 4. **Interactive review is TTY-only and lacks the edit action** — §7.3/D19 edits exist only via the programmatic API; the interactive driver offers y/n/s/d but no edit prompt. No MCP review path means agents can't assist their own review.
-5. **The labile set dies with the MCP server process** — restart the server mid-session and `reverie_reconsolidate` refuses every ECU until it re-queries (`session.py:200-238`).
+5. **The labile set dies with the MCP server process** — restart the server mid-session and `reconsolidate` refuses every ECU until it re-queries (`session.py:200-238`).
 6. **`origin_engineer` (team attribution) is a placeholder** — always null, no UI or API to set it.
 7. **No manual curation APIs** — no way to create/edit/delete an ECU or edge by hand (by design for immutability, but there's also no "user says this ECU is wrong, fix it" path outside reconsolidation/review).
 8. **Clustering is effectively dormant** — 100-new-ECU gate, unstable labels, single consumer (optional review grouping), and at typical brain sizes it never runs.
@@ -853,7 +853,7 @@ Ranked for a product page, all verifiable:
 Only claims with direct implementation evidence:
 
 > **Claim:** "Works with MCP-compatible agents."
-> **Evidence:** `reverie/mcp_server.py` — stdio NDJSON JSON-RPC 2.0 server (protocol 2024-11-05) exposing `reverie_observe`, `reverie_query`, `reverie_summary`, `reverie_reconsolidate`; installers for Claude Code, Cursor, OpenCode, Codex (`reverie/install.py:609-698`).
+> **Evidence:** `reverie/mcp_server.py` — stdio NDJSON JSON-RPC 2.0 server (protocol 2024-11-05) exposing `observe`, `query`, `summary`, `reconsolidate`; installers for Claude Code, Cursor, OpenCode, Codex (`reverie/install.py:609-698`).
 
 > **Claim:** "Extracts atomic engineering conclusions — not facts, not summaries."
 > **Evidence:** `reverie/prompts/extractor_prompt.md` (613-line tested prompt: Lifting Test, atomization rule, self-review pass, "zero ECUs is a valid output") executed by `reverie/extractor.py`; rejections are counted and returned to the agent (`rejection_summary`, `mcp_server.py:602`).

@@ -1,7 +1,7 @@
 """Phase 13 tests — polish items (design doc §9 + §10, D56 + D57).
 
 §9 (D56): ``rejection_summary`` is parsed by the extractor since Phase 2 but
-was never surfaced in the reverie_observe payload — §5.3 says the point is to
+was never surfaced in the observe payload — §5.3 says the point is to
 "make the filtering visible and debuggable". Now it ships.
 
 §10 (D57): /ec-status must report a pending review count (§28.10 step 3).
@@ -10,7 +10,7 @@ session's (repo, branch) when one is active; ``brain_summary`` carries it in
 the canonical_brain block.
 
 Run: .venv/bin/python -m pytest tests/test_phase13_polish.py -v
-Offline: mocked LLM calls for reverie_observe; real embeddings.
+Offline: mocked LLM calls for observe; real embeddings.
 """
 
 import os
@@ -105,7 +105,7 @@ def _pending_ecu(brain, sid, cognition):
 
 
 # ---------------------------------------------------------------------------
-# §9 / D56 — rejection_summary in the reverie_observe payload
+# §9 / D56 — rejection_summary in the observe payload
 # ---------------------------------------------------------------------------
 
 class TestRejectionSummary:
@@ -119,7 +119,7 @@ class TestRejectionSummary:
         with patch("reverie.extractor.call_llm", return_value=OBSERVE_PAYLOAD), \
              patch("reverie.diffuser.call_llm",
                   return_value=json.dumps({"classifications": []})):
-            payload, result = call_tool(server, "reverie_observe", {
+            payload, result = call_tool(server, "observe", {
                 "user_prompt": "p",
                 "reasoning_trace": "I traced the auth race to refresh order...",
             })
@@ -144,7 +144,7 @@ class TestRejectionSummary:
         with patch("reverie.extractor.call_llm", return_value=EMPTY_PAYLOAD), \
              patch("reverie.diffuser.call_llm",
                   return_value=json.dumps({"classifications": []})):
-            payload, _ = call_tool(server, "reverie_observe", {
+            payload, _ = call_tool(server, "observe", {
                 "user_prompt": "p", "reasoning_trace": "r"})
 
         assert payload["status"] == "ok"
@@ -194,7 +194,7 @@ class TestPendingReviewCount:
 
 
 # ---------------------------------------------------------------------------
-# §10 — brain_summary carries it (reverie_summary + /ec-status payload)
+# §10 — brain_summary carries it (summary + /ec-status payload)
 # ---------------------------------------------------------------------------
 
 class TestSummaryIntegration:

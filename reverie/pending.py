@@ -5,7 +5,7 @@ Two failure states this recovers:
 1. **Pending extractions.** When the extraction LLM call fails after
    retries, the interaction input is persisted to ``pending_extractions``
    (nothing is lost). Items are retried automatically at the next
-   successful ``reverie_observe`` for the same (repo, branch), or manually:
+   successful ``observe`` for the same (repo, branch), or manually:
    ``reverie retry`` / ``reverie retry --list`` / ``reverie retry --drop <id>``.
    A retry extracts the stored interaction into the *current* active
    session for that (repo, branch) — a closed session's brain is never

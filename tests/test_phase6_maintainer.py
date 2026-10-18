@@ -188,7 +188,7 @@ class TestRunMaintenance:
 
         assert isinstance(result, MaintenanceResult)
         assert [t.action for t in result.tasks] == list(TASK_ORDER)
-        # reverie_summary's last_maintenance_run is now populated
+        # summary's last_maintenance_run is now populated
         assert brain.last_maintenance_run() is not None
 
     def test_maintenance_state_persisted(self, brain, config):

@@ -1250,7 +1250,7 @@ class Brain:
         self._conn.commit()
 
     # ------------------------------------------------------------------
-    # Brain statistics — reverie_summary (§16.3) + maintenance log.
+    # Brain statistics — summary (§16.3) + maintenance log.
     # ------------------------------------------------------------------
 
     def count_ecus_by_scope(self) -> dict[str, int]:

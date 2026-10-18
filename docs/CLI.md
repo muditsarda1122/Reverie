@@ -131,7 +131,7 @@ Exit: `0` reviewed/no candidates; `1` when a `--decide` id was not applied
 
 The session + brain report: brain statistics, the session for the current
 (repo, branch), and the pending-review count. Also emitted by the
-`reverie_summary` MCP tool. Additionally checks that the server command
+`summary` MCP tool. Additionally checks that the server command
 written to each harness config still exists — a moved or deleted virtualenv
 breaks the absolute path, and the report then says to run
 `reverie install` again.
@@ -208,7 +208,7 @@ Exit: `0` reset; `1` aborted confirmation or failed backup (nothing wiped).
 
 Recovery for failed LLM work. Failed extractions are persisted
 (`pending_extractions`) and retried automatically at the next successful
-`reverie_observe`; this retries them on demand. Also re-runs the Full
+`observe`; this retries them on demand. Also re-runs the Full
 Diffuser for conclusions whose review-gate accept could not diffuse
 (promoted-but-undiffused).
 

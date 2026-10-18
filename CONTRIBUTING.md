@@ -41,7 +41,7 @@ honest:
 1. **Extraction over storage.** The interesting question is *what should be
    stored*, not *how to store more*. Every change must respect this.
 2. **Demand-driven, not proactive.** Cognition is never auto-injected; the
-   agent retrieves only when it decides to via `reverie_query`.
+   agent retrieves only when it decides to via `query`.
 3. **Two brains, one review gate.** The session brain is ephemeral and
    unreviewed. The only path to the canonical brain is the human review gate
    → diffuser.
@@ -51,9 +51,9 @@ honest:
    `ALTER TABLE ADD COLUMN`). Never `DROP TABLE` on existing databases.
 6. **Stable public surface.** Do not rename the `reverie` package, its
    modules, the console scripts (`reverie`, `reverie-mcp`), the MCP tool
-   names (`reverie_observe`, `reverie_query`, `reverie_summary`,
-   `reverie_reconsolidate`, `reverie_set_repo_state`, `reverie_review_list`,
-   `reverie_review_decide`), config keys, or paths under `~/.reverie` —
+   names (`observe`, `query`, `summary`,
+   `reconsolidate`, `set_repo_state`, `review_list`,
+   `review_decide`), config keys, or paths under `~/.reverie` —
    installers, agent instruction files and docs link to them. User-facing
    text says "conclusion"; "ECU" is internal.
 7. **Never commit secrets, personal data, or generated data** (`runs/`,

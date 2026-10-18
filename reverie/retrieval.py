@@ -1,7 +1,7 @@
-"""Demand-driven retrieval (Spec §8/§11.1–11.11) — the reverie_query pipeline.
+"""Demand-driven retrieval (Spec §8/§11.1–11.11) — the query pipeline.
 
 §11.3: retrieval is PURE demand-driven — this module acts only when the
-agent explicitly queries (the ``reverie_query`` path). Nothing here injects
+agent explicitly queries (the ``query`` path). Nothing here injects
 cognition proactively; that structural choice is anti-anchoring Defence 1
 (§11.6). Mode controls WHAT comes back, never WHEN (§11.9).
 
@@ -536,7 +536,7 @@ def _format_output(mode: str, max_tokens: int, groups: list[dict], *,
 
 
 # ---------------------------------------------------------------------------
-# Structured result (§16.3 reverie_query return shape)
+# Structured result (§16.3 query return shape)
 # ---------------------------------------------------------------------------
 
 def _structured_group(group: dict) -> dict:
@@ -568,7 +568,7 @@ def _structured_group(group: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Public entry point — the reverie_query pipeline (§11.3: call-driven only)
+# Public entry point — the query pipeline (§11.3: call-driven only)
 # ---------------------------------------------------------------------------
 
 def retrieve(

@@ -198,7 +198,7 @@ def test_cursor_merge_and_commands(dev_install, home, reverie_home):
     assert not (home / ".cursor" / "rules").exists()
     for name in ("reverie-review.md", "reverie-status.md"):
         text = (home / ".cursor" / "commands" / name).read_text()
-        assert "reverie_review_list" in text or "reverie_summary" in text
+        assert "review_list" in text or "summary" in text
 
 
 def test_opencode_merge_and_agents_md(dev_install, home, reverie_home):
@@ -371,14 +371,14 @@ def test_user_level_commands_per_harness(home, reverie_home):
     # Claude Code: ~/.claude/commands/*.md (plain markdown)
     for name in ("reverie-review.md", "reverie-status.md"):
         text = (home / ".claude" / "commands" / name).read_text()
-        assert "reverie_review_list" in text or "reverie_summary" in text
+        assert "review_list" in text or "summary" in text
     # Codex: ~/.codex/prompts/*.md (frontmatter; invoked /prompts:<name>)
     text = (home / ".codex" / "prompts" / "reverie-review.md").read_text()
-    assert "description:" in text and "reverie_review_list" in text
+    assert "description:" in text and "review_list" in text
     # OpenCode: ~/.config/opencode/commands/*.md (frontmatter)
     text = (home / ".config" / "opencode" / "commands"
             / "reverie-status.md").read_text()
-    assert text.startswith("---") and "reverie_summary" in text
+    assert text.startswith("---") and "summary" in text
     # Gemini CLI: ~/.gemini/commands/*.toml (TOML `prompt`)
     import tomllib as _toml
     raw = (home / ".gemini" / "commands" / "reverie-review.toml").read_text()

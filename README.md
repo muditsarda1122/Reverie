@@ -34,9 +34,9 @@ Provide a key for one of the supported providers before the step 2 prompt, or ch
 
 1. Open your agent in any project.
 2. **The first time, the agent asks once:** "Reverie isn't on for this repo. Turn it on? (yes / not now / never)". Your answer is remembered; `reverie enable` / `reverie disable` flip it any time.
-3. **Just code.** Sessions are automatic per branch. As your agent works it calls `reverie_observe` when it reaches a real engineering conclusion — not for every edit.
+3. **Just code.** Sessions are automatic per branch. As your agent works it calls `observe` when it reaches a real engineering conclusion — not for every edit.
 4. **Review when you like.** Conclusions wait as candidates in one review queue across every branch and repo. Run `reverie review` in a terminal (a calm one-candidate-at-a-time UI), say *"show my Reverie candidates"* in the chat, or type `/reverie-review`. Nothing reaches long-term memory without your decision.
-5. That's it. In a future conversation, after your agent reads the relevant code it calls `reverie_query` and past conclusions come back with their confidence, grounding and current status — framed as *past understanding to verify*, never as authoritative context.
+5. That's it. In a future conversation, after your agent reads the relevant code it calls `query` and past conclusions come back with their confidence, grounding and current status — framed as *past understanding to verify*, never as authoritative context.
 
 ## How it works
 
