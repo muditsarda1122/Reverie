@@ -32,11 +32,13 @@ from datetime import datetime, timezone
 import numpy as np
 
 from . import confidence as conf
-from . import diffuser
 from .activation import _parse_iso
 from .brain import Brain, _now_iso
 from .config import get_config
-from .diffuser import DiffuserError
+# NOTE: .diffuser is NOT imported at module level — it pulls llm → requests,
+# and `reverie hook session-start` imports this module through the repos →
+# session chain and must stay fast (no network stack, ~0.2s saved per hook).
+# It is imported lazily inside apply_review_decisions, its only consumer.
 
 log = logging.getLogger("reverie.review_gate")
 
@@ -901,6 +903,11 @@ def apply_review_decisions(
     # never pays the model load (an accept or a pending-update application
     # triggers it once).
     model_box = [embedding_model]
+
+    # The diffuser (llm → requests chain) also loads lazily — see the module
+    # header: only accepts ever reach it.
+    from . import diffuser
+    from .diffuser import DiffuserError
 
     def _model():
         if model_box[0] is None:

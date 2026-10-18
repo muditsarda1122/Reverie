@@ -256,7 +256,7 @@ class TestRediffuse:
              "scope": {"level": "repo", "path": "repo:retry-repo"},
              "conclusion_type": "invariant"},
             embedding=model.encode_one("webhook handlers idempotent"))
-        with patch("reverie.review_gate.diffuser.diffuse_ecu",
+        with patch("reverie.diffuser.diffuse_ecu",
                    side_effect=DiffuserError("relationship classification "
                                              "failed: LLMError offline")):
             from reverie import review_gate

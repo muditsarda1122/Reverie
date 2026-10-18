@@ -138,6 +138,26 @@ def state_of(brain: Brain, info: RepoInfo) -> str:
     return row["state"] if row else "undecided"
 
 
+def state_readonly(brain: Brain, info: RepoInfo) -> str:
+    """Read-only state lookup for side-effect-free, latency-sensitive callers
+    (``reverie hook session-start``).
+
+    Unlike ``state_of`` this NEVER writes: no origin-URL refresh, no D58
+    rematch re-key, no ``asked_at`` stamp. The D58 rematch is still *read*:
+    when exactly one known repo shares this origin URL its state is
+    reported, without re-keying it onto the current identity. A moved or
+    re-cloned repo therefore reads as undecided until the next tool call
+    (which performs the real rematch)."""
+    row = brain.get_repo(info.repo_key)
+    if row is not None:
+        return row["state"]
+    if info.url:
+        matches = [r for r in brain.list_repos() if r["url"] == info.url]
+        if len(matches) == 1:
+            return matches[0]["state"]
+    return "undecided"
+
+
 def set_repo_state(brain: Brain, info: RepoInfo, state: str) -> dict:
     """Switch a repo's state at any time, as often as the user likes."""
     return brain.upsert_repo(info.repo_key, path=info.repo_path,
