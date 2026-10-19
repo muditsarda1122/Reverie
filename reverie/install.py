@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -601,6 +602,9 @@ def _provider_menu(input_fn, print_fn, environ) -> str | None:
 DIST_NAME = "reverie"
 #: Console script launching the MCP server (pyproject [project.scripts]).
 MCP_CONSOLE_SCRIPT = "reverie-mcp"
+#: The multi-command CLI console script (pyproject [project.scripts]); used
+#: by the SessionStart hook so the harness re-enters `reverie hook …`.
+REVERIE_CONSOLE_SCRIPT = "reverie"
 #: The `reverie` console script binding this build expects (pyproject.toml).
 #: feat/flow moved `reverie` from the installer to the multi-command CLI
 #: (reverie.cli:main); an older install still binds `ec = reverie.install:main`.
@@ -643,8 +647,8 @@ def stale_entry_point_note() -> str | None:
     return None
 
 
-def _console_script_candidates(executable: str | None = None) -> list[Path]:
-    """Absolute candidate locations of the pip-generated ``reverie-mcp`` script.
+def _script_candidates(script: str, executable: str | None = None) -> list[Path]:
+    """Absolute candidate locations of a pip-generated console script.
 
     pip puts console scripts beside the environment's interpreter: ``bin/`` in
     a POSIX venv, pipx or uv-tool environment, ``Scripts/`` on Windows. A
@@ -653,32 +657,48 @@ def _console_script_candidates(executable: str | None = None) -> list[Path]:
     exe_dir = Path(executable or sys.executable).parent
     if os.name == "nt":
         return [
-            exe_dir / f"{MCP_CONSOLE_SCRIPT}.exe",          # venv Scripts dir
-            exe_dir / f"{MCP_CONSOLE_SCRIPT}.cmd",
-            exe_dir / "Scripts" / f"{MCP_CONSOLE_SCRIPT}.exe",  # system install
-            exe_dir / "Scripts" / f"{MCP_CONSOLE_SCRIPT}.cmd",
-            exe_dir / MCP_CONSOLE_SCRIPT,
-            exe_dir / "Scripts" / MCP_CONSOLE_SCRIPT,
+            exe_dir / f"{script}.exe",                  # venv Scripts dir
+            exe_dir / f"{script}.cmd",
+            exe_dir / "Scripts" / f"{script}.exe",      # system install
+            exe_dir / "Scripts" / f"{script}.cmd",
+            exe_dir / script,
+            exe_dir / "Scripts" / script,
         ]
-    return [exe_dir / MCP_CONSOLE_SCRIPT]
+    return [exe_dir / script]
 
 
-def console_script_path(executable: str | None = None, which=shutil.which,
-                        ) -> str | None:
-    """Absolute path of the installed ``reverie-mcp`` console script, or None.
+def _console_script_candidates(executable: str | None = None) -> list[Path]:
+    return _script_candidates(MCP_CONSOLE_SCRIPT, executable)
+
+
+def _script_path(script: str, executable: str | None = None,
+                 which=shutil.which) -> str | None:
+    """Absolute path of an installed console script, or None.
 
     Resolved from the RUNNING interpreter's environment (``sys.executable``):
     venv, pipx, uv tool and system installs all place the script beside the
     interpreter. ``which`` is the fallback for layouts where the scripts
     directory is elsewhere (e.g. ``pip install --user``).
     """
-    for candidate in _console_script_candidates(executable):
+    for candidate in _script_candidates(script, executable):
         if candidate.is_file():
             return str(candidate)
-    found = which(MCP_CONSOLE_SCRIPT)
+    found = which(script)
     if found:
         return str(Path(found).resolve())
     return None
+
+
+def console_script_path(executable: str | None = None, which=shutil.which,
+                        ) -> str | None:
+    """Absolute path of the installed ``reverie-mcp`` console script, or None."""
+    return _script_path(MCP_CONSOLE_SCRIPT, executable, which)
+
+
+def _reverie_script_path(executable: str | None = None,
+                         which=shutil.which) -> str | None:
+    """Absolute path of the installed ``reverie`` CLI console script, or None."""
+    return _script_path(REVERIE_CONSOLE_SCRIPT, executable, which)
 
 
 def server_command(executable: str | None = None, which=shutil.which,
@@ -718,6 +738,128 @@ def server_command(executable: str | None = None, which=shutil.which,
     if python is None:   # no project venv — the running interpreter has `reverie`
         python = sys.executable
     return python, ["-m", "reverie.mcp_server"], {"PYTHONPATH": str(root)}
+
+
+#: Tail of the SessionStart handler's argv, used to recognise (and re-find)
+#: Reverie's own handler in an existing settings.json (idempotent install,
+#: surgical uninstall).
+HOOK_ARGS_TAIL = ["hook", "session-start"]
+
+
+def hook_handler(executable: str | None = None, which=shutil.which) -> dict:
+    """The Claude Code SessionStart hook handler for `reverie hook session-start`.
+
+    Schema (docs read 2026-10-18,
+    https://code.claude.com/docs/en/hooks#sessionstart): hook handlers are
+    ``{"type": "command", "command", "args"}``; ``args`` present ⇒ exec form
+    (no shell), absent ⇒ shell form. Handlers have NO env field, so the
+    development fallback sets PYTHONPATH inside the shell-form command.
+
+    pip install → the ABSOLUTE ``reverie`` console script beside the running
+    interpreter, exec form (harnesses launch hooks outside the user's
+    virtualenv, so a bare ``reverie`` would not resolve). Development
+    checkout → the project venv's interpreter with PYTHONPATH pointing at
+    the project root.
+    """
+    if _is_pip_installed():
+        script = _reverie_script_path(executable, which)
+        if script is not None:
+            return {"type": "command", "command": script,
+                    "args": list(HOOK_ARGS_TAIL)}
+        return {"type": "command", "command": executable or sys.executable,
+                "args": ["-m", "reverie.cli", *HOOK_ARGS_TAIL]}
+    root = Path(__file__).resolve().parent.parent
+    python = sys.executable
+    for candidate in (root / ".venv" / "bin" / "python",          # POSIX venv
+                      root / ".venv" / "Scripts" / "python.exe"):  # Windows venv
+        if candidate.is_file():
+            python = str(candidate)
+            break
+    argv = " ".join(shlex.quote(part)
+                    for part in (python, "-m", "reverie.cli", *HOOK_ARGS_TAIL))
+    return {"type": "command",
+            "command": f"PYTHONPATH={shlex.quote(str(root))} {argv}"}
+
+
+def _is_reverie_hook_handler(handler: object) -> bool:
+    """Whether ``handler`` is Reverie's SessionStart hook (either form)."""
+    if not isinstance(handler, dict) or handler.get("type") != "command":
+        return False
+    args = handler.get("args")
+    if isinstance(args, list) and args[-len(HOOK_ARGS_TAIL):] == HOOK_ARGS_TAIL:
+        return True
+    command = handler.get("command")
+    return isinstance(command, str) and command.endswith(
+        " " + " ".join(HOOK_ARGS_TAIL))
+
+
+def _claude_session_start_plan(path: Path, home: Path,
+                               handler: dict) -> PlannedWrite:
+    """Merge Reverie's SessionStart hook handler into a Claude Code
+    settings.json — one handler, at most one entry, siblings untouched.
+
+    The handler is appended to the existing ``startup`` matcher group when
+    present; otherwise a ``{"matcher": "startup", "hooks": [...]}`` group is
+    added. An existing Reverie handler is replaced in place when stale
+    (e.g. the interpreter moved) — never duplicated.
+    """
+    disp = _display(path, home)
+    existed = path.exists()
+    if existed:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise InstallError(
+                f"{disp} is not valid JSON ({exc}). Fix or remove it, then "
+                "re-run `reverie install`. No changes were made to it."
+            ) from exc
+        if not isinstance(data, dict):
+            raise InstallError(
+                f"{disp} must contain a JSON object. Fix or remove it, then "
+                "re-run `reverie install`. No changes were made to it."
+            )
+    else:
+        data = {}
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise InstallError(
+            f"{disp}: `hooks` is not a JSON object. Fix or remove it, then "
+            "re-run `reverie install`. No changes were made to it."
+        )
+    groups = hooks.setdefault("SessionStart", [])
+    if not isinstance(groups, list):
+        raise InstallError(
+            f"{disp}: `hooks.SessionStart` is not a list. Fix or remove it, "
+            "then re-run `reverie install`. No changes were made to it."
+        )
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        handlers = group.get("hooks")
+        if not isinstance(handlers, list):
+            continue
+        for index, existing in enumerate(handlers):
+            if not _is_reverie_hook_handler(existing):
+                continue
+            if existing == handler:
+                return PlannedWrite(
+                    path, "unchanged", None,
+                    f"{disp} already has the Reverie SessionStart hook — "
+                    "unchanged")
+            handlers[index] = handler
+            return PlannedWrite(
+                path, "merge", json.dumps(data, indent=2) + "\n",
+                f"Updated the Reverie SessionStart hook in {disp}")
+    detail = f"Added the Reverie SessionStart hook to {disp} (fires at startup)"
+    for group in groups:
+        if (isinstance(group, dict) and group.get("matcher") == "startup"
+                and isinstance(group.get("hooks"), list)):
+            group["hooks"].append(handler)
+            return PlannedWrite(path, "merge" if existed else "create",
+                                json.dumps(data, indent=2) + "\n", detail)
+    groups.append({"matcher": "startup", "hooks": [handler]})
+    return PlannedWrite(path, "merge" if existed else "create",
+                        json.dumps(data, indent=2) + "\n", detail)
 
 
 def _stop_process(proc: subprocess.Popen) -> None:
@@ -1222,6 +1364,10 @@ class _ClaudeCode(AgentSpec):
                 path, home, body,
                 f"Wrote {_display(path, home)} "
                 f"(/{'reverie-review' if 'review' in name else 'reverie-status'})"))
+        # SessionStart hook: injects the repo state + usage rules into every
+        # fresh session (docs: https://code.claude.com/docs/en/hooks)
+        plans.append(_claude_session_start_plan(
+            home / ".claude" / "settings.json", home, hook_handler()))
         return plans
 
 

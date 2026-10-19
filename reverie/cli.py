@@ -14,6 +14,8 @@ One entry point, subcommands:
     reverie reset            wipe the brain (or one repo), with auto-backup
     reverie retry            retry failed extractions / re-diffuse conclusions
     reverie repair           brain integrity check + safe recovery
+    reverie hook             lifecycle hooks invoked by the agent harness
+                             itself (installed by `reverie install`)
     reverie uninstall        remove Reverie's harness entries (+ data with
                              --delete-data)
 
@@ -227,12 +229,22 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="report problems without applying any fixes")
     p.add_argument("--db", default=None,
                    help="brain path (default: $REVERIE_HOME/reverie.db)")
+
+    p = sub.add_parser("hook", help="agent lifecycle hooks (invoked by the "
+                       "harness itself, installed by `reverie install`)")
+    hook_sub = p.add_subparsers(dest="hook")
+    hs = hook_sub.add_parser("session-start", help="print the session-start "
+                             "context block: repo state + usage rules "
+                             "(read-only; quiet on error; always exit 0)")
+    hs.add_argument("--repo", default=None,
+                    help="workspace path (default: current directory)")
     return parser
 
 
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
-               "import", "reset", "uninstall", "retry", "repair", "install")
+               "import", "reset", "uninstall", "retry", "repair", "hook",
+               "install")
 
 
 def _unknown_command(word: str) -> int:
@@ -268,6 +280,10 @@ def main(argv: list[str] | None = None) -> int:
     if argv[0] == "repair":
         from . import repair
         return repair.main(argv[1:])
+    # hook parses its own nested subcommand (session-start)
+    if argv[0] == "hook":
+        from . import hooks
+        return hooks.main(argv[1:])
     args = _build_parser().parse_args(argv)
 
     if args.command == "enable":

@@ -259,6 +259,33 @@ reverie repair --db ~/other/reverie.db
 
 Exit: `0` healthy or fixed; `1` when problems remain.
 
+## reverie hook
+
+Lifecycle hooks for agent harnesses. `reverie install` wires these into the
+harness config; the harness itself invokes them — you never need to run them
+by hand.
+
+```bash
+reverie hook session-start            # print the session-start context block
+reverie hook session-start --repo ~/code/app
+```
+
+`session-start` is installed as a Claude Code SessionStart hook: its
+plain-text stdout is injected into the conversation at startup, so a fresh
+session sees Reverie's state and usage rules without a first tool call.
+Three outputs, one per repo state: **enabled** — brain counts (conclusions
+in memory, candidates awaiting review) plus the usage rules; **undecided** —
+the first-time question for the agent to relay; **disabled** — a one-line
+"do not capture or retrieve here". Contract: read-only (no LLM, no writes,
+never creates a brain), quiet on error (not a git repo, unreadable brain →
+no output), always exits `0` — a hook can never break a session.
+
+| Flag | Effect |
+|---|---|
+| `--repo PATH` | workspace path (default: current directory) |
+
+Exit: always `0` (hook contract).
+
 ## reverie uninstall
 
 Removes exactly what `reverie install` did, nothing more. The full plan —
