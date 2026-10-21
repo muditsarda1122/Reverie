@@ -24,7 +24,14 @@ import pytest
 
 from reverie.brain import Brain
 from reverie.mcp_server import ReverieServer
-from reverie.review_cli import main as cli_main
+from reverie.review_cli import (
+    candidate_detail,
+    render_screen,
+)
+from reverie.review_cli import (
+    main as cli_main,
+)
+from reverie.review_queue import CANDIDATE_RULE, OPTIONS_LINE
 from reverie.session import SessionManager
 
 T0 = datetime.now(timezone.utc).replace(microsecond=0)
@@ -57,7 +64,8 @@ def call_tool(server, name, arguments=None, msg_id=1):
 
 
 def make_candidate(brain, session_id, cognition, confidence=0.5,
-                   files=("auth/token.py",), conclusion_type="invariant"):
+                   files=("auth/token.py",), conclusion_type="invariant",
+                   metadata=None):
     ecu = {
         "cognition": cognition,
         "conclusion_type": conclusion_type,
@@ -67,8 +75,21 @@ def make_candidate(brain, session_id, cognition, confidence=0.5,
         "grounding": {"files": list(files)},
         "evidence_pointers": ["reasoning step 1"],
         "confidence": confidence,
+        "metadata": metadata or {},
     }
     return brain.insert_session_ecu(session_id, ecu)
+
+
+def _block_containing(text: str, needle: str) -> str:
+    lines = text.splitlines()
+    hit = next(i for i, line in enumerate(lines) if needle in line)
+    start = hit
+    while start > 0 and lines[start] != CANDIDATE_RULE:
+        start -= 1
+    end = hit
+    while end < len(lines) and lines[end] != CANDIDATE_RULE:
+        end += 1
+    return "\n".join(lines[start:end + 1])
 
 
 def _enabled_server(brain):
@@ -127,3 +148,60 @@ def test_review_list_annotates_near_duplicates(home):
         assert f"duplicates (same type + grounding): {lonely[:8]}" not in msg
     dup_lines = [ln for ln in msg.splitlines() if "duplicates (" in ln]
     assert len(dup_lines) == 2          # one per member of the pair only
+
+
+# ---------------------------------------------------------------------------
+# smoke group — MCP and terminal render the SAME candidate block
+# ---------------------------------------------------------------------------
+
+def test_mcp_and_terminal_candidate_blocks_match(home):
+    brain = Brain()
+    server = _enabled_server(brain)
+    sid = brain.create_session(REPO_A, "main")
+    cid = make_candidate(
+        brain, sid, "Token refresh must be optimistic to avoid double charge",
+        confidence=0.72, metadata={"evidence_status": "supported"},
+    )
+
+    listing, _ = call_tool(server, "review_list", {})
+    mcp_block = _block_containing(listing["message"], f"ID: {cid}")
+    candidate = brain.get_queue_candidate(cid)
+    terminal = render_screen(
+        candidate, candidate_detail(brain, candidate),
+        index=1, total=1, progress={},
+    )
+    terminal_block = _block_containing(terminal, f"ID: {cid}")
+    brain.close()
+
+    assert mcp_block == terminal_block
+    for fragment in (
+        "Token refresh must be optimistic to avoid double charge",
+        "evidence: SUPPORTED",
+        "Grounded: auth/token.py",
+        "Repo: /repos/alpha",
+        OPTIONS_LINE,
+    ):
+        assert fragment in mcp_block
+        assert fragment in terminal_block
+
+
+def test_every_candidate_block_carries_options(home):
+    brain = Brain()
+    server = _enabled_server(brain)
+    sid = brain.create_session(REPO_A, "main")
+    ids = [
+        make_candidate(brain, sid, f"conclusion number {n}",
+                       confidence=0.5 + n / 10)
+        for n in range(3)
+    ]
+    listing, _ = call_tool(server, "review_list", {})
+    brain.close()
+
+    blocks = [
+        part for part in listing["message"].split(CANDIDATE_RULE)
+        if "Candidate " in part
+    ]
+    assert len(blocks) == len(ids)
+    for block in blocks:
+        assert "Options:" in block
+        assert OPTIONS_LINE in block

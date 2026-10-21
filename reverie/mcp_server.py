@@ -1314,23 +1314,22 @@ class ReverieServer:
             f"(page {page_no}/{total_pages})",
         ]
         duplicates = self._duplicate_notes(rows)
+        brain = self._ensure_brain()
+        page_size = int(self.config.review.page_size)
+        start = max(0, (page_no - 1) * page_size)
         for i, row in enumerate(rows, start=1):
-            unsupported = " [unsupported evidence]" \
-                if row.get("evidence_status") == "unsupported" else ""
-            lines.append(
-                f"{i}. [{row['confidence']:.2f}] {row['cognition']}"
-                f"{unsupported}"
-            )
-            lines.append(
-                f"   id: {row['id']} | type: {row['conclusion_type']} | "
-                f"scope: {row['scope_path']} | repo: {row['repo_path']} | "
-                f"branch: {row['branch']}"
-            )
+            notes = []
             if row["id"] in duplicates:
-                lines.append(
-                    "   duplicates (same type + grounding): "
+                notes.append(
+                    "duplicates (same type + grounding): "
                     + ", ".join(duplicates[row["id"]])
                 )
+            lines.append(review_queue.render_candidate_block(
+                row, review_queue.candidate_detail(brain, row),
+                index=start + i, total=total, notes=notes,
+            ))
+            if i != len(rows):
+                lines.append("")
         if total_pages > page_no:
             lines.append(f"(more available — page {page_no + 1} of "
                          f"{total_pages})")
@@ -1354,9 +1353,9 @@ class ReverieServer:
             "instructions": (
                 "Show every candidate's full conclusion text, then relay "
                 "only the decisions the user states via review_decide. "
-                "Never decide on the user's behalf. Candidates marked "
-                "[unsupported evidence] carry no verifiable file, test, or "
-                "commit reference — point that out when showing them. "
+                "Never decide on the user's behalf. Candidates whose block "
+                "says 'evidence: UNSUPPORTED' carry no verifiable file, test, "
+                "or commit reference — point that out when showing them. "
                 "Candidates marked 'duplicates' share their conclusion type "
                 "and grounding with the listed ids — show them together so "
                 "the user can decide the near-duplicates as a set. One "

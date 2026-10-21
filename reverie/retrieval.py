@@ -166,6 +166,34 @@ def _is_scope_prefix(candidate_path: str, working_path: str) -> bool:
     return bool(token) and token in candidate_path.lower()
 
 
+def _repo_label(scope_path: str | None) -> str:
+    """The ``repo:<label>`` token carried by a scope path, lowercased."""
+    if not scope_path:
+        return ""
+    for part in str(scope_path).split(">"):
+        part = part.strip()
+        if part.startswith("repo:"):
+            return part[len("repo:"):].strip().lower()
+    return ""
+
+
+def _same_repo(ecu: dict, working_path: str) -> bool:
+    """True when an ECU is bound to the working repo.
+
+    Grounding is the durable identity: the extractor stamps
+    ``grounding.repo_path`` from the session, so comparisons must not rely
+    on a checkout directory's basename matching the scope label (the same
+    repo can be cloned into any directory). The scope-path label remains a
+    fallback for older rows whose grounding predates ``repo_path``.
+    """
+    bound = ((ecu.get("grounding") or {}).get("repo_path")) or ""
+    if bound and working_path:
+        return str(bound).rstrip("/\\") == str(working_path).rstrip("/\\")
+    label = _repo_label((ecu.get("scope") or {}).get("path"))
+    work_label = _repo_label(working_path) or PurePath(working_path).name.lower()
+    return bool(label and work_label) and label == work_label
+
+
 def _filter_by_scope_hierarchy(candidates: list[dict],
                                working_scope_level: str,
                                working_scope_path: str) -> list[dict]:
@@ -177,11 +205,15 @@ def _filter_by_scope_hierarchy(candidates: list[dict],
       domain unconditionally ("universal principles always in scope");
       intermediate levels when their path is compatible with the anchor;
     - its level EQUALS the working scope and its path identifies the same
-      context (exact match or the convention bridge above);
+      context (exact match, the convention bridge above, or the same
+      grounding repo);
     - its level is unknown to the hierarchy (don't over-filter).
 
     ECUs at a MORE SPECIFIC level than the working scope are filtered out
     (down), as are same-level ECUs from a different context (sideways).
+    ONE exception: when the working scope is a repo, conclusions bound to
+    that same repo remain in scope at any depth inside it — a captured
+    module-level conclusion is precisely what a same-repo query needs.
     The caller falls back to the unfiltered set if this empties the
     candidate list — an empty result is worse than a broad one.
 
@@ -202,18 +234,22 @@ def _filter_by_scope_hierarchy(candidates: list[dict],
             kept.append(cand)            # unknown level — keep
             continue
         idx = SCOPE_LEVELS.index(level)
+        same_repo = _same_repo(ecu, working_scope_path)
         if idx < working_idx:
             # UP the hierarchy — more general than where we work.
             if level in _UNIVERSAL_SCOPES:
                 kept.append(cand)
-            elif _path_is_unknown(ecu) or _is_scope_prefix(
+            elif _path_is_unknown(ecu) or same_repo or _is_scope_prefix(
                     path, working_scope_path):
                 kept.append(cand)
         elif idx == working_idx:
             # Same level — sideways unless it is our own context.
-            if _path_is_unknown(ecu) or _is_scope_prefix(
+            if _path_is_unknown(ecu) or same_repo or _is_scope_prefix(
                     path, working_scope_path):
                 kept.append(cand)
+        elif working_scope_level == "repo" and same_repo:
+            # DOWN, but inside the repo we are working in — still in scope.
+            kept.append(cand)
         # else: DOWN — more specific than the working scope; filtered.
     return kept
 
