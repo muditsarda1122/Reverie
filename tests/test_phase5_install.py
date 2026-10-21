@@ -387,6 +387,21 @@ def test_user_level_commands_per_harness(home, reverie_home):
     assert parsed["description"]
 
 
+def test_claude_review_command_prints_tool_output_verbatim(home, reverie_home):
+    """The Claude command must relay the review tool result unchanged —
+    including every candidate's options line — not a summary of it."""
+    (home / ".claude.json").write_text("{}")
+    run_install(home, reverie_home, only=["claude_code"])
+    text = (home / ".claude" / "commands" / "reverie-review.md").read_text()
+    normalized = " ".join(text.lower().split())
+
+    assert "review_list" in text
+    assert "print the review tool result's `message` field verbatim" in normalized
+    assert "unchanged" in normalized
+    assert "do not rewrite, reformat, or summarise it" in normalized
+    assert "options line for every candidate" in normalized
+
+
 # ---------------------------------------------------------------------------
 # dry-run, selection modes, Zen key
 # ---------------------------------------------------------------------------

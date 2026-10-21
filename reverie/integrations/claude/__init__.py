@@ -20,7 +20,6 @@ from pathlib import Path
 
 from ..base import Integration
 from ..common import (
-    _REVIEW_COMMAND_BODY,
     _STATUS_COMMAND_BODY,
     ConfiguredServer,
     InstallError,
@@ -40,8 +39,26 @@ from ..common import (
     _verbatim_file,
 )
 
+_CLAUDE_REVIEW_COMMAND_BODY = """Review your pending Reverie conclusions (the human decides).
+
+Steps:
+1. Call review_list to get the pending candidates
+   (pass the workspace path as repo_path).
+2. Print the review tool result's `message` field verbatim — exactly as
+   returned, unchanged. Preserve all line breaks, spacing, candidate text,
+   and the options line for every candidate. Do not rewrite, reformat, or
+   summarise it. Do not reorder or paraphrase it; do not omit any part of
+   it.
+3. After printing the listing, ask what the user wants to do with each
+   candidate (accept / reject / skip).
+4. Relay ONLY the decisions the user states, via review_decide
+   (pass the review_token from the listing).
+5. Never decide on the user's behalf; never bulk-accept unless the user
+   explicitly asked for that group.
+"""
+
 CLAUDE_CODE_COMMANDS: dict[str, str] = {
-    "reverie-review.md": _REVIEW_COMMAND_BODY,
+    "reverie-review.md": _CLAUDE_REVIEW_COMMAND_BODY,
     "reverie-status.md": _STATUS_COMMAND_BODY,
 }
 
