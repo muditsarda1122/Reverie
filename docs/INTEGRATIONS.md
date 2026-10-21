@@ -51,17 +51,21 @@ may ignore it.
 
 | Harness | MCP config | Instruction reference | Commands / prompts | SessionStart | Stop capture | Detection | Smoke-tested |
 |---|---|---|---|---|---|---|---|
-| **Claude Code** | `~/.claude.json` → `mcpServers.reverie` (`type: stdio`) | `~/.claude/CLAUDE.md` → `@~/.reverie/AGENTS.md` | `~/.claude/commands/reverie-review.md`, `reverie-status.md` | ✅ `settings.json` → `hooks.SessionStart`, matcher `startup` | ✅ `settings.json` → `hooks.Stop`, async, 20s timeout | `claude` binary or `.claude.json` | ❌ offline install/hook tests only |
+| **Claude Code** | `~/.claude.json` → `mcpServers.reverie` (`type: stdio`) | `~/.claude/CLAUDE.md` → `@~/.reverie/AGENTS.md` | `~/.claude/commands/reverie-review.md`, `reverie-status.md` | ✅ `settings.json` → `hooks.SessionStart`, matcher `startup` | ✅ `settings.json` → `hooks.Stop`, async, 20s timeout | `claude` binary or `.claude.json` | 🟡 hand smoke test: SessionStart state + on-request capture; Stop capture offline only |
 | **Cursor** | `~/.cursor/mcp.json` → `mcpServers.reverie` | None (Cursor documents no global rules file; MCP `instructions` carries the contract) | `~/.cursor/commands/reverie-review.md`, `reverie-status.md` (beta) | — | — | `cursor` binary or `.cursor/mcp.json` | ❌ offline install tests only |
 | **OpenCode** | `~/.config/opencode/opencode.json` → `mcp.reverie` (`type: local`, `enabled: true`, `environment`) | `~/.config/opencode/AGENTS.md` reference block | `~/.config/opencode/commands/reverie-review.md`, `reverie-status.md` | — | — | `opencode` binary or the config | ✅ offline tests + live E2E + EC-Bench |
 | **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | `~/.codex/AGENTS.md` reference block | `~/.codex/prompts/reverie-review.md`, `reverie-status.md` (`/prompts:`) | — | — | `codex` binary or `.codex/config.toml` | ❌ offline install tests only |
 | **Gemini CLI** | `~/.gemini/settings.json` → `mcpServers.reverie` | `~/.gemini/GEMINI.md` reference block | `~/.gemini/commands/reverie-review.toml`, `reverie-status.toml` | — | — | `gemini` binary or `.gemini/settings.json` | ❌ offline install tests only |
 
-“Smoke-tested” is the same honest column as the README: for Claude Code,
-Codex, Cursor, and Gemini CLI the written shapes are checked against the
-vendors' current docs and the server is tested over real stdio, but nobody has
-driven a live session. OpenCode is the only harness exercised end-to-end.
-Use [`SMOKE_TEST.md`](SMOKE_TEST.md) for the manual checklist.
+**Honest status.** “Smoke-tested” is the same honest column as the README.
+OpenCode is exercised end-to-end. Claude Code has been exercised by hand in a
+smoke test: session start state and capture of a conclusion on request. It has
+not been exercised with the per-reply Stop capture, which is new on this
+branch; that path is verified offline only and needs one live check in Claude
+Code before merge. Codex, Cursor, and Gemini CLI have their written shapes
+checked against the vendors' current docs and the server tested over real
+stdio, but no live sessions. Use [`SMOKE_TEST.md`](SMOKE_TEST.md) for the
+manual checklist.
 
 ## Lifecycle hooks
 
@@ -76,7 +80,7 @@ matcher `startup`. Its plain-text stdout is injected before the first prompt:
 
 - **enabled** — brain statistics (conclusions, candidates) plus the usage
   rules, never conclusion text;
-- **undecided** — the first-time enablement question for the agent to relay;
+- **undecided** — the first-time enablement question for Claude to relay;
 - **disabled** — a one-line "do not capture or retrieve here".
 
 The hook is read-only: no LLM, no embeddings, no session creation, no writes.
@@ -105,7 +109,8 @@ timed-out extraction is left in the pending queue and can be retried with
 ### What is deliberately not wired
 
 - No `UserPromptSubmit` or `PreToolUse` hook. Reverie does not inject
-  conclusions mid-session; the agent retrieves on demand with `query`.
+  conclusions mid-session; OpenCode and the other non-hooked harnesses
+  retrieve on demand with `query`.
 - No `SessionEnd` hook. Context injection at session end is unusable, and
   capture already happens at Stop.
 - No `SubagentStop` hook. The main Stop transcript contains the final answer;
@@ -188,10 +193,10 @@ capture — it prints nothing, so it never extends a conversation.
 
 The honest promise: Reverie does not secretly read conversations, does not
 inject memories mid-session, does not modify your repositories, and does not
-overwrite unrelated config. Retrieval is demand-driven; the agent must ground
-itself in the current code before calling `query`, and query results are past
-beliefs to verify, not authoritative context. Four of the five harnesses are
-verified offline only.
+overwrite unrelated config. Retrieval is demand-driven; Claude, OpenCode,
+Cursor, Codex, and Gemini CLI must ground themselves in the current code
+before calling `query`, and query results are past beliefs to verify, not
+authoritative context.
 
 Open decisions:
 

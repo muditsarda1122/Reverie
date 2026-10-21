@@ -22,7 +22,7 @@ hint (exit 2).
 One command configures Reverie for all detected coding agents: the MCP
 server entry per harness (the ABSOLUTE path of the running environment's
 `reverie-mcp` script — harnesses launch servers outside your virtualenv),
-the agent instructions reference, the user-level `/reverie-review` and
+the per-harness instructions reference, the user-level `/reverie-review` and
 `/reverie-status` commands, and the `~/.reverie` bootstrap (database,
 config, instructions). Also runs the LLM-provider step: detects keys in
 your environment, offers the detected one, merges the resolved `llm` block
@@ -276,7 +276,7 @@ session sees Reverie's state and usage rules without a first tool call. The
 matching Stop hook (`reverie capture-turn`) captures the completed exchange.
 Three outputs, one per repo state: **enabled** — brain counts (conclusions
 in memory, candidates awaiting review) plus the usage rules; **undecided** —
-the first-time question for the agent to relay; **disabled** — a one-line
+the first-time question for Claude to relay; **disabled** — a one-line
 "do not capture or retrieve here". Contract: read-only (no LLM, no writes,
 never creates a brain), quiet on error (not a git repo, unreadable brain →
 no output), always exits `0` — a hook can never break a session.

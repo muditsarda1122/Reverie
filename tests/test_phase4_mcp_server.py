@@ -212,11 +212,20 @@ def test_tools_list_includes_flow_tools(server):
 
 def test_observe_auto_creates_session(server, brain):
     """D56: in an enabled repo, observe resolves-or-creates the session —
-    the D15 'no active session' error is gone."""
-    payload, result = call_tool(server, "observe", {
-        "user_prompt": "fix the bug", "reasoning_trace": "..."}, msg_id=77)
-    assert payload["status"] == "error"        # no real LLM in this test —
-    assert payload["session_active"] is True   # but the session exists
+    the D15 'no active session' error is gone.
+
+    Fully offline: the extractor LLM is forced to fail, so this test never
+    makes a live provider call (and never uses a configured API key) even
+    when one is present in the environment. The session assertion is the
+    point; extraction failure is incidental.
+    """
+    with patch("reverie.extractor.call_llm",
+               side_effect=LLMError("offline")):
+        payload, result = call_tool(server, "observe", {
+            "user_prompt": "fix the bug", "reasoning_trace": "..."},
+            msg_id=77)
+    assert payload["status"] == "error"
+    assert payload["session_active"] is True
     assert "Extraction failed" in payload["error"]
     assert brain.list_sessions(REPO, BRANCH, status="active")
 
