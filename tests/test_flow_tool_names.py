@@ -21,6 +21,12 @@ import json
 import re
 
 from reverie import install, mcp_server
+from reverie.integrations import (
+    CLAUDE_CODE_COMMANDS,
+    CODEX_PROMPTS,
+    GEMINI_COMMANDS,
+    OPENCODE_COMMANDS,
+)
 
 EXPECTED_TOOLS = [
     "observe",
@@ -48,10 +54,10 @@ def _agent_facing_texts() -> dict[str, str]:
             "~/.reverie/AGENTS.md"),
     }
     for label, commands in (
-        ("claude_code command", install.CLAUDE_CODE_COMMANDS),
-        ("opencode command", install.OPENCODE_COMMANDS),
-        ("codex prompt", install.CODEX_PROMPTS),
-        ("gemini command", install.GEMINI_COMMANDS),
+        ("claude_code command", CLAUDE_CODE_COMMANDS),
+        ("opencode command", OPENCODE_COMMANDS),
+        ("codex prompt", CODEX_PROMPTS),
+        ("gemini command", GEMINI_COMMANDS),
     ):
         for name, body in commands.items():
             texts[f"{label} {name}"] = body

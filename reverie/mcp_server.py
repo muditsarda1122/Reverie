@@ -75,11 +75,15 @@ from __future__ import annotations
 
 import json
 import logging
+import signal
 import subprocess
 import sys
+import threading
+from contextlib import contextmanager
 
 from . import (
     __version__,
+    core_api,
     diffuser,
     extractor,
     maintainer,
@@ -95,9 +99,41 @@ from .config import MODES, SCOPE_LEVELS, get_config
 from .diffuser import DiffuserError
 from .extractor import ExtractorError
 from .reconsolidation import ReconsolidationError
-from .session import SessionError, SessionManager, brain_summary, detect_repo_branch
+from .session import SessionError, SessionManager, detect_repo_branch
 
 log = logging.getLogger("reverie.mcp_server")
+
+
+class _ExtractionTimeout(Exception):
+    """Raised inside the extraction thread when the hook time limit expires."""
+
+
+@contextmanager
+def _time_limit(seconds: float | None):
+    """Bound a block with SIGALRM on POSIX main threads; no-op elsewhere.
+
+    Harness hooks must return quickly even when a provider hangs. Outside the
+    main thread (or on platforms without SIGALRM) the limit is not applied —
+    the hook's own ``timeout`` still bounds the process.
+    """
+    usable = (bool(seconds) and seconds > 0
+              and hasattr(signal, "SIGALRM")
+              and threading.current_thread() is threading.main_thread())
+    if not usable:
+        yield
+        return
+
+    def _raise(signum, frame):        # pragma: no cover - signal plumbing
+        raise _ExtractionTimeout()
+
+    previous = signal.signal(signal.SIGALRM, _raise)
+    signal.setitimer(signal.ITIMER_REAL, float(seconds))
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "reverie"
@@ -772,6 +808,139 @@ class ReverieServer:
         return self._ensure_manager().ensure_session(info.repo_path,
                                                      info.branch)
 
+    def _extract_interaction(self, row: dict, interaction: dict, *,
+                             prequeue: bool = False,
+                             timeout: float | None = None) -> dict:
+        """Extract one interaction (observe path + Stop-hook capture).
+
+        With ``prequeue`` the interaction is saved to the pending queue
+        before the provider call and removed on success — a hook timeout or
+        crash costs nothing. ``timeout`` bounds extraction; on expiry the
+        pending row stays and is retried at the next observe / ``reverie
+        retry``. Never raises for extraction failures.
+        """
+        brain = self._ensure_brain()
+        commit_hash = _current_commit_hash(row["repo_path"])  # D49
+        pending_id = None
+        if prequeue:
+            pending_id = pending.save_pending_extraction(
+                brain, row, interaction,
+                "capture-turn: extraction did not complete",
+                commit_hash=commit_hash,
+            )
+        try:
+            with _time_limit(timeout):
+                result, ids = extractor.extract_and_store_session(
+                    brain, row["id"], interaction,
+                    embedding_model=self.embedding_model, config=self.config,
+                    commit_hash=commit_hash, repo_path=row["repo_path"],
+                )
+        except _ExtractionTimeout:
+            if pending_id is not None:
+                brain.mark_pending_extraction_attempt(
+                    pending_id,
+                    f"capture-turn timed out after {timeout:g}s")
+            return {
+                "status": "pending",
+                "session_active": True,
+                "ecus_extracted": 0,
+                "pending_extraction_id": pending_id,
+                "message": (
+                    "Capture did not finish within the time limit; the "
+                    "exchange is queued for retry (`reverie retry`)."),
+            }
+        except ExtractorError as exc:
+            if pending_id is not None:
+                brain.mark_pending_extraction_attempt(pending_id, str(exc))
+            else:
+                pending_id = pending.save_pending_extraction(
+                    brain, row, interaction, str(exc),
+                    commit_hash=commit_hash,
+                )
+            error = EXTRACTION_FAILED.format(reason=exc) + (
+                f" The interaction was saved locally (pending id "
+                f"{pending_id[:8]}) and will be retried automatically at "
+                "the next successful observe, or via `reverie retry`."
+            )
+            return {"status": "error", "session_active": True,
+                    "ecus_extracted": 0,
+                    "error": error, "pending_extraction_id": pending_id}
+        except Exception as exc:
+            if pending_id is not None:
+                brain.mark_pending_extraction_attempt(pending_id, str(exc))
+            else:
+                pending_id = pending.save_pending_extraction(
+                    brain, row, interaction, str(exc),
+                    commit_hash=commit_hash,
+                )
+            return {"status": "error", "session_active": True,
+                    "ecus_extracted": 0,
+                    "error": f"Extraction failed: {exc}. The interaction was "
+                             f"saved locally (pending id {pending_id[:8]}).",
+                    "pending_extraction_id": pending_id}
+
+        if pending_id is not None:
+            brain.delete_pending_extraction(pending_id)
+
+        diffusion_failures = 0
+        for ecu_id in ids:
+            try:
+                diffuser.diffuse_session_ecu(
+                    brain, row["id"], ecu_id,
+                    embedding_model=self.embedding_model, config=self.config,
+                )
+            except DiffuserError as exc:
+                log.warning("lightweight diffusion failed for %s: %s",
+                            ecu_id, exc)
+                diffusion_failures += 1
+
+        # feat/providers: this extraction succeeded — opportunistically retry
+        # any other pending extractions for this (repo, branch). Best-effort.
+        retry_summary = pending.retry_pending(
+            brain, repo_path=row["repo_path"], branch=row["branch"],
+            embedding_model=self.embedding_model, config=self.config,
+        )
+
+        count = brain.count_session_ecus(row["id"])
+        plural = "s" if result.rejected_count != 1 else ""
+        if ids:
+            message = (
+                f"Extracted {len(ids)} conclusion{'s' if len(ids) != 1 else ''} into "
+                f"session memory ({result.rejected_count} rejected by the "
+                f"Lifting Test). Session memory now holds {count}."
+            )
+        else:
+            message = (
+                f"Extracted 0 conclusions ({result.rejected_count} candidate{plural} "
+                "rejected by the Lifting Test). This is not an error — not "
+                f"every response produces conclusions. Session memory now "
+                f"holds {count}."
+            )
+        if retry_summary["recovered"]:
+            message += (
+                f" {retry_summary['recovered']} previously failed "
+                "extraction(s) were also recovered into this session."
+            )
+        elif retry_summary["failed"] or retry_summary["skipped"]:
+            message += (
+                f" {retry_summary['failed'] + retry_summary['skipped']} "
+                "pending extraction(s) could not be recovered yet "
+                "(retry at the next observe, or via `reverie retry`)."
+            )
+        return {
+            "status": "ok",
+            "session_active": True,
+            "ecus_extracted": len(ids),
+            "ecus_rejected": result.rejected_count,
+            "rejection_summary": result.rejection_summary,  # §5.3 — visible filtering
+            "session_brain_count": count,
+            "message": message,
+            "skipped_invalid": result.skipped_invalid,
+            "diffusion_failures": diffusion_failures,
+            "pending_recovered": retry_summary["recovered"],
+            "pending_failed": retry_summary["failed"] + retry_summary["skipped"],
+        }
+
     def _record_retrieval_metadata(self, result: dict,
                                    session_id: str | None = None) -> int:
         """§17.5 decay clock (D17) + retrieval reinforcement (design doc
@@ -853,90 +1022,7 @@ class ReverieServer:
         if isinstance(output, str) and output.strip():
             interaction["output"] = output
 
-        brain = self._ensure_brain()
-        commit_hash = _current_commit_hash(row["repo_path"])  # D49
-        try:
-            result, ids = extractor.extract_and_store_session(
-                brain, row["id"], interaction,
-                embedding_model=self.embedding_model, config=self.config,
-                commit_hash=commit_hash, repo_path=row["repo_path"],
-            )
-        except ExtractorError as exc:
-            # feat/providers: the interaction is persisted so the failure
-            # costs nothing — it is retried at the next successful
-            # observe (or via `reverie retry`).
-            pending_id = pending.save_pending_extraction(
-                brain, row, interaction, str(exc),
-                commit_hash=commit_hash,
-            )
-            error = EXTRACTION_FAILED.format(reason=exc) + (
-                f" The interaction was saved locally (pending id "
-                f"{pending_id[:8]}) and will be retried automatically at "
-                "the next successful observe, or via `reverie retry`."
-            )
-            return {"status": "error", "session_active": True,
-                    "error": error, "pending_extraction_id": pending_id}
-
-        diffusion_failures = 0
-        for ecu_id in ids:
-            try:
-                diffuser.diffuse_session_ecu(
-                    brain, row["id"], ecu_id,
-                    embedding_model=self.embedding_model, config=self.config,
-                )
-            except DiffuserError as exc:
-                # Extraction succeeded — the ECUs are stored and retrievable;
-                # lightweight diffusion is best-effort (offline-safe).
-                log.warning("lightweight diffusion failed for %s: %s",
-                            ecu_id, exc)
-                diffusion_failures += 1
-
-        # feat/providers: this observe succeeded — opportunistically retry
-        # any pending extractions for this (repo, branch). Best-effort.
-        retry_summary = pending.retry_pending(
-            brain, repo_path=row["repo_path"], branch=row["branch"],
-            embedding_model=self.embedding_model, config=self.config,
-        )
-
-        count = brain.count_session_ecus(row["id"])
-        plural = "s" if result.rejected_count != 1 else ""
-        if ids:
-            message = (
-                f"Extracted {len(ids)} conclusion{'s' if len(ids) != 1 else ''} into "
-                f"session memory ({result.rejected_count} rejected by the "
-                f"Lifting Test). Session memory now holds {count}."
-            )
-        else:
-            message = (
-                f"Extracted 0 conclusions ({result.rejected_count} candidate{plural} "
-                "rejected by the Lifting Test). This is not an error — not "
-                f"every response produces conclusions. Session memory now "
-                f"holds {count}."
-            )
-        if retry_summary["recovered"]:
-            message += (
-                f" {retry_summary['recovered']} previously failed "
-                "extraction(s) were also recovered into this session."
-            )
-        elif retry_summary["failed"] or retry_summary["skipped"]:
-            message += (
-                f" {retry_summary['failed'] + retry_summary['skipped']} "
-                "pending extraction(s) could not be recovered yet "
-                "(retry at the next observe, or via `reverie retry`)."
-            )
-        return {
-            "status": "ok",
-            "session_active": True,
-            "ecus_extracted": len(ids),
-            "ecus_rejected": result.rejected_count,
-            "rejection_summary": result.rejection_summary,  # §5.3 — visible filtering
-            "session_brain_count": count,
-            "message": message,
-            "skipped_invalid": result.skipped_invalid,
-            "diffusion_failures": diffusion_failures,
-            "pending_recovered": retry_summary["recovered"],
-            "pending_failed": retry_summary["failed"] + retry_summary["skipped"],
-        }
+        return self._extract_interaction(row, interaction)
 
     def _tool_query(self, args: dict) -> dict:
         """The §11.3 demand-driven retrieval path (query)."""
@@ -983,23 +1069,10 @@ class ReverieServer:
         """§16.3 summary — the nudge line included (feat/flow §4).
 
         Gated on enablement when a repo resolves; works repo-less (a
-        global server in the home folder still reports brain stats)."""
-        gate, ctx = self._gate(args, require_repo=False)
-        if gate is not None:
-            return gate
-        row = None
-        if ctx is not None:
-            info = ctx["info"]
-            row = self._enabled_session(info)
-        brain = self._ensure_brain()
-        payload = {"status": "ok", **brain_summary(brain, row)}
-        nudge = review_queue.nudge_line(
-            brain, config=self.config,
-            repo_path=info.repo_path if ctx is not None else None)
-        if nudge:
-            payload["review_nudge"] = nudge
-            payload["message"] = payload["message"] + " " + nudge
-        return payload
+        global server in the home folder still reports brain stats). The
+        harness-neutral implementation lives in ``core_api.summary`` so the
+        SessionStart hook can reuse the exact same formatting."""
+        return core_api.summary(args.get("repo_path"), _server=self)
 
     def _tool_reconsolidate(self, args: dict) -> dict:
         """D37 — reconsolidate (design doc §5.2): re-evaluate a labile

@@ -127,7 +127,7 @@ def test_enabled_prints_counts_and_rules_never_conclusion_text(
     brain.close()
     code, text = run_hook()
     assert code == 0
-    assert "1 conclusion in memory" in text
+    assert "The brain holds 1 conclusion" in text
     assert "1 candidate awaiting review" in text
     assert "secret pending conclusion text" not in text
     assert "webhook handlers must be idempotent" not in text
@@ -339,7 +339,7 @@ def test_uninstall_removes_only_the_hook_and_keeps_shared_file(
     assert do_install(home, reverie_home) == 0
     code, transcript = do_uninstall(home, reverie_home)
     assert code == 0
-    assert "Removed the Reverie SessionStart hook" in transcript
+    assert "Removed Reverie hooks" in transcript
     assert settings.exists()                    # user file is never deleted
     assert json.loads(settings.read_text()) == {
         "theme": "dark",
@@ -374,5 +374,5 @@ def test_uninstall_without_the_hook_is_unchanged(home, reverie_home):
     settings.write_text(json_text({"theme": "dark"}))
     code, transcript = do_uninstall(home, reverie_home)
     assert code == 0
-    assert "no Reverie SessionStart hook" in transcript
+    assert "no Reverie hooks" in transcript
     assert settings.read_text() == json_text({"theme": "dark"})

@@ -5,7 +5,7 @@ Spec §28.8 (detection + per-agent installation logic + LLM provider step),
 §28.2 (the ``~/.reverie/`` directory structure).
 
 Safety contract: the installer writes ONLY inside the Reverie home (``~/.reverie`` or
-``$REVERIE_HOME``) and the four agents' own config locations. Existing agent
+``$REVERIE_HOME``) and the supported integrations' own config locations. Existing agent
 config is merged, never overwritten (only the ``reverie`` entry is
 added/replaced). ``--dry-run`` prints every planned write with its full
 resulting content and writes nothing. API keys are NEVER written to disk —
@@ -41,8 +41,6 @@ import shutil
 import subprocess
 import sys
 import threading
-import tomllib
-from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -51,6 +49,18 @@ from . import providers
 from .brain import Brain
 from .config import DEFAULT_CONFIG, load_config
 from .config import reverie_home as _default_reverie_home
+from .integrations import AGENTS, Integration
+from .integrations import _is_reverie_hook_handler as _is_reverie_hook_handler
+from .integrations import configured_servers as _registry_configured_servers
+from .integrations.common import (
+    ConfiguredServer,
+    InstallError,
+    PlannedWrite,
+    _display,
+)
+from .integrations.common import (
+    _reference_block as _reference_block,
+)
 from .llm import call_llm
 
 # ---------------------------------------------------------------------------
@@ -285,82 +295,6 @@ uncertain — the review gate filters it.
 # review candidates and relay decisions) and /reverie-status (the session +
 # brain report through summary).
 # ---------------------------------------------------------------------------
-
-_REVIEW_COMMAND_BODY = """Review your pending Reverie conclusions (the human decides).
-
-Steps:
-1. Call review_list to get the pending candidates
-   (pass the workspace path as repo_path).
-2. Show EVERY candidate's full conclusion text, one at a time.
-3. Ask what the user wants to do with each (accept / reject / skip).
-4. Relay ONLY the decisions the user states, via review_decide
-   (pass the review_token from the listing).
-5. Never decide on the user's behalf; never bulk-accept unless the user
-   explicitly asked for that group.
-"""
-
-_STATUS_COMMAND_BODY = """Show the current Reverie status.
-
-Steps:
-1. Call summary (pass the workspace path as repo_path).
-2. Report: brain statistics, session state for the current (repo, branch),
-   and the pending-review count. Statistics only — never candidate
-   contents unless the user asks for a review (use /reverie-review).
-"""
-
-#: Claude Code user-level slash commands: ~/.claude/commands/<name>.md —
-#: plain markdown (frontmatter optional). https://code.claude.com/docs/en/slash-commands
-CLAUDE_CODE_COMMANDS: dict[str, str] = {
-    "reverie-review.md": _REVIEW_COMMAND_BODY,
-    "reverie-status.md": _STATUS_COMMAND_BODY,
-}
-
-#: Cursor user-level (global) commands: ~/.cursor/commands/<name>.md — plain
-#: markdown (beta). https://cursor.com/docs/agent/chat/commands
-CURSOR_COMMANDS: dict[str, str] = CLAUDE_CODE_COMMANDS
-
-#: OpenCode user-level commands: ~/.config/opencode/commands/<name>.md —
-#: markdown with YAML frontmatter. https://opencode.ai/docs/commands/
-_OPENCODE_COMMANDS: dict[str, str] = {}
-for _name, _body in CLAUDE_CODE_COMMANDS.items():
-    _OPENCODE_COMMANDS[_name] = (
-        "---\n"
-        f"description: "
-        f"{'Review pending Reverie conclusions' if 'review' in _name else 'Show the current Reverie status'}\n"
-        "---\n" + _body
-    )
-OPENCODE_COMMANDS = _OPENCODE_COMMANDS
-
-#: Codex user-level custom prompts: ~/.codex/prompts/<name>.md (invoked as
-#: /prompts:<name>; deprecated upstream but still the user-level command
-#: mechanism). https://developers.openai.com/codex/custom-prompts
-CODEX_PROMPTS: dict[str, str] = {
-    "reverie-review.md": (
-        "---\ndescription: Review pending Reverie conclusions\n---\n"
-        + _REVIEW_COMMAND_BODY
-    ),
-    "reverie-status.md": (
-        "---\ndescription: Show the current Reverie status\n---\n"
-        + _STATUS_COMMAND_BODY
-    ),
-}
-
-
-def _gemini_command(body: str, description: str) -> str:
-    """TOML command file for Gemini CLI: ~/.gemini/commands/<name>.toml with
-    a required `prompt` string. https://geminicli.com/docs/cli/custom-commands"""
-    lines = [f'# {description}', f'description = "{description}"', "prompt = '''"]
-    lines.extend(body.rstrip("\n").splitlines())
-    lines.append("'''")
-    return "\n".join(lines) + "\n"
-
-
-GEMINI_COMMANDS: dict[str, str] = {
-    "reverie-review.toml": _gemini_command(
-        _REVIEW_COMMAND_BODY, "Review pending Reverie conclusions"),
-    "reverie-status.toml": _gemini_command(
-        _STATUS_COMMAND_BODY, "Show the current Reverie status"),
-}
 
 # Ollama offline fallback (§28.8, auto-setup D42 / design doc §6.4).
 # base_url includes /v1: Ollama serves its OpenAI-compatible endpoint at
@@ -781,87 +715,6 @@ def hook_handler(executable: str | None = None, which=shutil.which) -> dict:
             "command": f"PYTHONPATH={shlex.quote(str(root))} {argv}"}
 
 
-def _is_reverie_hook_handler(handler: object) -> bool:
-    """Whether ``handler`` is Reverie's SessionStart hook (either form)."""
-    if not isinstance(handler, dict) or handler.get("type") != "command":
-        return False
-    args = handler.get("args")
-    if isinstance(args, list) and args[-len(HOOK_ARGS_TAIL):] == HOOK_ARGS_TAIL:
-        return True
-    command = handler.get("command")
-    return isinstance(command, str) and command.endswith(
-        " " + " ".join(HOOK_ARGS_TAIL))
-
-
-def _claude_session_start_plan(path: Path, home: Path,
-                               handler: dict) -> PlannedWrite:
-    """Merge Reverie's SessionStart hook handler into a Claude Code
-    settings.json — one handler, at most one entry, siblings untouched.
-
-    The handler is appended to the existing ``startup`` matcher group when
-    present; otherwise a ``{"matcher": "startup", "hooks": [...]}`` group is
-    added. An existing Reverie handler is replaced in place when stale
-    (e.g. the interpreter moved) — never duplicated.
-    """
-    disp = _display(path, home)
-    existed = path.exists()
-    if existed:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise InstallError(
-                f"{disp} is not valid JSON ({exc}). Fix or remove it, then "
-                "re-run `reverie install`. No changes were made to it."
-            ) from exc
-        if not isinstance(data, dict):
-            raise InstallError(
-                f"{disp} must contain a JSON object. Fix or remove it, then "
-                "re-run `reverie install`. No changes were made to it."
-            )
-    else:
-        data = {}
-    hooks = data.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        raise InstallError(
-            f"{disp}: `hooks` is not a JSON object. Fix or remove it, then "
-            "re-run `reverie install`. No changes were made to it."
-        )
-    groups = hooks.setdefault("SessionStart", [])
-    if not isinstance(groups, list):
-        raise InstallError(
-            f"{disp}: `hooks.SessionStart` is not a list. Fix or remove it, "
-            "then re-run `reverie install`. No changes were made to it."
-        )
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        handlers = group.get("hooks")
-        if not isinstance(handlers, list):
-            continue
-        for index, existing in enumerate(handlers):
-            if not _is_reverie_hook_handler(existing):
-                continue
-            if existing == handler:
-                return PlannedWrite(
-                    path, "unchanged", None,
-                    f"{disp} already has the Reverie SessionStart hook — "
-                    "unchanged")
-            handlers[index] = handler
-            return PlannedWrite(
-                path, "merge", json.dumps(data, indent=2) + "\n",
-                f"Updated the Reverie SessionStart hook in {disp}")
-    detail = f"Added the Reverie SessionStart hook to {disp} (fires at startup)"
-    for group in groups:
-        if (isinstance(group, dict) and group.get("matcher") == "startup"
-                and isinstance(group.get("hooks"), list)):
-            group["hooks"].append(handler)
-            return PlannedWrite(path, "merge" if existed else "create",
-                                json.dumps(data, indent=2) + "\n", detail)
-    groups.append({"matcher": "startup", "hooks": [handler]})
-    return PlannedWrite(path, "merge" if existed else "create",
-                        json.dumps(data, indent=2) + "\n", detail)
-
-
 def _stop_process(proc: subprocess.Popen) -> None:
     """Terminate a check subprocess; kill it when terminate is not enough."""
     if proc.poll() is None:
@@ -961,28 +814,12 @@ def check_server(command: str, args: list[str] | None = None,
         _stop_process(proc)
 
 
-class InstallError(RuntimeError):
-    """Installation failure with actionable guidance (§28.4 message style)."""
+def configured_servers(home: Path | None = None) -> list[ConfiguredServer]:
+    """Every harness config's reverie server entry, in AGENTS order.
 
-
-# ---------------------------------------------------------------------------
-# planned writes — computed pure, applied (or printed) separately
-# ---------------------------------------------------------------------------
-
-@dataclass
-class PlannedWrite:
-    path: Path
-    action: str                # create | merge | append | update | unchanged | create-db
-    content: str | None        # full resulting content (None for unchanged/create-db)
-    detail: str                # transcript-style note for the ✓ line
-
-
-def _display(path: Path, home: Path) -> str:
-    """`~`-relative display for paths under the user's home."""
-    try:
-        return "~/" + str(path.relative_to(home))
-    except ValueError:
-        return str(path)
+    Used by the install-time check (launch what was just written) and by
+    ``reverie status`` (does that command still exist?)."""
+    return _registry_configured_servers(Path(home) if home else Path.home())
 
 
 #: Where install records the files IT created (ABS path → sha256 at write
@@ -1028,174 +865,6 @@ def _record_install_manifest(reverie_home: Path,
         encoding="utf-8")
 
 
-def _json_merge(path: Path, home: Path, section: str, entry: dict,
-                detail: str, schema: str | None = None) -> PlannedWrite:
-    """Merge ``entry`` into ``data[section]["reverie"]`` — never overwriting siblings."""
-    disp = _display(path, home)
-    existed = path.exists()
-    if existed:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise InstallError(
-                f"{disp} is not valid JSON ({exc}). Fix or remove it, then "
-                "re-run `python -m reverie.install`. No changes were made to it."
-            ) from exc
-        if not isinstance(data, dict):
-            raise InstallError(
-                f"{disp} must contain a JSON object. Fix or remove it, then "
-                "re-run `python -m reverie.install`. No changes were made to it."
-            )
-    else:
-        data = {}
-        if schema is not None:
-            data["$schema"] = schema
-    node = data.setdefault(section, {})
-    if not isinstance(node, dict):
-        raise InstallError(
-            f"{disp}: `{section}` is not a JSON object. Fix or remove it, "
-            "then re-run `python -m reverie.install`. No changes were made to it."
-        )
-    if node.get("reverie") == entry:
-        return PlannedWrite(path, "unchanged", None,
-                            f"{disp} already has the reverie MCP server — unchanged")
-    node["reverie"] = entry
-    action = "merge" if existed else "create"
-    return PlannedWrite(path, action, json.dumps(data, indent=2) + "\n", detail)
-
-
-def _line_once(path: Path, home: Path, line: str, detail: str) -> PlannedWrite:
-    """Append ``line`` to a text file, creating it if absent (idempotent)."""
-    disp = _display(path, home)
-    if path.exists():
-        text = path.read_text(encoding="utf-8")
-        if line in (existing.strip() for existing in text.splitlines()):
-            return PlannedWrite(path, "unchanged", None,
-                                f"{disp} already references {line} — unchanged")
-        new = text if text.endswith("\n") else text + "\n"
-        if text.strip():
-            new += "\n"
-        return PlannedWrite(path, "append", new + line + "\n", detail)
-    return PlannedWrite(path, "create", line + "\n", detail)
-
-
-def _block_once(path: Path, home: Path, marker: str, block: str,
-                detail: str) -> PlannedWrite:
-    """Append a markdown block containing ``marker`` (idempotent)."""
-    disp = _display(path, home)
-    if path.exists():
-        text = path.read_text(encoding="utf-8")
-        if marker in text:
-            return PlannedWrite(path, "unchanged", None,
-                                f"{disp} already references {marker} — unchanged")
-        new = text if text.endswith("\n") else text + "\n"
-        if text.strip():
-            new += "\n"
-        return PlannedWrite(path, "append", new + block, detail)
-    return PlannedWrite(path, "create", block, detail)
-
-
-def _codex_table() -> str:
-    """The ``[mcp_servers.reverie]`` TOML table (console script in pip installs;
-    absolute python + PYTHONPATH env otherwise).
-
-    ``json.dumps`` strings/arrays are valid TOML basic strings/arrays for
-    ordinary paths, and handle any quoting/escaping correctly.
-    """
-    python, args, env = server_command()
-    lines = ["[mcp_servers.reverie]", f"command = {json.dumps(python)}"]
-    if args:
-        lines.append(f"args = {json.dumps(args)}")
-    if env:
-        lines.append(f"env = {{ PYTHONPATH = {json.dumps(env['PYTHONPATH'])} }}")
-    return "\n".join(lines)
-
-
-def _mcp_entry(command: str, args: list[str], env: dict,
-               extra: dict | None = None) -> dict:
-    """JSON MCP-server entry; empty args/env keys are omitted (D45 writes the
-    absolute console-script path as just {"command": "/abs/path/reverie-mcp"})."""
-    entry = dict(extra or {})
-    entry["command"] = command
-    if args:
-        entry["args"] = list(args)
-    if env:
-        entry["env"] = dict(env)
-    return entry
-
-
-# ---------------------------------------------------------------------------
-# reading the configured server entry back (install verification + status)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ConfiguredServer:
-    """One harness config's reverie MCP server entry, read back from disk —
-    the exact command that harness will launch."""
-    agent: str                  # AgentSpec.key
-    config_path: Path
-    command: str
-    args: list[str]
-    env: dict[str, str]
-
-
-def _load_json_object(path: Path) -> dict | None:
-    """Parse a JSON config file; None when absent, unreadable or not an object."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _server_from_entry(agent: str, path: Path,
-                       entry: object) -> ConfiguredServer | None:
-    """Normalize a JSON/TOML MCP entry (``command`` string or argv list) into
-    a ConfiguredServer; None when the shape is not a launchable command."""
-    if not isinstance(entry, dict):
-        return None
-    command = entry.get("command")
-    args: list[str] = []
-    if isinstance(command, list):
-        if not command or not all(isinstance(token, str) for token in command):
-            return None
-        command, args = command[0], list(command[1:])
-    if not isinstance(command, str) or not command:
-        return None
-    raw_args = entry.get("args")
-    if isinstance(raw_args, list) and all(isinstance(a, str) for a in raw_args):
-        args = [*args, *raw_args]
-    raw_env = entry.get("env") or entry.get("environment") or {}
-    env = ({k: v for k, v in raw_env.items()
-            if isinstance(k, str) and isinstance(v, str)}
-           if isinstance(raw_env, dict) else {})
-    return ConfiguredServer(agent, path, command, args, env)
-
-
-def _json_configured_server(agent: str, path: Path,
-                            keys: tuple[str, ...]) -> ConfiguredServer | None:
-    node: object = _load_json_object(path)
-    for key in keys:
-        if not isinstance(node, dict):
-            return None
-        node = node.get(key)
-    return _server_from_entry(agent, path, node)
-
-
-def configured_servers(home: Path | None = None) -> list[ConfiguredServer]:
-    """Every harness config's reverie server entry, in AGENTS order.
-
-    Used by the install-time check (launch what was just written) and by
-    ``reverie status`` (does that command still exist?)."""
-    home = Path(home) if home else Path.home()
-    found: list[ConfiguredServer] = []
-    for agent in AGENTS:
-        server = agent.configured_server(home)
-        if server is not None:
-            found.append(server)
-    return found
-
-
 def _command_exists(command: str, which=shutil.which) -> bool:
     """True when a configured command can be launched: an existing file for a
     path, or a resolvable name on PATH."""
@@ -1229,319 +898,8 @@ def report_configured_servers(print_fn=print, home: Path | None = None,
     return ok_all
 
 
-def _codex_toml(path: Path, home: Path, detail: str) -> PlannedWrite:
-    """Upsert the ``[mcp_servers.reverie]`` table; every other byte is preserved."""
-    disp = _display(path, home)
-    table = _codex_table()
-    if not path.exists():
-        return PlannedWrite(path, "create", table + "\n", detail)
-    text = path.read_text(encoding="utf-8")
-    try:
-        tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise InstallError(
-            f"{disp} is not valid TOML ({exc}). Fix or remove it, then "
-            "re-run `python -m reverie.install`. No changes were made to it."
-        ) from exc
-    lines = text.splitlines()
-    start = next(
-        (i for i, table_line in enumerate(lines)
-         if table_line.strip() == "[mcp_servers.reverie]"),
-        None,
-    )
-    if start is None:
-        new = text if text.endswith("\n") else text + "\n"
-        if text.strip():
-            new += "\n"
-        new += table + "\n"
-    else:
-        end = next(
-            (i for i in range(start + 1, len(lines))
-             if lines[i].strip().startswith("[")),
-            len(lines),
-        )
-        replacement = table.splitlines()
-        if end < len(lines):
-            replacement.append("")          # keep a blank line before the next table
-        while end > start + 1 and not lines[end - 1].strip():
-            end -= 1                        # drop the old table's trailing blanks
-        new = "\n".join(lines[:start] + replacement + lines[end:]) + "\n"
-    if new == text:
-        return PlannedWrite(path, "unchanged", None,
-                            f"{disp} already has [mcp_servers.reverie] — unchanged")
-    try:
-        tomllib.loads(new)
-    except tomllib.TOMLDecodeError as exc:  # defensive — should never happen
-        raise InstallError(
-            f"refusing to write {disp}: merged TOML would not parse ({exc}). "
-            "No changes were made to it."
-        ) from exc
-    return PlannedWrite(path, "merge", new, detail)
-
-
-def _reference_block(agents_ref: str) -> str:
-    return (
-        f"## Reverie\n\n"
-        f"Follow the Reverie agent instructions at {agents_ref}. Reverie is "
-        f"an MCP server (`reverie`) providing engineering memory via "
-        f"observe, query, summary, "
-        f"reconsolidate, set_repo_state, "
-        f"review_list, and review_decide. Sessions are "
-        f"automatic per branch — never suggest starting or stopping a "
-        f"session. Pass the workspace path as repo_path on every call. The "
-        f"user reviews candidates via `reverie review` or by asking the "
-        f"agent to show them; the agent only relays decisions the user "
-        f"states.\n"
-    )
-
-
-#: Marker line identifying Reverie's reference block in AGENTS.md-style
-#: files (install appends it; uninstall only removes the exact block).
-REFERENCE_BLOCK_MARKER = "## Reverie"
-
-
-# ---------------------------------------------------------------------------
-# agent registry (§28.8 "Installation Logic per Agent")
-# ---------------------------------------------------------------------------
-
-@dataclass
-class AgentSpec:
-    key: str
-    name: str
-    binary: str
-    marker: str                     # home-relative path; existence ⇒ installed
-    next_step: str = ""             # printed in the end-of-install summary
-
-    def detected(self, home: Path, which) -> bool:
-        return which(self.binary) is not None or (home / self.marker).exists()
-
-    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
-        raise NotImplementedError
-
-    def configured_server(self, home: Path) -> ConfiguredServer | None:
-        """The reverie server entry currently in this harness's config, or
-        None when the file is absent/unreadable or carries no entry."""
-        return None
-
-
-def _agents_ref(home: Path, reverie_home: Path) -> str:
-    """How agent configs refer to the Reverie AGENTS.md (spec form when default)."""
-    return "~/.reverie/AGENTS.md" if reverie_home == home / ".reverie" else str(reverie_home / "AGENTS.md")
-
-
-class _ClaudeCode(AgentSpec):
-    def __init__(self):
-        super().__init__(
-            "claude_code", "Claude Code", "claude", ".claude.json",
-            next_step="restart Claude Code; the tools load in every project, "
-                      "/reverie-review and /reverie-status are available in "
-                      "the chat.")
-
-    def configured_server(self, home: Path) -> ConfiguredServer | None:
-        return _json_configured_server("claude_code", home / ".claude.json",
-                                       ("mcpServers", "reverie"))
-
-    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
-        ref = _agents_ref(home, reverie_home)
-        python, args, env = server_command()
-        plans = [
-            _json_merge(
-                home / ".claude.json", home, "mcpServers",
-                _mcp_entry(python, args, env, {"type": "stdio"}),
-                f"Added MCP server to {_display(home / '.claude.json', home)} "
-                "(user scope)",
-            ),
-            _line_once(
-                home / ".claude" / "CLAUDE.md", home, f"@{ref}",
-                f"Added @{ref} import to "
-                f"{_display(home / '.claude' / 'CLAUDE.md', home)}",
-            ),
-        ]
-        # user-level slash commands (https://code.claude.com/docs/en/slash-commands)
-        for name, body in CLAUDE_CODE_COMMANDS.items():
-            path = home / ".claude" / "commands" / name
-            plans.append(_verbatim_file(
-                path, home, body,
-                f"Wrote {_display(path, home)} "
-                f"(/{'reverie-review' if 'review' in name else 'reverie-status'})"))
-        # SessionStart hook: injects the repo state + usage rules into every
-        # fresh session (docs: https://code.claude.com/docs/en/hooks)
-        plans.append(_claude_session_start_plan(
-            home / ".claude" / "settings.json", home, hook_handler()))
-        return plans
-
-
-class _Cursor(AgentSpec):
-    def __init__(self):
-        super().__init__(
-            "cursor", "Cursor", "cursor", ".cursor/mcp.json",
-            next_step="restart Cursor; the tools load in every project "
-                      "(usage guidance arrives via the server instructions "
-                      "and tool descriptions — paste them into Settings → "
-                      "Rules if you want them always on), /reverie-review "
-                      "and /reverie-status are available in the chat "
-                      "(commands are beta).")
-
-    def configured_server(self, home: Path) -> ConfiguredServer | None:
-        return _json_configured_server("cursor",
-                                       home / ".cursor" / "mcp.json",
-                                       ("mcpServers", "reverie"))
-
-    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
-        python, args, env = server_command()
-        plans = [
-            _json_merge(
-                home / ".cursor" / "mcp.json", home, "mcpServers",
-                _mcp_entry(python, args, env),
-                f"Added MCP server to "
-                f"{_display(home / '.cursor' / 'mcp.json', home)}",
-            ),
-        ]
-        # No global rules file is written: Cursor's documented global
-        # instruction mechanisms are User Rules (in-app settings) and
-        # AGENTS.md/CLAUDE.md files inside repos — never write into the
-        # user's repos. The MCP server's `instructions` field + tool
-        # descriptions carry the usage contract instead.
-        # User-level commands (beta): ~/.cursor/commands/<name>.md
-        # https://cursor.com/docs/agent/chat/commands
-        for name, body in CURSOR_COMMANDS.items():
-            path = home / ".cursor" / "commands" / name
-            plans.append(_verbatim_file(
-                path, home, body,
-                f"Wrote {_display(path, home)} "
-                f"(/{'reverie-review' if 'review' in name else 'reverie-status'})"))
-        return plans
-
-
-class _OpenCode(AgentSpec):
-    def __init__(self):
-        super().__init__(
-            "opencode", "OpenCode", "opencode",
-            ".config/opencode/opencode.json",
-            next_step="restart OpenCode; /reverie-review and /reverie-status "
-                      "are available in the chat.")
-
-    def configured_server(self, home: Path) -> ConfiguredServer | None:
-        return _json_configured_server(
-            "opencode", home / ".config" / "opencode" / "opencode.json",
-            ("mcp", "reverie"))
-
-    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
-        ref = _agents_ref(home, reverie_home)
-        python, args, env = server_command()
-        cfg = home / ".config" / "opencode" / "opencode.json"
-        agents = home / ".config" / "opencode" / "AGENTS.md"
-        entry = _mcp_entry([python, *args], [], env,
-                           {"type": "local", "enabled": True})
-        if "env" in entry:               # OpenCode names the key differently
-            entry["environment"] = entry.pop("env")
-        plans = [
-            _json_merge(
-                cfg, home, "mcp", entry,
-                f"Added MCP server to {_display(cfg, home)}",
-                schema="https://opencode.ai/config.json",
-            ),
-            _block_once(
-                agents, home, ref, _reference_block(ref),
-                f"Wrote {_display(agents, home)} (references {ref})",
-            ),
-        ]
-        # user-level commands (https://opencode.ai/docs/commands/ — note the
-        # plural `commands/` directory; markdown + YAML frontmatter)
-        for name, body in OPENCODE_COMMANDS.items():
-            path = home / ".config" / "opencode" / "commands" / name
-            plans.append(_verbatim_file(
-                path, home, body,
-                f"Wrote {_display(path, home)} "
-                f"(/{'reverie-review' if 'review' in name else 'reverie-status'})"))
-        return plans
-
-
-class _Codex(AgentSpec):
-    def __init__(self):
-        super().__init__(
-            "codex", "Codex", "codex", ".codex/config.toml",
-            next_step="restart Codex CLI; /prompts:reverie-review and "
-                      "/prompts:reverie-status are available (custom "
-                      "prompts are deprecated upstream but work).")
-
-    def configured_server(self, home: Path) -> ConfiguredServer | None:
-        path = home / ".codex" / "config.toml"
-        try:
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-            return None
-        return _server_from_entry("codex", path,
-                                  (data.get("mcp_servers") or {}).get("reverie"))
-
-    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
-        ref = _agents_ref(home, reverie_home)
-        cfg = home / ".codex" / "config.toml"
-        agents = home / ".codex" / "AGENTS.md"
-        plans = [
-            _codex_toml(cfg, home,
-                        f"Added [mcp_servers.reverie] to {_display(cfg, home)}"),
-            _block_once(
-                agents, home, ref, _reference_block(ref),
-                f"Wrote {_display(agents, home)} (references {ref})",
-            ),
-        ]
-        # user-level custom prompts (invoked as /prompts:<name>) — deprecated
-        # upstream in favour of skills, but still the user-level command
-        # mechanism; https://developers.openai.com/codex/custom-prompts
-        for name, body in CODEX_PROMPTS.items():
-            path = home / ".codex" / "prompts" / name
-            plans.append(_verbatim_file(
-                path, home, body,
-                f"Wrote {_display(path, home)} "
-                f"(/prompts:{'.reverie-review' if 'review' in name else 'reverie-status'})"))
-        return plans
-
-
-class _GeminiCLI(AgentSpec):
-    def __init__(self):
-        super().__init__(
-            "gemini_cli", "Gemini CLI", "gemini", ".gemini/settings.json",
-            next_step="restart Gemini CLI; /reverie-review and "
-                      "/reverie-status are available in the chat.")
-
-    def configured_server(self, home: Path) -> ConfiguredServer | None:
-        return _json_configured_server("gemini_cli",
-                                       home / ".gemini" / "settings.json",
-                                       ("mcpServers", "reverie"))
-
-    def plan(self, home: Path, reverie_home: Path) -> list[PlannedWrite]:
-        ref = _agents_ref(home, reverie_home)
-        python, args, env = server_command()
-        plans = [
-            _json_merge(
-                home / ".gemini" / "settings.json", home, "mcpServers",
-                _mcp_entry(python, args, env),
-                f"Added MCP server to "
-                f"{_display(home / '.gemini' / 'settings.json', home)}",
-            ),
-            _block_once(
-                home / ".gemini" / "GEMINI.md", home, ref,
-                _reference_block(ref),
-                f"Wrote {_display(home / '.gemini' / 'GEMINI.md', home)} "
-                f"(references {ref})",
-            ),
-        ]
-        # user-level commands: ~/.gemini/commands/<name>.toml (TOML, required
-        # `prompt`); https://geminicli.com/docs/cli/custom-commands
-        for name, body in GEMINI_COMMANDS.items():
-            path = home / ".gemini" / "commands" / name
-            plans.append(_verbatim_file(
-                path, home, body,
-                f"Wrote {_display(path, home)} "
-                f"(/{'reverie-review' if 'review' in name else 'reverie-status'})"))
-        return plans
-
-
-AGENTS: list[AgentSpec] = [_ClaudeCode(), _Cursor(), _OpenCode(), _Codex(),
-                           _GeminiCLI()]
-_AGENTS_BY_KEY = {a.key: a for a in AGENTS}
-
+#: Integration lookup for the installer's --only validation and status.
+_AGENTS_BY_KEY = {agent.key: agent for agent in AGENTS}
 
 # ---------------------------------------------------------------------------
 # ~/.reverie bootstrap (§28.2)
@@ -1665,8 +1023,8 @@ def _apply(write: PlannedWrite) -> None:
 # interactive selection (§28.8 transcript)
 # ---------------------------------------------------------------------------
 
-def _select_interactive(detected: list[AgentSpec], input_fn, print_fn
-                        ) -> list[AgentSpec]:
+def _select_interactive(detected: list[Integration], input_fn, print_fn
+                        ) -> list[Integration]:
     try:
         answer = input_fn("\nAdd Reverie to all detected agents? (y/n): ")
     except EOFError:

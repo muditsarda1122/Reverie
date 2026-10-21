@@ -16,6 +16,7 @@ One entry point, subcommands:
     reverie repair           brain integrity check + safe recovery
     reverie hook             lifecycle hooks invoked by the agent harness
                              itself (installed by `reverie install`)
+    reverie capture-turn     capture the completed exchange (Stop hook)
     reverie uninstall        remove Reverie's harness entries (+ data with
                              --delete-data)
 
@@ -238,13 +239,16 @@ def _build_parser() -> argparse.ArgumentParser:
                              "(read-only; quiet on error; always exit 0)")
     hs.add_argument("--repo", default=None,
                     help="workspace path (default: current directory)")
+    sub.add_parser("capture-turn", help="capture the completed exchange "
+                   "(invoked by the installed hook; reads hook JSON on "
+                   "stdin)")
     return parser
 
 
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "install")
+               "capture-turn", "install")
 
 
 def _unknown_command(word: str) -> int:
@@ -284,6 +288,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv[0] == "hook":
         from . import hooks
         return hooks.main(argv[1:])
+    if argv[0] == "capture-turn":
+        from . import integrations
+        return integrations.capture_turn_main(argv[1:])
     args = _build_parser().parse_args(argv)
 
     if args.command == "enable":

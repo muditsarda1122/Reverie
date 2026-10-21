@@ -272,7 +272,8 @@ reverie hook session-start --repo ~/code/app
 
 `session-start` is installed as a Claude Code SessionStart hook: its
 plain-text stdout is injected into the conversation at startup, so a fresh
-session sees Reverie's state and usage rules without a first tool call.
+session sees Reverie's state and usage rules without a first tool call. The
+matching Stop hook (`reverie capture-turn`) captures the completed exchange.
 Three outputs, one per repo state: **enabled** — brain counts (conclusions
 in memory, candidates awaiting review) plus the usage rules; **undecided** —
 the first-time question for the agent to relay; **disabled** — a one-line
@@ -285,6 +286,31 @@ no output), always exits `0` — a hook can never break a session.
 | `--repo PATH` | workspace path (default: current directory) |
 
 Exit: always `0` (hook contract).
+
+## reverie capture-turn
+
+The Claude Code Stop-hook entry point. Reads the hook JSON on stdin, takes the
+last real user request and final assistant text from the transcript, and hands
+them to the same extraction path as `observe`. Installed automatically as an
+async Stop hook with a 20-second timeout; it prints nothing and always exits
+`0`, so it can never block Claude.
+
+```bash
+reverie capture-turn --transcript ~/.claude/projects/.../session.jsonl
+reverie capture-turn --repo ~/code/app --branch main
+```
+
+| Flag | Effect |
+|---|---|
+| `--transcript PATH` | Claude JSONL transcript (default: `transcript_path` from stdin) |
+| `--repo PATH` | Repository path (default: hook `cwd`) |
+| `--branch NAME` | Branch (default: detected) |
+| `--timeout SECONDS` | Extraction time limit (default: `20`) |
+
+A failed or timed-out capture is left in the pending queue; `reverie retry`
+retries it. Disabled and undecided repos capture nothing. Exit: always `0`.
+
+Hook schemas and per-harness details: [`INTEGRATIONS.md`](INTEGRATIONS.md).
 
 ## reverie uninstall
 

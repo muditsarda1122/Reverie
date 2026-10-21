@@ -23,11 +23,14 @@ Output states:
 - undecided — the first-time question (verbatim) and how to record it;
 - disabled — one line: off means off.
 
-Claude Code hook schema used by the installer (read 2026-10-18):
+Claude Code hook schema used by the installer (read 2026-10-21):
 https://code.claude.com/docs/en/hooks#sessionstart — ``~/.claude/settings.json``
 → ``hooks.SessionStart[].hooks[]`` with a ``{"type": "command", "command",
 "args"}`` handler; the matcher ``startup`` fires for new sessions, and a
-SessionStart hook's plain-text stdout is added to Claude's context.
+SessionStart hook's plain-text stdout is added to Claude's context. The
+matching Stop hook (``reverie capture-turn``) is async, has a 20-second
+timeout, and captures the completed exchange:
+https://code.claude.com/docs/en/hooks#stop
 """
 
 from __future__ import annotations
@@ -37,10 +40,9 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from . import repos
+from . import core_api, repos
 from .brain import Brain
 from .config import SCHEMA_VERSION, default_db_path
-from .session import _fmt_count
 
 #: Exact first-time question (shared with the MCP gate — repos.FIRST_TIME_QUESTION
 #: is the same string; imported here so the hook and the gate can never drift).
@@ -63,14 +65,15 @@ ENABLED_RULES = (
 )
 
 
-def enabled_block(total: int, pending: int) -> str:
-    """The enabled-repo block: brain counts, pending count, usage rules.
+def enabled_block(summary: dict) -> str:
+    """The enabled-repo block: the canonical summary line + usage rules.
 
+    The stats line is ``core_api.summary``'s own ``message`` — the hook must
+    not grow a parallel formatting path that can drift from the MCP tool.
     Counts only — never conclusion text (anti-anchoring, §11.3)."""
     lines = [
         "Reverie engineering memory is on for this repo.",
-        f"Brain: {_fmt_count(total, 'conclusion')} in memory; "
-        f"{_fmt_count(pending, 'candidate')} awaiting review.",
+        summary["message"],
         *ENABLED_RULES,
     ]
     return "\n".join(lines)
@@ -122,19 +125,19 @@ def session_start(cwd: str | Path | None = None, *, print_fn=print) -> int:
             return 0                  # broken or outdated brain — stay quiet
         brain = Brain(db)
         try:
-            state = repos.state_readonly(brain, info)
-            if state == "enabled":
-                block = enabled_block(brain.count_ecus(),
-                                      brain.pending_review_count())
+            from .mcp_server import ReverieServer
+            payload = core_api.summary(
+                info.repo_path, branch=info.branch, read_only=True,
+                _server=ReverieServer(brain=brain))
         finally:
             brain.close()
     except Exception:
         return 0                      # never break a session — print nothing
-    if state == "enabled":
-        print_fn(block)
-    elif state == "disabled":
+    if payload.get("status") == "ok":
+        print_fn(enabled_block(payload))
+    elif payload.get("status") == "disabled":
         print_fn(DISABLED_TEXT)
-    else:
+    elif payload.get("status") == "needs_consent":
         print_fn(undecided_block(info.repo_path))
     return 0
 

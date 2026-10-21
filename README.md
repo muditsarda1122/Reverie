@@ -26,7 +26,7 @@ reverie install
 
 Both layouts work. The installer writes the **absolute path** of the `reverie-mcp` script into every harness config — harnesses launch MCP servers outside your virtualenv, so a bare command name is not enough. It then starts the written command, performs an MCP `initialize` handshake, and prints ✓ or ✗ per harness; a failing setup is reported (with the command and the error) instead of "Reverie is ready!". If you later move or delete the environment, `reverie status` flags the broken path and tells you to re-run `reverie install`.
 
-`reverie install` detects which harnesses you have, wires the MCP server into each, writes the agent instructions and the `/reverie-review` / `/reverie-status` commands, creates `~/.reverie`, detects an LLM API key in your environment (or offers Ollama for local-only), and prints a per-harness summary of exactly what it wrote. Non-interactive: `reverie install --all` (every detected harness) or `--only claude_code,codex`; `--dry-run` previews everything without writing.
+`reverie install` detects which harnesses you have, wires the MCP server into each, writes the agent instructions and the `/reverie-review` / `/reverie-status` commands, creates `~/.reverie`, detects an LLM API key in your environment (or offers Ollama for local-only), and prints a per-harness summary of exactly what it wrote. For Claude Code it also installs a read-only SessionStart hook and an async Stop capture hook. Non-interactive: `reverie install --all` (every detected harness) or `--only claude_code,codex`; `--dry-run` previews everything without writing.
 
 Provide a key for one of the supported providers before the step 2 prompt, or choose "Local via Ollama" — see [Model providers](#model-providers).
 
@@ -47,12 +47,12 @@ Observe → extract → review → ground → retrieve. Your agent's reasoning i
 | Harness | Install writes | Smoke-tested | Known limits |
 |---|---|---|---|
 | **OpenCode** | `~/.config/opencode/opencode.json` (`mcp.reverie`), `AGENTS.md` block, `commands/*.md` | ✅ exercised end-to-end (offline tests + live E2E + EC-Bench) | Marker detection misses `opencode.jsonc` configs |
-| **Claude Code** | `~/.claude.json` (`mcpServers.reverie`, user scope), `@import` in `~/.claude/CLAUDE.md`, `commands/*.md` | ❌ offline install tests only | Reads server `instructions`; `~/.claude.json` is also Claude Code's state file (the merge only ever touches its own key) |
+| **Claude Code** | `~/.claude.json` (`mcpServers.reverie`, user scope), `@import` in `~/.claude/CLAUDE.md`, `commands/*.md`, SessionStart + Stop hooks in `settings.json` | ❌ offline install/hook tests only | Reads server `instructions`; `~/.claude.json` is also Claude Code's state file (the merge only ever touches its own key); the Stop hook is async and never blocks a session |
 | **Codex CLI** | `~/.codex/config.toml` (`[mcp_servers.reverie]`), `AGENTS.md` block, `prompts/*.md` | ❌ offline install tests only | Reads server `instructions`; custom prompts are deprecated upstream (still the user-level command mechanism) |
 | **Cursor** | `~/.cursor/mcp.json` (`mcpServers.reverie`), `commands/*.md` (beta) | ❌ offline install tests only | No global rules file is written (Cursor documents no global rules file; use Settings → Rules to paste the guidance if you want it always on). Server `instructions` support is not documented by Cursor |
 | **Gemini CLI** | `~/.gemini/settings.json` (`mcpServers.reverie`), `GEMINI.md` block, `commands/*.toml` | ❌ offline install tests only | Reads server `instructions`; Gemini CLI was replaced by Antigravity CLI for unpaid/Google One users in June 2026 (config format unchanged) |
 
-"Smoke-tested" means what it says: for Claude Code, Codex, Cursor and Gemini CLI the written shapes are verified against each vendor's current docs and the server is tested over real stdio, but nobody has driven a live session — check [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md) if you want the checklist. Any other MCP client works with the manual snippet in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+"Smoke-tested" means what it says: for Claude Code, Codex, Cursor and Gemini CLI the written shapes are verified against each vendor's current docs and the server is tested over real stdio, but nobody has driven a live session — check [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md) if you want the checklist. Any other MCP client works with the manual snippet in [`docs/INSTALLATION.md`](docs/INSTALLATION.md). The integration contract, per-harness paths, hook behaviour and verification date are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 
 ## Model providers
 
