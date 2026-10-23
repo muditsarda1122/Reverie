@@ -122,14 +122,20 @@ def test_written_configs_carry_existing_absolute_script(tmp_path):
     script = install.console_script_path()
     opencode = json.loads(
         (home / ".config" / "opencode" / "opencode.json").read_text())
-    assert opencode["mcp"]["reverie"]["command"] == [script]
+    assert opencode["mcp"]["reverie"]["command"] == [
+        script, "--client", "opencode"]
     cursor = json.loads((home / ".cursor" / "mcp.json").read_text())
     assert cursor["mcpServers"]["reverie"]["command"] == script
+    assert cursor["mcpServers"]["reverie"]["args"] == [
+        "--client", "cursor"]
     import tomllib
     codex = tomllib.loads((home / ".codex" / "config.toml").read_text())
     assert codex["mcp_servers"]["reverie"]["command"] == script
+    assert codex["mcp_servers"]["reverie"]["args"] == ["--client", "codex"]
     gemini = json.loads((home / ".gemini" / "settings.json").read_text())
     assert gemini["mcpServers"]["reverie"]["command"] == script
+    assert gemini["mcpServers"]["reverie"]["args"] == [
+        "--client", "gemini"]
     assert Path(script).is_absolute() and Path(script).is_file()
 
 
@@ -227,10 +233,10 @@ def test_install_prints_check_per_harness(tmp_path):
 def test_install_checks_each_distinct_command_once(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    calls: list[str] = []
+    calls: list[tuple[str, tuple[str, ...]]] = []
 
     def check(command, args, env):
-        calls.append(command)
+        calls.append((command, tuple(args)))
         return True, "server started (fake)"
 
     code, _ = run_install_code(
@@ -238,8 +244,10 @@ def test_install_checks_each_distinct_command_once(tmp_path):
         only=["claude_code", "cursor", "opencode", "codex", "gemini_cli"],
         check_fn=check)
     assert code == 0
-    # all five harnesses share one command: launched once, reported per harness
-    assert len(calls) == 1
+    # each harness now carries its own --client key, so each is checked once
+    assert len(calls) == 5
+    assert {args[-1] for _command, args in calls} == {
+        "claude_code", "cursor", "opencode", "codex", "gemini"}
 
 
 def test_failed_check_blocks_ready_and_prints_command(tmp_path):
@@ -305,7 +313,8 @@ def test_install_real_check_reports_started(monkeypatch, tmp_path):
     assert cursor["mcpServers"]["reverie"]["command"] == str(script)
     opencode = json.loads(
         (home / ".config" / "opencode" / "opencode.json").read_text())
-    assert opencode["mcp"]["reverie"]["command"] == [str(script)]
+    assert opencode["mcp"]["reverie"]["command"] == [
+        str(script), "--client", "opencode"]
 
 
 def test_dry_run_never_launches_the_check(tmp_path):

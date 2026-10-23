@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import reverie_home as _default_reverie_home
+from ..policy import USAGE_POLICY
 
 
 class InstallError(RuntimeError):
@@ -119,14 +120,41 @@ def _line_once(path: Path, home: Path, line: str, detail: str) -> PlannedWrite:
 
 
 def _block_once(path: Path, home: Path, marker: str, block: str,
-                detail: str) -> PlannedWrite:
-    """Append a markdown block containing ``marker`` (idempotent)."""
+                detail: str,
+                legacy_blocks: list[tuple[str, str]] | None = None
+                ) -> PlannedWrite:
+    """Append a markdown block containing ``marker`` (idempotent).
+
+    ``legacy_blocks`` migrates older blocks in place: each entry is
+    ``(marker, block)``. When the current block is already present the file
+    is unchanged (a stale legacy block is removed without duplicating the
+    current one); when an exact legacy block is present it is replaced by
+    ``block``; when a legacy marker exists but its block was edited, the
+    file is left untouched rather than guessed at.
+    """
     disp = _display(path, home)
+    legacy_blocks = list(legacy_blocks or [])
     if path.exists():
         text = path.read_text(encoding="utf-8")
         if marker in text:
+            for _legacy_marker, legacy_block in legacy_blocks:
+                if legacy_block in text:
+                    return PlannedWrite(
+                        path, "update", text.replace(legacy_block, "", 1),
+                        f"{disp}: removed the old Reverie block (current "
+                        "block already present)")
             return PlannedWrite(path, "unchanged", None,
                                 f"{disp} already references {marker} — unchanged")
+        for _legacy_marker, legacy_block in legacy_blocks:
+            if legacy_block in text:
+                return PlannedWrite(
+                    path, "update", text.replace(legacy_block, block, 1),
+                    detail)
+        if any(old_marker in text for old_marker, _ in legacy_blocks):
+            return PlannedWrite(
+                path, "unchanged", None,
+                f"{disp}: an older Reverie block was edited — left untouched; "
+                "remove it by hand to install the current block")
         new = text if text.endswith("\n") else text + "\n"
         if text.strip():
             new += "\n"
@@ -159,17 +187,20 @@ def _mcp_entry(command: str, args: list[str], env: dict,
     return entry
 
 
-def _server_command(reverie_bin: str | None = None) -> tuple[str, list[str], dict]:
+def _server_command(reverie_bin: str | None = None,
+                    client: str | None = None) -> tuple[str, list[str], dict]:
     """The MCP server command for the harness config.
 
     ``reverie_bin`` (the integration contract's second argument) is accepted
     for callers that already resolved a Reverie launcher; the MCP entry still
     uses the core resolver, which knows whether the package is pip-installed.
+    ``client`` is the harness key recorded in the launch args (logs and
+    future per-client wording only).
     """
     from ..install import server_command
-    command, args, env = server_command()
+    command, args, env = server_command(client=client)
     if reverie_bin:
-        return str(reverie_bin), [], {}
+        return str(reverie_bin), (["--client", client] if client else []), {}
     return command, args, env
 
 
@@ -252,7 +283,13 @@ def _toml_configured_server(agent: str, path: Path,
 # reference block (shared instruction file fragment)
 # ---------------------------------------------------------------------------
 
-def _reference_block(agents_ref: str) -> str:
+def _policy_block() -> str:
+    """The inlined usage policy, delimited by machine-readable markers."""
+    return f"{POLICY_BLOCK_START}\n{USAGE_POLICY}{POLICY_BLOCK_END}\n"
+
+
+def _legacy_reference_block(agents_ref: str) -> str:
+    """The pre-inlining pointer block, kept only for migration/uninstall."""
     return (
         f"## Reverie\n\n"
         f"Follow the Reverie agent instructions at {agents_ref}. Reverie is "
@@ -268,9 +305,26 @@ def _reference_block(agents_ref: str) -> str:
     )
 
 
-#: Marker line identifying Reverie's reference block in AGENTS.md-style
-#: files (install appends it; uninstall only removes the exact block).
-REFERENCE_BLOCK_MARKER = "## Reverie"
+def _reference_block(agents_ref: str | None = None) -> str:
+    """Back-compat name for the current inlined policy block.
+
+    ``agents_ref`` is accepted because older callers passed the AGENTS.md
+    path; the current block no longer points at a file.
+    """
+    return _policy_block()
+
+
+#: Opening marker of the inlined usage-policy block in AGENTS.md-style files.
+POLICY_BLOCK_START = "<!-- reverie:start -->"
+#: Closing marker of the inlined usage-policy block.
+POLICY_BLOCK_END = "<!-- reverie:end -->"
+#: Marker identifying the inlined usage-policy block.
+POLICY_BLOCK_MARKER = POLICY_BLOCK_START
+#: Marker line identifying Reverie's current block (install appends it;
+#: uninstall removes only exact blocks).
+REFERENCE_BLOCK_MARKER = POLICY_BLOCK_START
+#: Marker of the retired pointer block, retained for migration/uninstall.
+LEGACY_REFERENCE_BLOCK_MARKER = "## Reverie"
 
 
 # ---------------------------------------------------------------------------
@@ -407,25 +461,34 @@ def _plan_line(path: Path, home: Path, line: str, label: str,
 
 
 def _plan_block(path: Path, home: Path, block: str, marker: str, label: str,
-                manifest: dict[str, str] | None = None) -> PlannedRemoval:
+                manifest: dict[str, str] | None = None,
+                legacy_blocks: list[tuple[str, str]] | None = None
+                ) -> PlannedRemoval:
     """Remove the appended reference block — the reverse of _block_once.
 
-    The block is only removed when it is found verbatim; a block that was
-    edited afterwards is skipped and reported (Reverie never guesses)."""
+    ``legacy_blocks`` are the retired pointer blocks (``(marker, block)``):
+    uninstall removes every exact block present, so an old install and a
+    migrated one are both cleaned. A block that was edited afterwards is
+    skipped and reported (Reverie never guesses)."""
     disp = _display(path, home)
+    legacy_blocks = list(legacy_blocks or [])
     if not path.exists():
         return PlannedRemoval(path, "unchanged", f"{disp}: not present")
     text = path.read_text(encoding="utf-8")
-    if marker not in text:
+    candidates = [(marker, block), *legacy_blocks]
+    present = [(m, b) for m, b in candidates if m in text]
+    if not present:
         return PlannedRemoval(
             path, "unchanged", f"{disp}: no Reverie reference block")
-    if block not in text:
+    exact = [(m, b) for m, b in candidates if b in text]
+    if len(exact) != len(present):
         return PlannedRemoval(
             path, "skipped",
             f"SKIPPED {disp}: the Reverie reference block was edited after "
             "install — remove it by hand if you want it gone.")
-    before = text[:text.index(block)]
-    remainder = before + text[text.index(block) + len(block):]
+    remainder = text
+    for _m, candidate in exact:
+        remainder = remainder.replace(candidate, "", 1)
     if not remainder.strip():
         if _owned_by_install(path, manifest):
             return PlannedRemoval(

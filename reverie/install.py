@@ -494,6 +494,7 @@ def console_script_path(executable: str | None = None, which=shutil.which,
 
 
 def server_command(executable: str | None = None, which=shutil.which,
+                   client: str | None = None,
                    ) -> tuple[str, list[str], dict[str, str]]:
     """``(command, args, env)`` for launching the Reverie MCP server from any cwd.
 
@@ -514,12 +515,18 @@ def server_command(executable: str | None = None, which=shutil.which,
     ``reverie``, so the configs carry the ABSOLUTE path to the project's venv
     interpreter (dynamically computed from this file's location — never
     hardcoded) plus a PYTHONPATH entry pointing at the project root.
+
+    ``client`` (an integration's harness key) is appended as
+    ``--client <key>`` so the server records which client launched it. It is
+    optional: configs written before it existed keep working unchanged.
     """
+    client_args = ["--client", client] if client else []
     if _is_pip_installed():
         script = console_script_path(executable, which)
         if script is not None:
-            return script, [], {}
-        return executable or sys.executable, ["-m", "reverie.mcp_server"], {}
+            return script, client_args, {}
+        return executable or sys.executable, ["-m", "reverie.mcp_server",
+                                              *client_args], {}
     root = Path(__file__).resolve().parent.parent
     python: str | None = None
     for candidate in (root / ".venv" / "bin" / "python",          # POSIX venv
@@ -529,7 +536,8 @@ def server_command(executable: str | None = None, which=shutil.which,
             break
     if python is None:   # no project venv — the running interpreter has `reverie`
         python = sys.executable
-    return python, ["-m", "reverie.mcp_server"], {"PYTHONPATH": str(root)}
+    return python, ["-m", "reverie.mcp_server", *client_args], {
+        "PYTHONPATH": str(root)}
 
 
 def _stop_process(proc: subprocess.Popen) -> None:

@@ -15,6 +15,8 @@ from ..base import Integration
 from ..common import (
     _REVIEW_COMMAND_BODY,
     _STATUS_COMMAND_BODY,
+    LEGACY_REFERENCE_BLOCK_MARKER,
+    POLICY_BLOCK_MARKER,
     ConfiguredServer,
     PlannedRemoval,
     PlannedWrite,
@@ -23,11 +25,12 @@ from ..common import (
     _display,
     _json_configured_server,
     _json_merge,
+    _legacy_reference_block,
     _mcp_entry,
     _plan_block,
     _plan_json_entry,
     _plan_verbatim_file,
-    _reference_block,
+    _policy_block,
     _server_command,
     _verbatim_file,
 )
@@ -79,7 +82,8 @@ class OpenCodeIntegration(Integration):
         home = Path(home)
         reverie_home = Path(reverie_home) if reverie_home else home / ".reverie"
         ref = _agents_ref(home, reverie_home)
-        command, args, env = _server_command(reverie_bin)
+        command, args, env = _server_command(reverie_bin,
+                                             client=self.client_key)
         cfg = _config_path(home)
         agents = _agents_path(home)
         writes = [
@@ -88,8 +92,10 @@ class OpenCodeIntegration(Integration):
                 f"Added MCP server to {_display(cfg, home)}",
                 schema="https://opencode.ai/config.json"),
             _block_once(
-                agents, home, ref, _reference_block(ref),
-                f"Wrote {_display(agents, home)} (references {ref})"),
+                agents, home, POLICY_BLOCK_MARKER, _policy_block(),
+                f"Wrote {_display(agents, home)} (Reverie usage policy)",
+                legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
+                                _legacy_reference_block(ref))]),
         ]
         for name, body in OPENCODE_COMMANDS.items():
             path = _commands_dir(home) / name
@@ -109,8 +115,10 @@ class OpenCodeIntegration(Integration):
             _plan_json_entry(
                 _config_path(home), home, "mcp", self.key, True, manifest),
             _plan_block(
-                _agents_path(home), home, _reference_block(ref), ref,
-                self.key, manifest),
+                _agents_path(home), home, _policy_block(),
+                POLICY_BLOCK_MARKER, self.key, manifest,
+                legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
+                                _legacy_reference_block(ref))]),
         ]
         for name, body in OPENCODE_COMMANDS.items():
             path = _commands_dir(home) / name

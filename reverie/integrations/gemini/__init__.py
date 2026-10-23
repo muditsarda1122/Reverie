@@ -14,7 +14,8 @@ from ..base import Integration
 from ..common import (
     _REVIEW_COMMAND_BODY,
     _STATUS_COMMAND_BODY,
-    REFERENCE_BLOCK_MARKER,
+    LEGACY_REFERENCE_BLOCK_MARKER,
+    POLICY_BLOCK_MARKER,
     ConfiguredServer,
     PlannedRemoval,
     PlannedWrite,
@@ -23,11 +24,12 @@ from ..common import (
     _display,
     _json_configured_server,
     _json_merge,
+    _legacy_reference_block,
     _mcp_entry,
     _plan_block,
     _plan_json_entry,
     _plan_verbatim_file,
-    _reference_block,
+    _policy_block,
     _server_command,
     _verbatim_file,
 )
@@ -63,6 +65,7 @@ def _commands_dir(home: Path) -> Path:
 
 class GeminiIntegration(Integration):
     key = "gemini_cli"
+    client = "gemini"
     name = "Gemini CLI"
     binary = "gemini"
     marker = ".gemini/settings.json"
@@ -76,15 +79,18 @@ class GeminiIntegration(Integration):
         home = Path(home)
         reverie_home = Path(reverie_home) if reverie_home else home / ".reverie"
         ref = _agents_ref(home, reverie_home)
-        command, args, env = _server_command(reverie_bin)
+        command, args, env = _server_command(reverie_bin,
+                                             client=self.client_key)
         settings = _settings_path(home)
         writes = [_json_merge(
             settings, home, "mcpServers", _mcp_entry(command, args, env),
             f"Added MCP server to {_display(settings, home)}")]
         agents = _reference_path(home)
         writes.append(_block_once(
-            agents, home, REFERENCE_BLOCK_MARKER, _reference_block(ref),
-            f"Wrote {_display(agents, home)} (references {ref})"))
+            agents, home, POLICY_BLOCK_MARKER, _policy_block(),
+            f"Wrote {_display(agents, home)} (Reverie usage policy)",
+            legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
+                            _legacy_reference_block(ref))]))
         for name, body in GEMINI_COMMANDS.items():
             path = _commands_dir(home) / name
             writes.append(_verbatim_file(
@@ -104,8 +110,10 @@ class GeminiIntegration(Integration):
                 _settings_path(home), home, "mcpServers", self.key, False,
                 manifest),
             _plan_block(
-                _reference_path(home), home, _reference_block(ref),
-                REFERENCE_BLOCK_MARKER, self.key, manifest),
+                _reference_path(home), home, _policy_block(),
+                POLICY_BLOCK_MARKER, self.key, manifest,
+                legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
+                                _legacy_reference_block(ref))]),
         ]
         for name, body in GEMINI_COMMANDS.items():
             path = _commands_dir(home) / name

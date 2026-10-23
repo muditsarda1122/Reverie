@@ -73,6 +73,7 @@ so §3.3's informational commit-staleness check has input.
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import signal
@@ -94,6 +95,7 @@ from . import (
     review_queue,
 )
 from .brain import Brain, BrainError, _now_iso
+from .client import get_client, set_client
 from .confidence import FROZEN_STATUSES, reinforce_stored_confidence
 from .config import MODES, SCOPE_LEVELS, get_config
 from .diffuser import DiffuserError
@@ -563,8 +565,9 @@ class ReverieServer:
     of truth (D15), so review decisions from any process take effect immediately."""
 
     def __init__(self, brain: Brain | None = None, manager=None, config=None,
-                 embedding_model=None):
+                 embedding_model=None, client: str | None = None):
         self.config = config or get_config()
+        self.client = client if client is not None else get_client()
         self._brain = brain
         self._manager = manager
         self._embedding_model = embedding_model
@@ -1482,12 +1485,26 @@ def serve(server: ReverieServer, stdin, stdout) -> None:
             stdout.flush()
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="reverie-mcp",
+        description="Reverie MCP server (stdio, newline-delimited JSON-RPC).",
+    )
+    parser.add_argument("--client", default=None,
+                        help="client key that launched this server (recorded "
+                             "for logs; no behaviour change)")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args, _unknown = _build_parser().parse_known_args(argv)
+    set_client(args.client)
     logging.basicConfig(
         stream=sys.stderr, level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
-    log.info("Reverie MCP server starting (protocol %s)", PROTOCOL_VERSION)
+    log.info("Reverie MCP server starting (protocol %s, client %s)",
+             PROTOCOL_VERSION, args.client or "unknown")
     server = ReverieServer()
     server.start_maintenance(
         repo_path=resolve_maintainer_repo_path(server._ensure_brain()))

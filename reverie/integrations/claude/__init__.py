@@ -282,7 +282,8 @@ class ClaudeIntegration(Integration):
         reverie_home = Path(reverie_home) if reverie_home else home / ".reverie"
         ref = _agents_ref(home, reverie_home)
         writes: list[PlannedWrite] = []
-        command, args, env = _server_command(reverie_bin)
+        command, args, env = _server_command(reverie_bin,
+                                             client=self.client_key)
         mcp_path = home / ".claude.json"
         writes.append(_json_merge(
             mcp_path, home, "mcpServers",

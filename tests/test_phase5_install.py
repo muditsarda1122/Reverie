@@ -20,6 +20,8 @@ from reverie import install
 from reverie.brain import Brain
 from reverie.config import DEFAULT_CONFIG, load_config
 from reverie.install import AGENTS, InstallError
+from reverie.integrations.common import POLICY_BLOCK_END, POLICY_BLOCK_START
+from reverie.policy import USAGE_POLICY
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = (ROOT / "docs" / "SPEC.md").read_text(encoding="utf-8")
@@ -159,7 +161,7 @@ def test_claude_merge_preserves_existing(dev_install, home, reverie_home):
     data = json.loads(cfg.read_text())
     assert data["mcpServers"]["other"] == {"command": "x"}     # untouched
     assert data["unrelated"] == {"keep": True}                 # untouched
-    python, args, env = install.server_command()
+    python, args, env = install.server_command(client="claude_code")
     assert data["mcpServers"]["reverie"] == {
         "type": "stdio", "command": python, "args": args, "env": env,
     }
@@ -189,7 +191,7 @@ def test_cursor_merge_and_commands(dev_install, home, reverie_home):
     run_install(home, reverie_home, only=["cursor"])
     data = json.loads(cfg.read_text())
     assert data["mcpServers"]["github"] == {"command": "gh"}   # untouched
-    python, args, env = install.server_command()
+    python, args, env = install.server_command(client="cursor")
     assert data["mcpServers"]["reverie"] == {
         "command": python, "args": args, "env": env,
     }
@@ -213,13 +215,15 @@ def test_opencode_merge_and_agents_md(dev_install, home, reverie_home):
     data = json.loads(cfg.read_text())
     assert data["theme"] == "dark"                             # untouched
     assert data["mcp"]["other"]["command"] == ["x"]            # untouched
-    python, args, env = install.server_command()
+    python, args, env = install.server_command(client="opencode")
     assert data["mcp"]["reverie"] == {
         "type": "local", "command": [python, *args],
         "environment": env, "enabled": True,
     }
-    assert "~/.reverie/AGENTS.md" in (
-        home / ".config" / "opencode" / "AGENTS.md").read_text()
+    agents_text = (home / ".config" / "opencode" / "AGENTS.md").read_text()
+    assert agents_text.count(POLICY_BLOCK_START) == 1
+    assert (f"{POLICY_BLOCK_START}\n{USAGE_POLICY}{POLICY_BLOCK_END}"
+            in agents_text)
 
 
 def test_opencode_new_file_gets_schema(home, reverie_home):
@@ -232,12 +236,13 @@ def test_opencode_new_file_gets_schema(home, reverie_home):
 
 def test_codex_toml_create_append_replace(dev_install, home, reverie_home):
     cfg = home / ".codex" / "config.toml"
-    python, args, env = install.server_command()
+    python, args, env = install.server_command(client="codex")
     run_install(home, reverie_home, only=["codex"])
     text = cfg.read_text()
     parsed = tomllib.loads(text)
     assert parsed["mcp_servers"]["reverie"] == {
-        "command": python, "args": ["-m", "reverie.mcp_server"],
+        "command": python, "args": ["-m", "reverie.mcp_server",
+                                    "--client", "codex"],
         "env": {"PYTHONPATH": str(ROOT)}}
 
     # append to an existing config with other tables
@@ -266,7 +271,10 @@ def test_codex_agents_md_append_idempotent(home, reverie_home):
     run_install(home, reverie_home, only=["codex"])
     text = agents.read_text()
     assert text.startswith("# Codex notes\n")
-    assert text.count("~/.reverie/AGENTS.md") == 1
+    assert text.count(POLICY_BLOCK_START) == 1
+    assert text.count(POLICY_BLOCK_END) == 1
+    assert (f"{POLICY_BLOCK_START}\n{USAGE_POLICY}{POLICY_BLOCK_END}"
+            in text)
 
 
 # ---------------------------------------------------------------------------
@@ -776,11 +784,11 @@ def test_directory_bootstrap_line_only_on_create(home, reverie_home):
     assert "Creating ~/.reverie/ directory..." not in second
 
 
-def test_agents_ref_absolute_when_reverie_home_not_default(home, tmp_path):
+def test_claude_import_absolute_when_reverie_home_not_default(home, tmp_path):
     rv_elsewhere = tmp_path / "elsewhere" / "rv"
-    run_install(home, rv_elsewhere, only=["codex"])
-    text = (home / ".codex" / "AGENTS.md").read_text()
-    assert str(rv_elsewhere / "AGENTS.md") in text
+    run_install(home, rv_elsewhere, only=["claude_code"])
+    text = (home / ".claude" / "CLAUDE.md").read_text()
+    assert f"@{rv_elsewhere / 'AGENTS.md'}" in text
     assert "~/.reverie/AGENTS.md" not in text
 
 

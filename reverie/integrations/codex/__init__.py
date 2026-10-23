@@ -16,7 +16,8 @@ from ..base import Integration
 from ..common import (
     _REVIEW_COMMAND_BODY,
     _STATUS_COMMAND_BODY,
-    REFERENCE_BLOCK_MARKER,
+    LEGACY_REFERENCE_BLOCK_MARKER,
+    POLICY_BLOCK_MARKER,
     ConfiguredServer,
     InstallError,
     PlannedRemoval,
@@ -24,10 +25,11 @@ from ..common import (
     _agents_ref,
     _block_once,
     _display,
+    _legacy_reference_block,
     _owned_by_install,
     _plan_block,
     _plan_verbatim_file,
-    _reference_block,
+    _policy_block,
     _server_command,
     _verbatim_file,
 )
@@ -56,8 +58,9 @@ def _prompts_dir(home: Path) -> Path:
     return Path(home) / ".codex" / "prompts"
 
 
-def _table(reverie_bin: str | None = None) -> str:
-    command, args, env = _server_command(reverie_bin)
+def _table(reverie_bin: str | None = None,
+           client: str | None = None) -> str:
+    command, args, env = _server_command(reverie_bin, client=client)
     lines = ["[mcp_servers.reverie]", f"command = {json.dumps(command)}"]
     if args:
         lines.append(f"args = {json.dumps(args)}")
@@ -187,11 +190,15 @@ class CodexIntegration(Integration):
         home = Path(home)
         reverie_home = Path(reverie_home) if reverie_home else home / ".reverie"
         ref = _agents_ref(home, reverie_home)
-        writes = [_toml_plan(_config_path(home), home, _table(reverie_bin))]
+        writes = [_toml_plan(
+            _config_path(home), home,
+            _table(reverie_bin, client=self.client_key))]
         agents = _agents_path(home)
         writes.append(_block_once(
-            agents, home, REFERENCE_BLOCK_MARKER, _reference_block(ref),
-            f"Wrote {_display(agents, home)} (references {ref})"))
+            agents, home, POLICY_BLOCK_MARKER, _policy_block(),
+            f"Wrote {_display(agents, home)} (Reverie usage policy)",
+            legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
+                            _legacy_reference_block(ref))]))
         for name, body in CODEX_PROMPTS.items():
             path = _prompts_dir(home) / name
             writes.append(_verbatim_file(
@@ -209,8 +216,10 @@ class CodexIntegration(Integration):
         removals = [
             _uninstall_toml(_config_path(home), home, manifest),
             _plan_block(
-                _agents_path(home), home, _reference_block(ref),
-                REFERENCE_BLOCK_MARKER, self.key, manifest),
+                _agents_path(home), home, _policy_block(),
+                POLICY_BLOCK_MARKER, self.key, manifest,
+                legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
+                                _legacy_reference_block(ref))]),
         ]
         for name, body in CODEX_PROMPTS.items():
             path = _prompts_dir(home) / name

@@ -27,10 +27,18 @@ import pytest
 import reverie
 from reverie import cli, core_api, hooks, install, uninstall
 from reverie.brain import Brain
+from reverie.client import get_client, set_client
 from reverie.integrations import AGENTS, get_integration
 from reverie.integrations.claude.capture import main as capture_main
 from reverie.integrations.claude.capture import read_exchange
+from reverie.integrations.common import (
+    LEGACY_REFERENCE_BLOCK_MARKER,
+    POLICY_BLOCK_END,
+    POLICY_BLOCK_START,
+    _legacy_reference_block,
+)
 from reverie.mcp_server import ReverieServer
+from reverie.policy import USAGE_POLICY
 from reverie.session import SessionManager
 
 ROOT = Path(reverie.__file__).parent
@@ -249,6 +257,140 @@ def test_sandboxed_install_uninstall_round_trip(key, tmp_path):
         str(p.relative_to(home)) for p in home.rglob("*")
         if p.is_file() and not p.is_relative_to(reverie_home))
     assert after == []
+
+
+# ---------------------------------------------------------------------------
+# 1b. inlined usage policy + per-client launch identity
+# ---------------------------------------------------------------------------
+
+POLICY_FILES = {
+    "opencode": Path(".config/opencode/AGENTS.md"),
+    "codex": Path(".codex/AGENTS.md"),
+    "gemini_cli": Path(".gemini/GEMINI.md"),
+}
+
+
+def _run_install(home: Path, key: str) -> None:
+    rc = install.run(
+        home=home, reverie_home=home / ".reverie", only=[key],
+        no_verify=True, which=lambda _b: None, input_fn=lambda _p: "",
+        print_fn=lambda _s: None, environ={},
+        check_fn=lambda *a, **k: (True, "stub"))
+    assert rc == 0
+
+
+@pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
+def test_install_inlines_usage_policy_between_markers(key, relative,
+                                                      tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _run_install(home, key)
+    text = (home / relative).read_text(encoding="utf-8")
+    assert text.count(POLICY_BLOCK_START) == 1
+    assert text.count(POLICY_BLOCK_END) == 1
+    start = text.index(POLICY_BLOCK_START) + len(POLICY_BLOCK_START)
+    end = text.index(POLICY_BLOCK_END, start)
+    assert text[start:end] == "\n" + USAGE_POLICY
+    assert text[start:end].strip() == USAGE_POLICY.strip()
+
+    _run_install(home, key)
+    again = (home / relative).read_text(encoding="utf-8")
+    assert again.count(POLICY_BLOCK_START) == 1
+
+
+@pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
+def test_install_migrates_legacy_pointer_block(key, relative, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    path = home / relative
+    path.parent.mkdir(parents=True)
+    old = _legacy_reference_block("~/.reverie/AGENTS.md")
+    path.write_text("# My notes\n\n" + old, encoding="utf-8")
+
+    _run_install(home, key)
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("# My notes\n")
+    assert LEGACY_REFERENCE_BLOCK_MARKER not in text
+    assert text.count(POLICY_BLOCK_START) == 1
+    assert USAGE_POLICY in text
+
+
+@pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
+def test_uninstall_removes_inlined_or_legacy_block(key, relative, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _run_install(home, key)
+    rc = uninstall.run(home=home, reverie_home=home / ".reverie",
+                       yes=True, print_fn=lambda _s: None)
+    assert rc == 0
+    path = home / relative
+    assert not path.exists() or POLICY_BLOCK_START not in path.read_text()
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# My notes\n\n"
+                    + _legacy_reference_block("~/.reverie/AGENTS.md"),
+                    encoding="utf-8")
+    rc = uninstall.run(home=home, reverie_home=home / ".reverie",
+                       yes=True, print_fn=lambda _s: None)
+    assert rc == 0
+    text = path.read_text(encoding="utf-8")
+    assert LEGACY_REFERENCE_BLOCK_MARKER not in text
+    assert "My notes" in text
+
+
+@pytest.mark.parametrize("key,expected", [
+    ("claude_code", "claude_code"),
+    ("cursor", "cursor"),
+    ("opencode", "opencode"),
+    ("codex", "codex"),
+    ("gemini_cli", "gemini"),
+])
+def test_every_integration_launches_with_its_client_key(key, expected,
+                                                         tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _run_install(home, key)
+    configured = get_integration(key).configured_server(home)
+    assert configured is not None
+    assert configured.args[-2:] == ["--client", expected]
+
+
+def test_client_flag_is_accepted_by_cli_and_server():
+    set_client(None)
+    try:
+        assert cli._extract_client(
+            ["status", "--client", "cursor"]) == ["status"]
+        assert get_client() == "cursor"
+        assert cli._extract_client(
+            ["--client=codex", "repos"]) == ["repos"]
+        assert get_client() == "codex"
+        assert cli._extract_client(["--client"]) is None
+    finally:
+        set_client(None)
+
+
+def test_server_records_client_and_accepts_flag(monkeypatch):
+    from reverie import mcp_server
+    args = mcp_server._build_parser().parse_args(["--client", "opencode"])
+    assert args.client == "opencode"
+    set_client(None)
+    try:
+        server = ReverieServer(client="gemini")
+        assert server.client == "gemini"
+        monkeypatch.setattr(mcp_server, "serve", lambda *_a, **_k: None)
+        monkeypatch.setattr(ReverieServer, "start_maintenance",
+                            lambda *_a, **_k: None)
+        monkeypatch.setattr(ReverieServer, "stop_maintenance",
+                            lambda *_a, **_k: None)
+        monkeypatch.setattr(ReverieServer, "_ensure_brain",
+                            lambda self: type("B", (), {
+                                "list_repos": lambda *_: [],
+                                "get_active_session": lambda *_: None,
+                            })())
+        assert mcp_server.main(["--client", "codex"]) == 0
+        assert get_client() == "codex"
+    finally:
+        set_client(None)
 
 
 # ---------------------------------------------------------------------------

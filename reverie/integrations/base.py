@@ -26,6 +26,9 @@ class Integration:
 
     #: Stable machine key (also the CLI/config name), e.g. ``"claude_code"``.
     key: str = ""
+    #: Value passed as ``--client`` in the written launch command. Defaults
+    #: to ``key``; set only when the client's public name differs.
+    client: str = ""
     #: Human name shown by the installer, e.g. ``"Claude Code"``.
     name: str = ""
     #: Executable used only for detection (None → marker-file detection only).
@@ -46,6 +49,11 @@ class Integration:
     #: Back-compat spelling used by the original installer loop.
     def detected(self, home: Path, which=shutil.which) -> bool:
         return self.detect(home, which)
+
+    @property
+    def client_key(self) -> str:
+        """The ``--client`` value written into this harness's launch args."""
+        return self.client or self.key
 
     def install(self, home: Path, reverie_bin: str | None = None,
                 dry_run: bool = False, *,

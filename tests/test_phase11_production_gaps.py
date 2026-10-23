@@ -566,16 +566,20 @@ class TestConsoleScriptDetection:
                           input_answers=[""])
         claude = json.loads((home / ".claude.json").read_text())
         assert claude["mcpServers"]["reverie"] == {
-            "type": "stdio", "command": fake}
+            "type": "stdio", "command": fake,
+            "args": ["--client", "claude_code"]}
         cursor = json.loads((home / ".cursor" / "mcp.json").read_text())
-        assert cursor["mcpServers"]["reverie"] == {"command": fake}
+        assert cursor["mcpServers"]["reverie"] == {
+            "command": fake, "args": ["--client", "cursor"]}
         opencode = json.loads(
             (home / ".config" / "opencode" / "opencode.json").read_text())
         assert opencode["mcp"]["reverie"] == {
-            "type": "local", "command": [fake], "enabled": True}
+            "type": "local", "command": [fake, "--client", "opencode"],
+            "enabled": True}
         import tomllib
         codex = tomllib.loads((home / ".codex" / "config.toml").read_text())
-        assert codex["mcp_servers"]["reverie"] == {"command": fake}
+        assert codex["mcp_servers"]["reverie"] == {
+            "command": fake, "args": ["--client", "codex"]}
 
     def test_entry_point_registered_and_launches(self, tmp_path, monkeypatch):
         """The console script exists in the installed distribution and its

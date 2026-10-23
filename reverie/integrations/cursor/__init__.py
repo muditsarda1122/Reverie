@@ -56,7 +56,8 @@ class CursorIntegration(Integration):
                 reverie_home: Path | None = None,
                 which=shutil.which) -> list[PlannedWrite]:
         home = Path(home)
-        command, args, env = _server_command(reverie_bin)
+        command, args, env = _server_command(reverie_bin,
+                                             client=self.client_key)
         path = _mcp_path(home)
         writes = [_json_merge(
             path, home, "mcpServers", _mcp_entry(command, args, env),
