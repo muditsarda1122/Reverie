@@ -20,6 +20,7 @@ from reverie import install
 from reverie.brain import Brain
 from reverie.config import DEFAULT_CONFIG, load_config
 from reverie.install import AGENTS, InstallError
+from reverie.integrations.claude import _TOOLSEARCH_LINE
 from reverie.integrations.common import POLICY_BLOCK_END, POLICY_BLOCK_START
 from reverie.policy import USAGE_POLICY
 
@@ -165,7 +166,8 @@ def test_claude_merge_preserves_existing(dev_install, home, reverie_home):
     assert data["mcpServers"]["reverie"] == {
         "type": "stdio", "command": python, "args": args, "env": env,
     }
-    assert (home / ".claude" / "CLAUDE.md").read_text() == "@~/.reverie/AGENTS.md\n"
+    assert (home / ".claude" / "CLAUDE.md").read_text() == (
+        "@~/.reverie/AGENTS.md\n\n" + _TOOLSEARCH_LINE + "\n")
 
 
 def test_claude_import_appended_once(home, reverie_home):

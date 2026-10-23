@@ -51,6 +51,13 @@ HARNESS_PATHS = ("~/.claude", ".claude/", "~/.cursor", ".cursor/mcp.json",
                  ".codex/config.toml", ".codex/prompts", "~/.gemini",
                  ".gemini/settings.json", ".gemini/commands", "CLAUDE.md",
                  "GEMINI.md", "opencode.json")
+DEFERRED_TOOLS_LINE = (
+    "Reverie's MCP tools may be deferred in this session. Before your first "
+    "decision in a Reverie-enabled repo, load them with ToolSearch: "
+    "select:mcp__reverie__query,mcp__reverie__observe,mcp__reverie__summary,"
+    "mcp__reverie__reconsolidate,mcp__reverie__review_list,"
+    "mcp__reverie__review_decide,mcp__reverie__set_repo_state"
+)
 
 
 class FakeModel:
@@ -277,6 +284,22 @@ def _run_install(home: Path, key: str) -> None:
         print_fn=lambda _s: None, environ={},
         check_fn=lambda *a, **k: (True, "stub"))
     assert rc == 0
+
+
+def test_claude_md_loads_deferred_mcp_tools_once(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _run_install(home, "claude_code")
+    _run_install(home, "claude_code")
+    claude_md = home / ".claude" / "CLAUDE.md"
+    text = claude_md.read_text(encoding="utf-8")
+    assert sum(line == DEFERRED_TOOLS_LINE
+               for line in text.splitlines()) == 1
+
+    rc = uninstall.run(home=home, reverie_home=home / ".reverie", yes=True,
+                       print_fn=lambda _s: None)
+    assert rc == 0
+    assert not claude_md.exists()
 
 
 @pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
