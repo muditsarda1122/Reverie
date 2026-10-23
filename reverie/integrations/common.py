@@ -119,6 +119,23 @@ def _line_once(path: Path, home: Path, line: str, detail: str) -> PlannedWrite:
     return PlannedWrite(path, "create", line + "\n", detail)
 
 
+def _legacy_block_span(text: str, marker: str) -> tuple[int, int] | None:
+    """Byte span of a retired ``marker`` section: its heading to the next
+    level-2 heading (or EOF). The heading must begin its own line."""
+    start = None
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if start is None:
+            if line.rstrip("\r\n").rstrip() == marker:
+                start = offset
+        elif line.startswith("## "):
+            return start, offset
+        offset += len(line)
+    if start is not None:
+        return start, len(text)
+    return None
+
+
 def _block_once(path: Path, home: Path, marker: str, block: str,
                 detail: str,
                 legacy_blocks: list[tuple[str, str]] | None = None
@@ -127,29 +144,32 @@ def _block_once(path: Path, home: Path, marker: str, block: str,
 
     ``legacy_blocks`` migrates older blocks in place: each entry is
     ``(marker, block)``. When the current block is already present the file
-    is unchanged (a stale legacy block is removed without duplicating the
-    current one); when an exact legacy block is present it is replaced by
-    ``block``; when a legacy marker exists but its block was edited, the
-    file is left untouched rather than guessed at.
+    is unchanged (a stale legacy section is removed without duplicating the
+    current one); otherwise the legacy section — from its marker heading to
+    the next level-2 heading or EOF — is replaced by ``block``, even when
+    the legacy text was edited. Bytes outside that span are left untouched.
     """
     disp = _display(path, home)
     legacy_blocks = list(legacy_blocks or [])
     if path.exists():
         text = path.read_text(encoding="utf-8")
+        spans = [span for legacy_marker, _legacy in legacy_blocks
+                 if (span := _legacy_block_span(text, legacy_marker))
+                 is not None]
         if marker in text:
-            for _legacy_marker, legacy_block in legacy_blocks:
-                if legacy_block in text:
-                    return PlannedWrite(
-                        path, "update", text.replace(legacy_block, "", 1),
-                        f"{disp}: removed the old Reverie block (current "
-                        "block already present)")
+            if spans:
+                for start, end in reversed(spans):
+                    text = text[:start] + text[end:]
+                return PlannedWrite(
+                    path, "update", text,
+                    f"{disp}: removed the old Reverie block (current "
+                    "block already present)")
             return PlannedWrite(path, "unchanged", None,
                                 f"{disp} already references {marker} — unchanged")
-        for _legacy_marker, legacy_block in legacy_blocks:
-            if legacy_block in text:
-                return PlannedWrite(
-                    path, "update", text.replace(legacy_block, block, 1),
-                    detail)
+        if spans:
+            start, end = spans[0]
+            return PlannedWrite(
+                path, "update", text[:start] + block + text[end:], detail)
         if any(old_marker in text for old_marker, _ in legacy_blocks):
             return PlannedWrite(
                 path, "unchanged", None,

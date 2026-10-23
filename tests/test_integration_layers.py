@@ -338,6 +338,60 @@ def test_install_migrates_legacy_pointer_block(key, relative, tmp_path):
     assert USAGE_POLICY in text
 
 
+def _edited_legacy_file(tmp_path, relative, suffix=(
+        "## Other notes\n\nKeep this byte-for-byte.\n")):
+    home = tmp_path / "home"
+    home.mkdir()
+    path = home / relative
+    path.parent.mkdir(parents=True)
+    prefix = "# My notes\n\nIntro stays.\n\n"
+    legacy = ("## Reverie\n\nFollow the old pointer. This line was edited.\n\n"
+              "A second edited line.\n")
+    path.write_text(prefix + legacy + suffix, encoding="utf-8")
+    return home, path, prefix, suffix
+
+
+@pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
+def test_install_replaces_edited_legacy_block_once(key, relative, tmp_path):
+    home, path, _prefix, _suffix = _edited_legacy_file(
+        tmp_path, relative, suffix="")
+    expected = f"{POLICY_BLOCK_START}\n{USAGE_POLICY}{POLICY_BLOCK_END}\n"
+
+    _run_install(home, key)
+    text = path.read_text(encoding="utf-8")
+    assert text.count(POLICY_BLOCK_START) == 1
+    assert text.count(expected) == 1
+    assert LEGACY_REFERENCE_BLOCK_MARKER not in text
+    assert "Follow the old pointer" not in text
+
+    _run_install(home, key)
+    assert path.read_text(encoding="utf-8") == text
+
+
+@pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
+def test_edited_legacy_migration_preserves_outside_text(key, relative,
+                                                        tmp_path):
+    home, path, prefix, suffix = _edited_legacy_file(tmp_path, relative)
+    expected = f"{POLICY_BLOCK_START}\n{USAGE_POLICY}{POLICY_BLOCK_END}\n"
+
+    _run_install(home, key)
+    assert path.read_text(encoding="utf-8") == prefix + expected + suffix
+
+
+@pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
+def test_uninstall_removes_migrated_block(key, relative, tmp_path):
+    home, path, prefix, suffix = _edited_legacy_file(tmp_path, relative)
+    _run_install(home, key)
+
+    rc = uninstall.run(home=home, reverie_home=home / ".reverie",
+                       yes=True, print_fn=lambda _s: None)
+    assert rc == 0
+    text = path.read_text(encoding="utf-8")
+    assert POLICY_BLOCK_START not in text
+    assert POLICY_BLOCK_END not in text
+    assert text == prefix + suffix
+
+
 @pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
 def test_uninstall_removes_inlined_or_legacy_block(key, relative, tmp_path):
     home = tmp_path / "home"
