@@ -36,7 +36,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -61,13 +60,18 @@ from .integrations.common import (
 from .integrations.common import (
     _reference_block as _reference_block,
 )
+from .launch import (
+    _is_pip_installed,
+    _script_path,
+)
 from .llm import call_llm
+from .policy import USAGE_POLICY
 
 # ---------------------------------------------------------------------------
 # Verbatim spec texts (§28.9, §28.10) — tests assert equality with SPEC.md
 # ---------------------------------------------------------------------------
 
-AGENTS_MD = """# Reverie — Agent Instructions
+AGENTS_MD = f"""# Reverie — Agent Instructions
 
 Reverie is an MCP server providing engineering memory for your codebase.
 It stores engineering conclusions, not facts, and retrieves them when
@@ -114,63 +118,7 @@ branches mid-conversation switches session memory; long-term memory
 stays shared across branches. Never suggest starting or stopping a
 session — there is nothing to start or stop.
 
-## When to Call observe
-
-Call observe AFTER you:
-- Discover a non-obvious invariant or dependency
-- Debug a tricky issue and find the root cause
-- Make an architectural decision with rationale
-- Discover that a previous assumption was wrong
-- Find that code behaves differently from what documentation suggests
-
-Pass your reasoning trace (your thinking, decisions, and rationale) — not
-just the final code output. The Extractor lifts observations into conclusions.
-
-Do NOT call observe for:
-- Simple code changes with no insight
-- Things already captured in existing conclusions
-- Pure factual observations (e.g., "this function returns a string")
-- Every single response — only when you have engineering insight worth saving
-
-Call observe AT MOST ONCE per task — batch everything worth saving into a
-single call after you have the insight, not after every response — unless a
-separate new insight appears.
-
-## When to Call query
-
-Call query when you recognize a gap that past engineering conclusions might fill.
-Read the relevant code files FIRST. Do NOT call query before you have grounded
-yourself in the repository. Reverie's memory is a supplement to your
-understanding, not a replacement for reading the code.
-
-Call query AFTER reading the code, when:
-- You're about to make a decision between multiple approaches
-- You're debugging and the cause isn't obvious from the code alone
-- You see a pattern in the code you don't recognise
-- You're about to implement something in a file or module you haven't worked
-  with in this session
-- You suspect a previous assumption might be wrong
-- You're planning an architectural change and want to check for existing
-  architectural decisions or constraints
-
-Do NOT call query:
-- Before you have read the relevant code files (this causes anchoring bias)
-- For simple code changes with no engineering insight needed
-- On every single response — only when you genuinely need past context
-- As a replacement for reading the code — always read the code first
-
-This timing matters. EC-Bench showed that premature retrieval caused anchoring:
-the agent used injected cognition heavily but produced worse work (quality dropped
--0.589, groundedness dropped -0.480). The best results came when the agent
-established repository understanding FIRST, then consulted cognition.
-
-Pass a natural language query describing what you want to know. Be specific.
-"How does the dependency injection container resolve circular imports?" is better
-than "dependency injection." The query is embedded and compared semantically —
-precise engineering questions retrieve better than single keywords.
-
-If query returns no results, proceed normally — this means Reverie
-has no relevant memory yet. It starts empty and builds up over sessions.
+{USAGE_POLICY}
 
 ## When to Call reconsolidate
 
@@ -197,33 +145,6 @@ Do NOT call reconsolidate for:
 
 If reconsolidate is not available, use observe to record
 the new finding — the Diffuser will handle the relationship at review time.
-
-## When to Call summary
-
-Call summary ONCE at session start to see what Reverie already
-knows. This helps you decide whether to query for specific context
-before starting work. Returns brain statistics, not individual conclusions.
-
-If the response contains a pending-review backlog line (counts only),
-mention it to the user AT MOST ONCE per conversation and offer two ways
-to review: run `reverie review` in a terminal, or say "show my Reverie
-candidates" here. Counts only — never candidate contents.
-
-## Review — The Human Decides
-
-Observations are stored as review candidates, never promoted
-automatically. The user reviews them:
-- in a terminal with `reverie review`, or
-- through you: when the user asks to see their Reverie candidates, call
-  review_list and show EVERY candidate's full conclusion text before
-  asking what they want to do.
-
-Rules for review through you:
-- Relay ONLY the decisions the user actually states, via review_decide.
-- NEVER decide on the user's behalf.
-- NEVER bulk-accept unless the user explicitly asked for that group.
-- Be honest about the limits: Reverie cannot verify who made a decision;
-  every decision is recorded with its channel (tui, agent, or cli).
 
 ## Reading Reverie Output
 
@@ -283,7 +204,7 @@ If you notice a contradiction, call observe to record the new finding.
 
 Observations are stored in the Session Brain, not the Canonical Brain. The
 user reviews the candidates — via `reverie review` in a terminal, or through you
-(see "Review — The Human Decides"). Only accepted observations are promoted
+(see "When to call each command"). Only accepted observations are promoted
 to the Canonical Brain for future use. Don't hesitate to observe something
 uncertain — the review gate filters it.
 """
@@ -536,25 +457,10 @@ def _provider_menu(input_fn, print_fn, environ) -> str | None:
 DIST_NAME = "reverie"
 #: Console script launching the MCP server (pyproject [project.scripts]).
 MCP_CONSOLE_SCRIPT = "reverie-mcp"
-#: The multi-command CLI console script (pyproject [project.scripts]); used
-#: by the SessionStart hook so the harness re-enters `reverie hook …`.
-REVERIE_CONSOLE_SCRIPT = "reverie"
 #: The `reverie` console script binding this build expects (pyproject.toml).
 #: feat/flow moved `reverie` from the installer to the multi-command CLI
 #: (reverie.cli:main); an older install still binds `ec = reverie.install:main`.
 REVERIE_CLI_ENTRY = "reverie.cli:main"
-
-
-def _is_pip_installed() -> bool:
-    """D45: True when the ``reverie`` package is pip-installed (editable counts),
-    so the ``reverie-mcp`` console script exists and agent configs can launch the
-    server with it instead of an absolute venv-python + PYTHONPATH."""
-    try:
-        from importlib import metadata
-        metadata.version(DIST_NAME)
-        return True
-    except Exception:            # not installed / metadata unreadable
-        return False
 
 
 def stale_entry_point_note() -> str | None:
@@ -581,58 +487,10 @@ def stale_entry_point_note() -> str | None:
     return None
 
 
-def _script_candidates(script: str, executable: str | None = None) -> list[Path]:
-    """Absolute candidate locations of a pip-generated console script.
-
-    pip puts console scripts beside the environment's interpreter: ``bin/`` in
-    a POSIX venv, pipx or uv-tool environment, ``Scripts/`` on Windows. A
-    system install puts them in ``Scripts/`` under the interpreter directory.
-    """
-    exe_dir = Path(executable or sys.executable).parent
-    if os.name == "nt":
-        return [
-            exe_dir / f"{script}.exe",                  # venv Scripts dir
-            exe_dir / f"{script}.cmd",
-            exe_dir / "Scripts" / f"{script}.exe",      # system install
-            exe_dir / "Scripts" / f"{script}.cmd",
-            exe_dir / script,
-            exe_dir / "Scripts" / script,
-        ]
-    return [exe_dir / script]
-
-
-def _console_script_candidates(executable: str | None = None) -> list[Path]:
-    return _script_candidates(MCP_CONSOLE_SCRIPT, executable)
-
-
-def _script_path(script: str, executable: str | None = None,
-                 which=shutil.which) -> str | None:
-    """Absolute path of an installed console script, or None.
-
-    Resolved from the RUNNING interpreter's environment (``sys.executable``):
-    venv, pipx, uv tool and system installs all place the script beside the
-    interpreter. ``which`` is the fallback for layouts where the scripts
-    directory is elsewhere (e.g. ``pip install --user``).
-    """
-    for candidate in _script_candidates(script, executable):
-        if candidate.is_file():
-            return str(candidate)
-    found = which(script)
-    if found:
-        return str(Path(found).resolve())
-    return None
-
-
 def console_script_path(executable: str | None = None, which=shutil.which,
                         ) -> str | None:
     """Absolute path of the installed ``reverie-mcp`` console script, or None."""
     return _script_path(MCP_CONSOLE_SCRIPT, executable, which)
-
-
-def _reverie_script_path(executable: str | None = None,
-                         which=shutil.which) -> str | None:
-    """Absolute path of the installed ``reverie`` CLI console script, or None."""
-    return _script_path(REVERIE_CONSOLE_SCRIPT, executable, which)
 
 
 def server_command(executable: str | None = None, which=shutil.which,
@@ -672,47 +530,6 @@ def server_command(executable: str | None = None, which=shutil.which,
     if python is None:   # no project venv — the running interpreter has `reverie`
         python = sys.executable
     return python, ["-m", "reverie.mcp_server"], {"PYTHONPATH": str(root)}
-
-
-#: Tail of the SessionStart handler's argv, used to recognise (and re-find)
-#: Reverie's own handler in an existing settings.json (idempotent install,
-#: surgical uninstall).
-HOOK_ARGS_TAIL = ["hook", "session-start"]
-
-
-def hook_handler(executable: str | None = None, which=shutil.which) -> dict:
-    """The Claude Code SessionStart hook handler for `reverie hook session-start`.
-
-    Schema (docs read 2026-10-18,
-    https://code.claude.com/docs/en/hooks#sessionstart): hook handlers are
-    ``{"type": "command", "command", "args"}``; ``args`` present ⇒ exec form
-    (no shell), absent ⇒ shell form. Handlers have NO env field, so the
-    development fallback sets PYTHONPATH inside the shell-form command.
-
-    pip install → the ABSOLUTE ``reverie`` console script beside the running
-    interpreter, exec form (harnesses launch hooks outside the user's
-    virtualenv, so a bare ``reverie`` would not resolve). Development
-    checkout → the project venv's interpreter with PYTHONPATH pointing at
-    the project root.
-    """
-    if _is_pip_installed():
-        script = _reverie_script_path(executable, which)
-        if script is not None:
-            return {"type": "command", "command": script,
-                    "args": list(HOOK_ARGS_TAIL)}
-        return {"type": "command", "command": executable or sys.executable,
-                "args": ["-m", "reverie.cli", *HOOK_ARGS_TAIL]}
-    root = Path(__file__).resolve().parent.parent
-    python = sys.executable
-    for candidate in (root / ".venv" / "bin" / "python",          # POSIX venv
-                      root / ".venv" / "Scripts" / "python.exe"):  # Windows venv
-        if candidate.is_file():
-            python = str(candidate)
-            break
-    argv = " ".join(shlex.quote(part)
-                    for part in (python, "-m", "reverie.cli", *HOOK_ARGS_TAIL))
-    return {"type": "command",
-            "command": f"PYTHONPATH={shlex.quote(str(root))} {argv}"}
 
 
 def _stop_process(proc: subprocess.Popen) -> None:

@@ -140,7 +140,7 @@ def state_of(brain: Brain, info: RepoInfo) -> str:
 
 def state_readonly(brain: Brain, info: RepoInfo) -> str:
     """Read-only state lookup for side-effect-free, latency-sensitive callers
-    (``reverie hook session-start``).
+    (the session-start hook).
 
     Unlike ``state_of`` this NEVER writes: no origin-URL refresh, no D58
     rematch re-key, no ``asked_at`` stamp. The D58 rematch is still *read*:

@@ -901,7 +901,7 @@ def apply_review_decisions(
     model_box = [embedding_model]
 
     # The diffuser (llm → requests chain) loads lazily too: only accepts
-    # ever reach it, and `reverie hook session-start` imports this module
+    # ever reach it, and the session-start hook imports this module
     # through the repos → session chain (keeping it import-light).
     from . import diffuser
     from .diffuser import DiffuserError

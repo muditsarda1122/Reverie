@@ -140,11 +140,13 @@ def test_initialize_handshake(server):
 
     # Phase 3: the core usage contract rides along as server instructions —
     # the fallback where a harness reads no instruction file.
+    from reverie.policy import USAGE_POLICY
     instructions = result["instructions"]
-    assert "AFTER reading the relevant code" in instructions
-    assert "past understanding" in instructions
-    assert "never decide reviews for the user" in instructions
-    assert "ask the user once" in instructions
+    assert instructions == USAGE_POLICY
+    assert "When to call each command" in instructions
+    assert "past belief, not an authority" in instructions
+    assert "Relay only decisions the user states" in instructions
+    assert "Ask once per conversation" in instructions
     assert r["id"] == 1
 
 

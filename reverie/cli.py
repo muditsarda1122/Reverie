@@ -235,7 +235,7 @@ def _build_parser() -> argparse.ArgumentParser:
                        "harness itself, installed by `reverie install`)")
     hook_sub = p.add_subparsers(dest="hook")
     hs = hook_sub.add_parser("session-start", help="print the session-start "
-                             "context block: repo state + usage rules "
+                             "context block: repo state only "
                              "(read-only; quiet on error; always exit 0)")
     hs.add_argument("--repo", default=None,
                     help="workspace path (default: current directory)")

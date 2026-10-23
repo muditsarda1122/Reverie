@@ -1,10 +1,9 @@
 """Cursor integration.
 
-Owns ``~/.cursor/mcp.json`` and the user-level command files. Cursor's
-documented global instruction mechanisms are in-app User Rules and
-repo-local AGENTS.md/CLAUDE.md, so Reverie deliberately writes no global
-rules file and never touches the user's repos. The MCP server's
-``instructions`` field and tool descriptions carry the usage contract.
+Owns ``~/.cursor/mcp.json`` and the user-level command files. Cursor
+surfaces the MCP server's ``instructions`` field and tool descriptions, so
+Reverie deliberately writes no global rules file and never touches the
+user's repos — the MCP usage contract reaches the model directly.
 """
 
 from __future__ import annotations

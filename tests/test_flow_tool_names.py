@@ -87,9 +87,10 @@ def test_every_tool_name_token_matches_the_tool_list():
 
 def test_instructions_point_at_the_registered_names():
     """Spot checks: the exact contract sentences reference the new names."""
-    assert "(query)" in mcp_server.SERVER_INSTRUCTIONS
-    assert "(observe)" in mcp_server.SERVER_INSTRUCTIONS
-    assert "(review_list / review_decide)" in mcp_server.SERVER_INSTRUCTIONS
-    assert "set_repo_state" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`query`" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`observe`" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`review_list`" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`review_decide`" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`set_repo_state`" in mcp_server.SERVER_INSTRUCTIONS
     assert "- observe:" in install.AGENTS_MD
     assert "- review_decide:" in install.AGENTS_MD

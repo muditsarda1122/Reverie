@@ -7,9 +7,9 @@ Owns every Claude-specific file, key and hook schema:
 - ``~/.claude/CLAUDE.md`` → ``@~/.reverie/AGENTS.md``
 - ``~/.claude/commands/reverie-{review,status}.md``
 
-The hook *handlers* themselves are harness-neutral (``reverie/hooks.py``
-renders SessionStart context, ``reverie capture-turn`` captures a completed
-exchange); this package only wires them into Claude's config format.
+The command *behaviour* is harness-neutral (``reverie/hooks.py`` renders
+SessionStart context, ``reverie capture-turn`` captures a completed
+exchange); this package owns Claude's handler shape and its config format.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import json
 import shutil
 from pathlib import Path
 
+from ... import launch
 from ..base import Integration
 from ..common import (
     _STATUS_COMMAND_BODY,
@@ -81,30 +82,31 @@ def _commands_dir(home: Path) -> Path:
     return _claude_dir(home) / "commands"
 
 
-def _session_start_handler(reverie_bin: str | None = None) -> dict:
+def _command_handler(tail: list[str],
+                     reverie_bin: str | None = None) -> dict:
+    """Build Claude's command-handler shape around a ``reverie <tail>`` launch.
+
+    ``args`` present means exec form; absent means shell form (Claude has no
+    env field, so the development fallback carries PYTHONPATH in the command).
+    """
     if reverie_bin:
         return {"type": "command",
-                "command": f"{reverie_bin} hook session-start"}
-    from ...install import hook_handler
-    return hook_handler()
+                "command": " ".join([reverie_bin, *tail])}
+    command, args = launch.reverie_command(tail)
+    handler = {"type": "command", "command": command}
+    if args:
+        handler["args"] = args
+    return handler
+
+
+def _session_start_handler(reverie_bin: str | None = None) -> dict:
+    return _command_handler(list(launch.HOOK_ARGS_TAIL), reverie_bin)
 
 
 def _stop_handler(reverie_bin: str | None = None) -> dict:
-    """The Stop handler: ``reverie capture-turn``, derived from the session
-    handler so both use the same launch form (exec or shell)."""
-    session = _session_start_handler(reverie_bin)
-    if isinstance(session.get("args"), list):
-        args = list(session["args"])
-        if args[-2:] == ["hook", "session-start"]:
-            args[-2:] = ["capture-turn"]
-        handler = {"type": "command", "command": session["command"],
-                   "args": args}
-    else:
-        command = str(session.get("command", ""))
-        tail = " hook session-start"
-        handler = {"type": "command",
-                   "command": (command[:-len(tail)] + " capture-turn")
-                   if command.endswith(tail) else command}
+    """The Stop handler: the same launch form as session-start, with the
+    capture command tail."""
+    handler = _command_handler(["capture-turn"], reverie_bin)
     handler["timeout"] = _STOP_TIMEOUT_SECONDS
     handler["async"] = True
     return handler

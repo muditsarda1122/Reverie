@@ -98,6 +98,7 @@ from .confidence import FROZEN_STATUSES, reinforce_stored_confidence
 from .config import MODES, SCOPE_LEVELS, get_config
 from .diffuser import DiffuserError
 from .extractor import ExtractorError
+from .policy import USAGE_POLICY
 from .reconsolidation import ReconsolidationError
 from .session import SessionError, SessionManager, detect_repo_branch
 
@@ -138,31 +139,14 @@ def _time_limit(seconds: float | None):
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "reverie"
 
-#: Sent as the initialize response's ``instructions`` field (Phase 3) — the
-#: core usage contract in a few lines. Read by clients that surface server
-#: instructions to the model (Claude Code, Codex and Gemini CLI document it;
-#: OpenCode captures it in recent versions; Cursor does not document it).
-#: Where an instruction file is loaded this is a redundant summary; where it
-#: is not (e.g. Cursor) this is the fallback. Keep the first ~512 characters
-#: self-contained (Codex's documented guidance).
-SERVER_INSTRUCTIONS = """\
-Reverie is engineering memory for coding agents. Contract:
-- Query only AFTER reading the relevant code (query) — never anchor \
-on injected memory before grounding yourself; results are past understanding \
-to verify against the current code, not authoritative context.
-- Capture engineering conclusions when you find a non-obvious invariant, root \
-cause, decision, or wrong assumption (observe) — not for simple code \
-changes.
-- The user reviews every conclusion before it reaches long-term memory. Show \
-candidates fully and relay only decisions the user states \
-(review_list / review_decide) — never decide reviews for the \
-user.
-- The first time a tool reports this repo as undecided, ask the user once: \
-"Reverie isn't on for this repo. Turn it on? (yes / not now / never)" — and \
-record the answer with set_repo_state. Ask at most once per repo \
-per conversation.
-- Pass the workspace path as repo_path on every call.\
-"""
+#: Sent as the initialize response's ``instructions`` field — the canonical
+#: usage contract from ``reverie/policy.py``. Clients that surface server
+#: instructions to the model show it directly (Claude Code, Cursor, Codex and
+#: Gemini CLI do; OpenCode captures it in recent versions). Where an
+#: instruction file is loaded this is the shared usage section; where it is
+#: not, this is the fallback. Keep the first ~512 characters self-contained
+#: (Codex's documented guidance) — the policy puts the core rules first.
+SERVER_INSTRUCTIONS = USAGE_POLICY
 
 # §28.4-style messages — verbatim, actionable (feat/flow).
 NO_REPO_ERROR = (
@@ -255,19 +239,19 @@ set_repo_state. Pass the workspace path as 'repo_path' on every call."""
 
 _QUERY_DESCRIPTION = """\
 Retrieve engineering conclusions relevant to your current task. Call this
-AFTER reading the relevant code files, when you recognize a gap that past
-cognition might fill:
-- Before making a decision between multiple approaches
-- When debugging and the cause isn't obvious from the code alone
+before a non-trivial decision between approaches, when debugging and the
+cause isn't obvious, and before an architectural change:
+- Before choosing between multiple approaches
+- When debugging and the cause isn't obvious
 - Before an architectural change (query for existing architectural decisions)
 
 Returns conclusions from both the Session Brain (current branch's working
 memory) and the Canonical Brain (accumulated understanding from past
 sessions). Each includes confidence, scope, grounding references, and status.
 
-Memory is framed as "past beliefs to verify against current code," not
-authoritative context. Always verify grounding references against the
-live codebase before acting on a conclusion.
+Memory is a past belief to verify against the current code, not an
+authority. Verify grounding references against the live codebase before
+acting on a conclusion.
 
 Sessions are automatic: in an enabled repo the session for the current
 branch resolves or is created by this call. Pass the workspace path as
@@ -275,16 +259,18 @@ branch resolves or is created by this call. Pass the workspace path as
 
 _SUMMARY_DESCRIPTION = """\
 Get a summary of what the Reverie brain knows. Call this ONCE at session
-start to understand what engineering memory is already stored before you
-begin work. Returns brain statistics and scope distribution — not
-individual conclusions.
+start for counts and topics only. Returns brain statistics and scope
+distribution — never individual conclusions; never anchor on conclusion
+contents.
 
 If the response contains a pending-review nudge, mention it to the user at
 most once per conversation (counts only, never contents)."""
 
 _REPO_STATE_DESCRIPTION = """\
 Record the user's answer about enabling Reverie for the current repo, or
-turn Reverie on/off for it. Call this with:
+turn Reverie on/off for it. Use this only from the user's answer to the
+first-time question, and ask that question once per conversation. Call this
+with:
 - state="enabled"   — the user said yes (or wants it on)
 - state="not_now"   — the user said "not now": stays off for now; do not
                       ask again in this conversation
@@ -825,7 +811,7 @@ class ReverieServer:
         if prequeue:
             pending_id = pending.save_pending_extraction(
                 brain, row, interaction,
-                "capture-turn: extraction did not complete",
+                "turn capture: extraction did not complete",
                 commit_hash=commit_hash,
             )
         try:
@@ -839,7 +825,7 @@ class ReverieServer:
             if pending_id is not None:
                 brain.mark_pending_extraction_attempt(
                     pending_id,
-                    f"capture-turn timed out after {timeout:g}s")
+                    f"turn capture timed out after {timeout:g}s")
             return {
                 "status": "pending",
                 "session_active": True,

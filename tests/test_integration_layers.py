@@ -280,7 +280,7 @@ def test_session_start_omits_conclusion_text(home, reverie_home, repo):
     text = "\n".join(out)
     assert "1 conclusion" in text
     assert "a hidden conclusion" not in text
-    assert all(rule in text for rule in hooks.ENABLED_RULES)
+    assert "When to call each command" not in text
 
 
 # ---------------------------------------------------------------------------

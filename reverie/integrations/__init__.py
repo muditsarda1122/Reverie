@@ -48,19 +48,8 @@ def configured_servers(home: Path):
 
 
 # ---------------------------------------------------------------------------
-# the generic SessionStart hook handler (no harness names beyond argparse)
+# hook handler recognition (shared by integrations; no harness names)
 # ---------------------------------------------------------------------------
-
-def hook_handler(executable: str | None = None, which=shutil.which) -> dict:
-    """The generic ``reverie hook session-start`` handler dict.
-
-    Claude's settings schema is the canonical form the installer has always
-    written; the Claude package adds it to ``settings.json``. Kept here so
-    the core installer does not own a harness-shaped constant.
-    """
-    from ..install import hook_handler as _handler
-    return _handler(executable=executable, which=which)
-
 
 def _is_reverie_hook_handler(handler: object) -> bool:
     """Whether ``handler`` is one of Reverie's generic hook handlers."""
@@ -106,6 +95,5 @@ __all__ = [
     "capture_turn_main",
     "configured_servers",
     "get_integration",
-    "hook_handler",
     "install_plan",
 ]

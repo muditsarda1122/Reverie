@@ -2722,63 +2722,14 @@ branches mid-conversation switches session memory; long-term memory
 stays shared across branches. Never suggest starting or stopping a
 session — there is nothing to start or stop.
 
-## When to Call observe
+## When to call each command
 
-Call observe AFTER you:
-- Discover a non-obvious invariant or dependency
-- Debug a tricky issue and find the root cause
-- Make an architectural decision with rationale
-- Discover that a previous assumption was wrong
-- Find that code behaves differently from what documentation suggests
+- `query`: before a non-trivial decision between approaches, when debugging has no obvious cause, and before an architectural change. Verify grounding references against the code before acting. Memory is a past belief, not an authority.
+- `observe`: after finding a non-obvious invariant, a root cause, an architectural decision, or a disproved assumption. AT MOST ONCE per task; not for simple changes.
+- `summary`: once at session start, for counts and topics only. Never anchor on conclusion contents.
+- `review_list` and `review_decide`: show every candidate in full. Relay only decisions the user states.
+- `set_repo_state`: only from the user's answer to the first-time question. Ask once per conversation.
 
-Pass your reasoning trace (your thinking, decisions, and rationale) — not
-just the final code output. The Extractor lifts observations into conclusions.
-
-Do NOT call observe for:
-- Simple code changes with no insight
-- Things already captured in existing conclusions
-- Pure factual observations (e.g., "this function returns a string")
-- Every single response — only when you have engineering insight worth saving
-
-Call observe AT MOST ONCE per task — batch everything worth saving into a
-single call after you have the insight, not after every response — unless a
-separate new insight appears.
-
-## When to Call query
-
-Call query when you recognize a gap that past engineering conclusions might fill.
-Read the relevant code files FIRST. Do NOT call query before you have grounded
-yourself in the repository. Reverie's memory is a supplement to your
-understanding, not a replacement for reading the code.
-
-Call query AFTER reading the code, when:
-- You're about to make a decision between multiple approaches
-- You're debugging and the cause isn't obvious from the code alone
-- You see a pattern in the code you don't recognise
-- You're about to implement something in a file or module you haven't worked
-  with in this session
-- You suspect a previous assumption might be wrong
-- You're planning an architectural change and want to check for existing
-  architectural decisions or constraints
-
-Do NOT call query:
-- Before you have read the relevant code files (this causes anchoring bias)
-- For simple code changes with no engineering insight needed
-- On every single response — only when you genuinely need past context
-- As a replacement for reading the code — always read the code first
-
-This timing matters. EC-Bench showed that premature retrieval caused anchoring:
-the agent used injected cognition heavily but produced worse work (quality dropped
--0.589, groundedness dropped -0.480). The best results came when the agent
-established repository understanding FIRST, then consulted cognition.
-
-Pass a natural language query describing what you want to know. Be specific.
-"How does the dependency injection container resolve circular imports?" is better
-than "dependency injection." The query is embedded and compared semantically —
-precise engineering questions retrieve better than single keywords.
-
-If query returns no results, proceed normally — this means Reverie
-has no relevant memory yet. It starts empty and builds up over sessions.
 
 ## When to Call reconsolidate
 
@@ -2805,33 +2756,6 @@ Do NOT call reconsolidate for:
 
 If reconsolidate is not available, use observe to record
 the new finding — the Diffuser will handle the relationship at review time.
-
-## When to Call summary
-
-Call summary ONCE at session start to see what Reverie already
-knows. This helps you decide whether to query for specific context
-before starting work. Returns brain statistics, not individual conclusions.
-
-If the response contains a pending-review backlog line (counts only),
-mention it to the user AT MOST ONCE per conversation and offer two ways
-to review: run `reverie review` in a terminal, or say "show my Reverie
-candidates" here. Counts only — never candidate contents.
-
-## Review — The Human Decides
-
-Observations are stored as review candidates, never promoted
-automatically. The user reviews them:
-- in a terminal with `reverie review`, or
-- through you: when the user asks to see their Reverie candidates, call
-  review_list and show EVERY candidate's full conclusion text before
-  asking what they want to do.
-
-Rules for review through you:
-- Relay ONLY the decisions the user actually states, via review_decide.
-- NEVER decide on the user's behalf.
-- NEVER bulk-accept unless the user explicitly asked for that group.
-- Be honest about the limits: Reverie cannot verify who made a decision;
-  every decision is recorded with its channel (tui, agent, or cli).
 
 ## Reading Reverie Output
 
@@ -2891,7 +2815,7 @@ If you notice a contradiction, call observe to record the new finding.
 
 Observations are stored in the Session Brain, not the Canonical Brain. The
 user reviews the candidates — via `reverie review` in a terminal, or through you
-(see "Review — The Human Decides"). Only accepted observations are promoted
+(see "When to call each command"). Only accepted observations are promoted
 to the Canonical Brain for future use. Don't hesitate to observe something
 uncertain — the review gate filters it.
 ```
