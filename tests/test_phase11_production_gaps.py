@@ -567,7 +567,7 @@ class TestConsoleScriptDetection:
         claude = json.loads((home / ".claude.json").read_text())
         assert claude["mcpServers"]["reverie"] == {
             "type": "stdio", "command": fake,
-            "args": ["--client", "claude_code"]}
+            "args": ["--client", "claude_code"], "alwaysLoad": True}
         cursor = json.loads((home / ".cursor" / "mcp.json").read_text())
         assert cursor["mcpServers"]["reverie"] == {
             "command": fake, "args": ["--client", "cursor"]}

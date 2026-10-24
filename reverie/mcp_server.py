@@ -141,14 +141,20 @@ def _time_limit(seconds: float | None):
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "reverie"
 
-#: Sent as the initialize response's ``instructions`` field — the canonical
-#: usage contract from ``reverie/policy.py``. Clients that surface server
-#: instructions to the model show it directly (Claude Code, Cursor, Codex and
-#: Gemini CLI do; OpenCode captures it in recent versions). Where an
-#: instruction file is loaded this is the shared usage section; where it is
-#: not, this is the fallback. Keep the first ~512 characters self-contained
-#: (Codex's documented guidance) — the policy puts the core rules first.
-SERVER_INSTRUCTIONS = USAGE_POLICY
+#: Sent as the initialize response's ``instructions`` field. The opening
+#: names the tools and the trigger up front (tools are loaded eagerly by
+#: Claude Code, but clients truncate instructions), then the full usage
+#: contract from ``reverie/policy.py`` follows verbatim. Clients that
+#: surface server instructions to the model show it directly (Claude Code,
+#: Cursor, Codex and Gemini CLI do; OpenCode captures it in recent versions).
+SERVER_INSTRUCTIONS = (
+    "Reverie is engineering memory. Call query before a non-trivial decision "
+    "between approaches, when debugging has no obvious cause, or before "
+    "changing code in a repo where Reverie is enabled.\n\n"
+    "Tools: `query`, `observe`, `summary`, `reconsolidate`, `review_list`, "
+    "`review_decide`, `set_repo_state`.\n\n"
+    + USAGE_POLICY
+)
 
 # §28.4-style messages — verbatim, actionable (feat/flow).
 NO_REPO_ERROR = (

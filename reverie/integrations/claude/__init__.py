@@ -4,7 +4,7 @@ Owns every Claude-specific file, key and hook schema:
 
 - ``~/.claude.json`` → ``mcpServers.reverie``
 - ``~/.claude/settings.json`` → SessionStart + Stop command hooks
-- ``~/.claude/CLAUDE.md`` → ``@~/.reverie/AGENTS.md`` + deferred-tools reminder
+- ``~/.claude/CLAUDE.md`` → ``@~/.reverie/AGENTS.md``
 - ``~/.claude/commands/reverie-{review,status}.md``
 
 The command *behaviour* is harness-neutral (``reverie/hooks.py`` renders
@@ -40,15 +40,23 @@ from ..common import (
     _verbatim_file,
 )
 
-_TOOLSEARCH_MARKER = "Reverie's MCP tools may be deferred in this session."
-_TOOLSEARCH_LINE = (
-    _TOOLSEARCH_MARKER
+#: The retired deferred-ToolSearch line. Install no longer writes it, but
+#: uninstall still removes it from homes written by older versions.
+_LEGACY_DEFERRED_TOOLS_MARKER = (
+    "Reverie's MCP tools may be deferred in this session.")
+_LEGACY_DEFERRED_TOOLS_LINE = (
+    _LEGACY_DEFERRED_TOOLS_MARKER
     + " Before your first decision in a Reverie-enabled repo, load them "
     "with ToolSearch: select:mcp__reverie__query,mcp__reverie__observe,"
     "mcp__reverie__summary,mcp__reverie__reconsolidate,"
     "mcp__reverie__review_list,mcp__reverie__review_decide,"
     "mcp__reverie__set_repo_state"
 )
+
+#: Keys Reverie owns inside ``mcpServers.reverie``; anything else in that
+#: entry belongs to the user and survives an upgrade.
+_CLAUDE_MCP_OWNED_KEYS = frozenset(
+    {"type", "alwaysLoad", "command", "args", "env"})
 
 _CLAUDE_REVIEW_COMMAND_BODY = """Review your pending Reverie conclusions (the human decides).
 
@@ -92,50 +100,25 @@ def _commands_dir(home: Path) -> Path:
     return _claude_dir(home) / "commands"
 
 
-def _reference_plan(home: Path, ref: str) -> PlannedWrite:
-    """Plan CLAUDE.md's import line plus the deferred-tools reminder.
-
-    Both lines target the same file, so when neither is present they are
-    folded into one write. The reminder's opening sentence is the
-    idempotency marker used by ``_line_once``.
-    """
-    path = _reference_path(home)
-    disp = _display(path, home)
-    ref_line = f"@{ref}"
-    import_write = _line_once(
-        path, home, ref_line, f"Added {ref_line} import to {disp}")
-    tools_write = _line_once(
-        path, home, _TOOLSEARCH_LINE,
-        f"Added the deferred-tools reminder to {disp}")
-    if tools_write.action == "unchanged":
-        return import_write
-    if import_write.action == "unchanged":
-        return tools_write
-    content = (import_write.content or "").rstrip("\n")
-    return PlannedWrite(
-        path, import_write.action,
-        content + "\n\n" + _TOOLSEARCH_LINE + "\n",
-        f"{import_write.detail}; added the deferred-tools reminder")
-
-
 def _reference_removal(home: Path, ref: str,
                        manifest: dict[str, str] | None) -> PlannedRemoval:
-    """Remove the import line and the deferred-tools reminder in one plan."""
+    """Remove the import line and any legacy deferred-tools reminder."""
     path = _reference_path(home)
     disp = _display(path, home)
     ref_line = f"@{ref}"
     import_removal = _plan_line(path, home, ref_line, "claude", manifest)
-    tools_removal = _plan_line(path, home, _TOOLSEARCH_LINE, "claude", manifest)
+    tools_removal = _plan_line(
+        path, home, _LEGACY_DEFERRED_TOOLS_LINE, "claude", manifest)
     if tools_removal.action == "unchanged":
         return import_removal
     if import_removal.action == "unchanged":
         return tools_removal
     text = path.read_text(encoding="utf-8")
-    gone = (ref_line, _TOOLSEARCH_LINE)
+    gone = (ref_line, _LEGACY_DEFERRED_TOOLS_LINE)
     keep = [line for line in text.splitlines(keepends=True)
             if line.strip() not in gone]
     after = "".join(keep).rstrip("\n")
-    removed = f"{ref_line}, deferred-tools reminder"
+    removed = f"{ref_line}, legacy deferred-tools reminder"
     if not after:
         if _owned_by_install(path, manifest):
             return PlannedRemoval(
@@ -355,9 +338,14 @@ class ClaudeIntegration(Integration):
         mcp_path = home / ".claude.json"
         writes.append(_json_merge(
             mcp_path, home, "mcpServers",
-            _mcp_entry(command, args, env, {"type": "stdio"}),
-            f"Added MCP server to {_display(mcp_path, home)} (user scope)"))
-        writes.append(_reference_plan(home, ref))
+            _mcp_entry(command, args, env,
+                       {"type": "stdio", "alwaysLoad": True}),
+            f"Added MCP server to {_display(mcp_path, home)} (user scope)",
+            owned_keys=_CLAUDE_MCP_OWNED_KEYS))
+        writes.append(_line_once(
+            _reference_path(home), home, f"@{ref}",
+            f"Added @{ref} import to "
+            f"{_display(_reference_path(home), home)}"))
         for name, body in CLAUDE_CODE_COMMANDS.items():
             path = _commands_dir(home) / name
             writes.append(_verbatim_file(

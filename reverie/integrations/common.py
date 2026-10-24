@@ -69,8 +69,15 @@ def _agents_ref(home: Path, reverie_home: Path) -> str:
 # ---------------------------------------------------------------------------
 
 def _json_merge(path: Path, home: Path, section: str, entry: dict,
-                detail: str, schema: str | None = None) -> PlannedWrite:
-    """Merge ``entry`` into ``data[section]["reverie"]`` — never overwriting siblings."""
+                detail: str, schema: str | None = None,
+                owned_keys: frozenset[str] | None = None) -> PlannedWrite:
+    """Merge ``entry`` into ``data[section]["reverie"]`` — never overwriting siblings.
+
+    When ``owned_keys`` is given, an existing reverie entry is updated
+    key-by-key: Reverie's own keys are replaced (or dropped when the new
+    entry no longer sets them) while any other keys the user added to that
+    entry are kept.
+    """
     disp = _display(path, home)
     existed = path.exists()
     if existed:
@@ -96,10 +103,17 @@ def _json_merge(path: Path, home: Path, section: str, entry: dict,
             f"{disp}: `{section}` is not a JSON object. Fix or remove it, "
             "then re-run `python -m reverie.install`. No changes were made to it."
         )
-    if node.get("reverie") == entry:
+    existing = node.get("reverie")
+    if owned_keys is not None and isinstance(existing, dict):
+        merged = {key: value for key, value in existing.items()
+                  if key not in owned_keys}
+        merged.update(entry)
+    else:
+        merged = entry
+    if existing == merged:
         return PlannedWrite(path, "unchanged", None,
                             f"{disp} already has the reverie MCP server — unchanged")
-    node["reverie"] = entry
+    node["reverie"] = merged
     action = "merge" if existed else "create"
     return PlannedWrite(path, action, json.dumps(data, indent=2) + "\n", detail)
 

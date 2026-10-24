@@ -51,13 +51,17 @@ HARNESS_PATHS = ("~/.claude", ".claude/", "~/.cursor", ".cursor/mcp.json",
                  ".codex/config.toml", ".codex/prompts", "~/.gemini",
                  ".gemini/settings.json", ".gemini/commands", "CLAUDE.md",
                  "GEMINI.md", "opencode.json")
-DEFERRED_TOOLS_LINE = (
+LEGACY_DEFERRED_TOOLS_LINE = (
     "Reverie's MCP tools may be deferred in this session. Before your first "
     "decision in a Reverie-enabled repo, load them with ToolSearch: "
     "select:mcp__reverie__query,mcp__reverie__observe,mcp__reverie__summary,"
     "mcp__reverie__reconsolidate,mcp__reverie__review_list,"
     "mcp__reverie__review_decide,mcp__reverie__set_repo_state"
 )
+CLAUDE_MCP_OPENING = (
+    "Reverie is engineering memory. Call query before a non-trivial decision "
+    "between approaches, when debugging has no obvious cause, or before "
+    "changing code in a repo where Reverie is enabled.")
 
 
 class FakeModel:
@@ -277,29 +281,82 @@ POLICY_FILES = {
 }
 
 
-def _run_install(home: Path, key: str) -> None:
+def _run_install(home: Path, key: str) -> str:
+    out: list[str] = []
     rc = install.run(
         home=home, reverie_home=home / ".reverie", only=[key],
         no_verify=True, which=lambda _b: None, input_fn=lambda _p: "",
-        print_fn=lambda _s: None, environ={},
+        print_fn=out.append, environ={},
         check_fn=lambda *a, **k: (True, "stub"))
     assert rc == 0
+    return "\n".join(out)
 
 
-def test_claude_md_loads_deferred_mcp_tools_once(tmp_path):
+def test_claude_loads_tools_eagerly_and_writes_no_deferred_line(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     _run_install(home, "claude_code")
     _run_install(home, "claude_code")
     claude_md = home / ".claude" / "CLAUDE.md"
     text = claude_md.read_text(encoding="utf-8")
-    assert sum(line == DEFERRED_TOOLS_LINE
-               for line in text.splitlines()) == 1
+    assert LEGACY_DEFERRED_TOOLS_LINE not in text
+    assert "ToolSearch" not in text
+    assert text == "@~/.reverie/AGENTS.md\n"
+
+    cfg = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    assert cfg["mcpServers"]["reverie"]["alwaysLoad"] is True
 
     rc = uninstall.run(home=home, reverie_home=home / ".reverie", yes=True,
                        print_fn=lambda _s: None)
     assert rc == 0
     assert not claude_md.exists()
+    config_path = home / ".claude.json"
+    if config_path.exists():
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        assert "reverie" not in cfg.get("mcpServers", {})
+
+
+def test_claude_upgrades_an_existing_entry_and_preserves_user_keys(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".claude.json").write_text(json.dumps({
+        "mcpServers": {"reverie": {
+            "type": "stdio",
+            "command": "old-reverie-mcp",
+            "env": {"STALE": "1"},
+            "userNote": "keep me",
+        }},
+    }), encoding="utf-8")
+
+    _run_install(home, "claude_code")
+    entry = json.loads(
+        (home / ".claude.json").read_text(encoding="utf-8")
+    )["mcpServers"]["reverie"]
+    python, args, env = install.server_command(client="claude_code")
+    assert entry["alwaysLoad"] is True
+    assert entry["type"] == "stdio"
+    assert entry["command"] == python
+    assert entry.get("args", []) == args
+    assert entry.get("env", {}) == env
+    assert entry["userNote"] == "keep me"
+
+    again = _run_install(home, "claude_code")
+    assert "already has the reverie MCP server — unchanged" in again
+
+
+def test_uninstall_removes_a_legacy_deferred_tools_line(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    claude_md = home / ".claude" / "CLAUDE.md"
+    claude_md.parent.mkdir()
+    claude_md.write_text(
+        "# My notes\n\n@~/.reverie/AGENTS.md\n\n"
+        + LEGACY_DEFERRED_TOOLS_LINE + "\n", encoding="utf-8")
+
+    rc = uninstall.run(home=home, reverie_home=home / ".reverie", yes=True,
+                       print_fn=lambda _s: None)
+    assert rc == 0
+    assert claude_md.read_text(encoding="utf-8") == "# My notes\n"
 
 
 #: Instruction file each integration writes. Claude Code reads CLAUDE.md,
@@ -330,8 +387,15 @@ def test_instruction_file_contains_usage_policy_once(key, tmp_path):
 
 
 def test_server_instructions_start_with_usage_policy():
-    first_lines = "\n".join(USAGE_POLICY.splitlines()[:5])
-    assert SERVER_INSTRUCTIONS.startswith(first_lines)
+    assert SERVER_INSTRUCTIONS.startswith(CLAUDE_MCP_OPENING)
+    assert USAGE_POLICY in SERVER_INSTRUCTIONS
+    assert len(SERVER_INSTRUCTIONS) < 4096
+    assert "ToolSearch" not in SERVER_INSTRUCTIONS
+    assert "select:" not in SERVER_INSTRUCTIONS
+    opening = SERVER_INSTRUCTIONS[:500]
+    for tool in ("query", "observe", "summary", "reconsolidate",
+                 "review_list", "review_decide", "set_repo_state"):
+        assert f"`{tool}`" in opening
 
 
 #: Harness-side instruction files uninstall must leave Reverie-free.
@@ -360,7 +424,7 @@ def test_uninstall_leaves_no_reverie_block_in_instruction_file(key, tmp_path):
     assert LEGACY_REFERENCE_BLOCK_MARKER not in text
     assert USAGE_POLICY not in text
     assert CLAUDE_MD_IMPORT not in text
-    assert DEFERRED_TOOLS_LINE not in text
+    assert LEGACY_DEFERRED_TOOLS_LINE not in text
 
 
 @pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))

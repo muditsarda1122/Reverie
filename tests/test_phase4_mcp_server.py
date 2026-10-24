@@ -142,7 +142,8 @@ def test_initialize_handshake(server):
     # the fallback where a harness reads no instruction file.
     from reverie.policy import USAGE_POLICY
     instructions = result["instructions"]
-    assert instructions == USAGE_POLICY
+    assert instructions.startswith("Reverie is engineering memory.")
+    assert USAGE_POLICY in instructions
     assert "When to call each command" in instructions
     assert "past belief, not an authority" in instructions
     assert "Relay only decisions the user states" in instructions
