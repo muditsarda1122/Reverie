@@ -37,7 +37,7 @@ from reverie.integrations.common import (
     POLICY_BLOCK_START,
     _legacy_reference_block,
 )
-from reverie.mcp_server import ReverieServer
+from reverie.mcp_server import SERVER_INSTRUCTIONS, ReverieServer
 from reverie.policy import USAGE_POLICY
 from reverie.session import SessionManager
 
@@ -300,6 +300,67 @@ def test_claude_md_loads_deferred_mcp_tools_once(tmp_path):
                        print_fn=lambda _s: None)
     assert rc == 0
     assert not claude_md.exists()
+
+
+#: Instruction file each integration writes. Claude Code reads CLAUDE.md,
+#: which imports ~/.reverie/AGENTS.md — the policy lives in the imported file.
+INSTRUCTION_FILES = {
+    "claude_code": Path(".reverie/AGENTS.md"),
+    "opencode": Path(".config/opencode/AGENTS.md"),
+    "codex": Path(".codex/AGENTS.md"),
+    "gemini_cli": Path(".gemini/GEMINI.md"),
+}
+
+#: Claude's harness-side file: the import line, not the policy itself.
+CLAUDE_MD = Path(".claude/CLAUDE.md")
+
+CLAUDE_MD_IMPORT = "@~/.reverie/AGENTS.md"
+
+
+@pytest.mark.parametrize("key", sorted(INSTRUCTION_FILES))
+def test_instruction_file_contains_usage_policy_once(key, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _run_install(home, key)
+    if key == "claude_code":
+        claude_md = (home / CLAUDE_MD).read_text(encoding="utf-8")
+        assert claude_md.count(CLAUDE_MD_IMPORT) == 1
+    text = (home / INSTRUCTION_FILES[key]).read_text(encoding="utf-8")
+    assert text.count(USAGE_POLICY) == 1
+
+
+def test_server_instructions_start_with_usage_policy():
+    first_lines = "\n".join(USAGE_POLICY.splitlines()[:5])
+    assert SERVER_INSTRUCTIONS.startswith(first_lines)
+
+
+#: Harness-side instruction files uninstall must leave Reverie-free.
+UNINSTALL_INSTRUCTION_FILES = {
+    "claude_code": CLAUDE_MD,
+    "opencode": Path(".config/opencode/AGENTS.md"),
+    "codex": Path(".codex/AGENTS.md"),
+    "gemini_cli": Path(".gemini/GEMINI.md"),
+}
+
+
+@pytest.mark.parametrize("key", sorted(UNINSTALL_INSTRUCTION_FILES))
+def test_uninstall_leaves_no_reverie_block_in_instruction_file(key, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _run_install(home, key)
+    rc = uninstall.run(home=home, reverie_home=home / ".reverie", yes=True,
+                       print_fn=lambda _s: None)
+    assert rc == 0
+    path = home / UNINSTALL_INSTRUCTION_FILES[key]
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    assert POLICY_BLOCK_START not in text
+    assert POLICY_BLOCK_END not in text
+    assert LEGACY_REFERENCE_BLOCK_MARKER not in text
+    assert USAGE_POLICY not in text
+    assert CLAUDE_MD_IMPORT not in text
+    assert DEFERRED_TOOLS_LINE not in text
 
 
 @pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
