@@ -1,5 +1,8 @@
 # Smoke test — run this yourself in each real harness
 
+> **Internal document.** A contributor checklist, not user documentation;
+> linked from [CONTRIBUTING.md](../CONTRIBUTING.md) only.
+
 A step-by-step checklist for verifying Reverie in a real harness (Claude
 Code, Codex CLI, Cursor, OpenCode). Every step gives the exact
 action and what you should see. Run it against a scratch repo you don't mind

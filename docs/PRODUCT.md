@@ -1,5 +1,9 @@
 # Reverie — Product & Technical Archaeology
 
+> **Internal document.** A point-in-time code-archaeology snapshot — stale by
+> design; trust the code over it. Linked from
+> [CONTRIBUTING.md](../CONTRIBUTING.md) only.
+
 **Date of archaeology:** 2026-10-04
 **Repo:** `EMS-v2` (working package directory `reverie/`)
 **Method:** read-only inspection of every module in `reverie/`, `schema.sql`, the test suite (run live), the EC-Bench harness and its stored run artifacts, plus the docs tree — then writing only what the code actually does. Every claim below cites a file path. Where documentation and code disagree, the discrepancy is flagged.

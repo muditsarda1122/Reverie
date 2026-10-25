@@ -1,12 +1,12 @@
 # Contributing to Reverie
 
-Thanks for your interest in contributing. This document covers development
-setup, the project's ground rules, and how to propose changes.
+Thanks for contributing. This covers setup, the test commands, and the two
+special rules (harness packages and the usage policy). The root
+[AGENTS.md](AGENTS.md) has the full repo guide; this file is the short version.
 
 ## Development setup
 
-Requires Python 3.12 (the pinned heavy dependencies — `torch==2.2.2`,
-`numpy<2`, `scikit-learn<1.5` — ship wheels for 3.12).
+Requires Python 3.12 (the pinned heavy dependencies ship 3.12 wheels).
 
 ```bash
 git clone https://github.com/muditsarda1122/Reverie.git
@@ -16,76 +16,64 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Verify everything works:
+## Test commands
 
 ```bash
-pytest tests/ -q          # ~800 tests, offline; live API tests auto-skip
+pytest -q                      # ~990 tests, fully offline; live tests self-skip
 ruff check reverie tests bench conftest.py
+mypy                           # config in pyproject.toml
 ```
 
-The test suite runs fully offline: LLM calls are mocked, and the live
-tests plus the end-to-end test skip unless the configured provider's key is
-set (`reverie.llm.api_key` reads whichever `api_key_env` your
-`~/.reverie/config.yaml` names — `OPENCODE_ZEN_API_KEY` for the default
-config, or `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`/
-`OPENROUTER_API_KEY` when you point the config at another registry
-provider). The end-to-end test also runs against a local Ollama model. Use
-`REVERIE_HOME` to redirect the brain directory to a temp path for
-isolation.
+The suite runs offline: LLM calls are mocked, and the live tests skip unless
+the configured provider's key is set. `REVERIE_HOME` redirects the brain
+directory to a temp path for isolation. The tests import the installed
+package — the editable install above is required.
 
-## Ground rules
+Run all three before opening a pull request; CI runs them on Linux and macOS.
 
-These follow from the design spec (`docs/SPEC.md`) and keep the project
-honest:
+## Adding a harness
 
-1. **Extraction over storage.** The interesting question is *what should be
-   stored*, not *how to store more*. Every change must respect this.
-2. **Demand-driven, not proactive.** Cognition is never auto-injected; the
-   agent retrieves only when it decides to via `query`.
-3. **Two brains, one review gate.** The session brain is ephemeral and
-   unreviewed. The only path to the canonical brain is the human review gate
-   → diffuser.
-4. **Confidence math lives in log-odds space** (`reverie/confidence.py`). No
-   ad-hoc probability arithmetic elsewhere.
-5. **Schema changes must be additive** (`CREATE TABLE IF NOT EXISTS`,
-   `ALTER TABLE ADD COLUMN`). Never `DROP TABLE` on existing databases.
-6. **Stable public surface.** Do not rename the `reverie` package, its
-   modules, the console scripts (`reverie`, `reverie-mcp`), the MCP tool
-   names (`observe`, `query`, `summary`,
-   `reconsolidate`, `set_repo_state`, `review_list`,
-   `review_decide`), config keys, or paths under `~/.reverie` —
-   installers, agent instruction files and docs link to them. User-facing
-   text says "conclusion"; "ECU" is internal.
-7. **Never commit secrets, personal data, or generated data** (`runs/`,
-   `*.db`, transcripts).
+One package, one registry line, tests, one doc row:
 
-## Style
+1. `reverie/integrations/<name>/` with an `INTEGRATION` instance subclassing
+   `reverie.integrations.base.Integration`.
+2. Add it to `INTEGRATIONS` in `reverie/integrations/__init__.py`.
+3. Offline tests for detect / install / uninstall / idempotency.
+4. A row in `docs/SUPPORTED_HARNESSES.md` with the tested version and what
+   was verified, plus updates to `docs/INTEGRATIONS.md` and
+   `docs/INSTALLATION.md`.
 
-- Python 3.12, type hints, snake_case file names.
-- LLM calls go through `reverie.llm.call_llm()` — never a direct HTTP call from
-  feature code. Temperature 0.0 for classification, 0.3 for extraction —
-  except where a model rejects sampling parameters (post-Opus-4.6 Claude,
-  OpenAI reasoning models); the request shapes live in one function in
-  `reverie/llm.py`.
-- Tests live in `tests/` as `test_phase<N>_<topic>.py`; offline by default
-  with `call_llm` mocked and `now` injectable for time-dependent logic.
-- `ruff` is the linter (configured in `pyproject.toml`).
-- Keep the installed agent instruction template (`AGENTS_MD` in
-  `reverie/install.py`) byte-identical with its fenced block in
-  `docs/SPEC.md` §28.9 — a test enforces this.
+The rule: no harness name appears in the core (`reverie/` outside
+`integrations/`). `tests/test_integration_layers.py` enforces it.
 
-## Proposing changes
+## Changing the usage policy
 
-1. Open an issue first for anything that changes behaviour, touches the
-   config schema, or revises the spec — larger design discussions belong
-   there. ([issue templates](.github/ISSUE_TEMPLATE))
-2. Fork / branch, keep the change focused.
-3. Add or update tests for every change. New code without tests will not be
-   merged.
-4. Run `pytest tests/ -q` and `ruff check` before opening the PR. CI runs
-   both on Linux and macOS.
-5. Open a pull request with the
-   [PR template](.github/PULL_REQUEST_TEMPLATE.md).
+`reverie/policy.py` is the single source of the agent-facing usage text.
+Anything that changes it must also update the copy in `docs/SPEC.md` §28.9
+(a test compares them byte-for-byte) and keep the text harness-free.
+
+## Internal documents
+
+These are working documents kept in the repo for contributors; they are not
+part of the user documentation:
+
+- [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md) — the manual per-harness
+  smoke-test checklist.
+- [`docs/PRODUCT.md`](docs/PRODUCT.md) — a point-in-time code archaeology
+  snapshot (stale by design; trust the code over it).
+- [`docs/TECHNICAL_REFERENCE.md`](docs/TECHNICAL_REFERENCE.md) — an older
+  technical snapshot, kept for background.
+- [`docs/investigations/`](docs/investigations/) — one-off investigations.
+
+## Pull requests
+
+1. Open an issue first for anything that changes behaviour, the config
+   schema, or the spec.
+2. Fork / branch, keep the change focused, add or update tests — new code
+   without tests will not be merged.
+3. Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md). Commit messages
+   describe the change and never name an LLM model; never commit secrets,
+   personal paths, or generated data.
 
 ## License
 

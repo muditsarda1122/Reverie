@@ -1,5 +1,8 @@
 # Investigation: Multi-harness and multi-provider support in Reverie
 
+> **Internal document.** A one-off investigation — stale by design; trust the
+> code over it. Linked from [CONTRIBUTING.md](../../CONTRIBUTING.md) only.
+
 **Date:** 2026-10-14
 **Type:** read-only investigation. No code, config, or docs were changed. The only file created is this report.
 **Verification:** all offline tests pass (`506 passed, 6 skipped` — the 6 skips are the live-API tests gated on `OPENCODE_ZEN_API_KEY`). No live API calls were made during this investigation; provider wire-level claims about third-party services are marked unverified where noted.
