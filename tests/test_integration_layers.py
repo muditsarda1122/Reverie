@@ -40,7 +40,8 @@ from reverie.integrations.common import (
     POLICY_BLOCK_START,
     _legacy_reference_block,
 )
-from reverie.mcp_server import SERVER_INSTRUCTIONS, ReverieServer
+from reverie.mcp_server import (_RECONSOLIDATE_DESCRIPTION,
+                                SERVER_INSTRUCTIONS, ReverieServer)
 from reverie.policy import USAGE_POLICY
 from reverie.session import SessionManager
 
@@ -481,6 +482,17 @@ def test_install_refreshes_stale_policy_block(key, relative, tmp_path,
     assert POLICY_BLOCK_START not in final_text
     assert POLICY_BLOCK_END not in final_text
     assert new_policy not in final_text
+
+
+def test_usage_policy_has_reconsolidate_trigger():
+    assert ("- `reconsolidate`: call when the code you are reading "
+            "contradicts a conclusion you retrieved. Name the file and "
+            "symbol that show the contradiction. Do not call it for "
+            "conclusions you did not retrieve in this task." in USAGE_POLICY)
+    assert ("Call reconsolidate when the code you are reading contradicts "
+            "a conclusion you retrieved. Name the file and symbol that "
+            "show the contradiction. Do not call it for conclusions you "
+            "did not retrieve in this task." in _RECONSOLIDATE_DESCRIPTION)
 
 
 @pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))

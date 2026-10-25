@@ -100,7 +100,7 @@ from .confidence import FROZEN_STATUSES, reinforce_stored_confidence
 from .config import MODES, SCOPE_LEVELS, get_config
 from .diffuser import DiffuserError
 from .extractor import ExtractorError
-from .policy import USAGE_POLICY
+from .policy import RECONSOLIDATE_TRIGGER, USAGE_POLICY
 from .reconsolidation import ReconsolidationError
 from .session import SessionError, SessionManager, detect_repo_branch
 
@@ -305,7 +305,7 @@ be decided. Bulk-accepting every candidate is refused — Reverie review must
 stay per-candidate or per-group, on the user's explicit instruction. Pass
 the workspace path as 'repo_path'."""
 
-_RECONSOLIDATE_DESCRIPTION = """\
+_RECONSOLIDATE_DESCRIPTION = f"""\
 Re-evaluate a previously retrieved conclusion in light of new evidence you discovered
 during this session. Call this when you find that a past engineering conclusion
 is wrong, outdated, or needs refinement based on what you've learned from the
@@ -317,6 +317,8 @@ trigger supersession. The change is written to the Canonical Brain
 immediately (the conclusion was already human-reviewed when it entered the
 Canonical Brain — reconsolidation is a confidence/evidence update, not a new
 conclusion entering the brain).
+
+Call reconsolidate {RECONSOLIDATE_TRIGGER}
 
 Call reconsolidate when:
 - You verified a retrieved conclusion against the code and found it's no longer accurate
