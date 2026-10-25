@@ -190,6 +190,22 @@ def _legacy_block_span(text: str, marker: str) -> tuple[int, int] | None:
     return None
 
 
+def _inline_block_span(text: str) -> tuple[int, int] | None:
+    """Byte span of the marker-delimited block: from the opening marker
+    through the closing marker and its trailing newline — or None when the
+    markers do not delimit a complete block."""
+    start = text.find(POLICY_BLOCK_START)
+    if start == -1:
+        return None
+    end = text.find(POLICY_BLOCK_END, start + len(POLICY_BLOCK_START))
+    if end == -1:
+        return None
+    end += len(POLICY_BLOCK_END)
+    if text[end:end + 1] == "\n":
+        end += 1
+    return start, end
+
+
 def _block_once(path: Path, home: Path, marker: str, block: str,
                 detail: str,
                 legacy_blocks: list[tuple[str, str]] | None = None
@@ -202,6 +218,11 @@ def _block_once(path: Path, home: Path, marker: str, block: str,
     current one); otherwise the legacy section — from its marker heading to
     the next level-2 heading or EOF — is replaced by ``block``, even when
     the legacy text was edited. Bytes outside that span are left untouched.
+
+    When the markers are present but the inlined text is not exactly
+    ``block`` (a block written by an older policy), the text between the
+    markers is replaced by ``block`` and reported as an update; bytes
+    outside the markers stay untouched.
     """
     disp = _display(path, home)
     legacy_blocks = list(legacy_blocks or [])
@@ -211,11 +232,27 @@ def _block_once(path: Path, home: Path, marker: str, block: str,
                  if (span := _legacy_block_span(text, legacy_marker))
                  is not None]
         if marker in text:
-            if spans:
-                for start, end in reversed(spans):
-                    text = text[:start] + text[end:]
+            span = _inline_block_span(text)
+            stale = span is not None and text[span[0]:span[1]] != block
+            if stale or spans:
+                edits = ([(span[0], span[1], block)] if stale else []) + [
+                    (start, end, "") for start, end in spans]
+                edits.sort()
+                out: list[str] = []
+                offset = 0
+                for start, end, replacement in edits:
+                    out += [text[offset:start], replacement]
+                    offset = end
+                out.append(text[offset:])
+                new_text = "".join(out)
+                if stale:
+                    refreshed = (f"{disp}: refreshed the Reverie block "
+                                 "(usage policy changed)")
+                    if spans:
+                        refreshed += "; removed the old pointer block"
+                    return PlannedWrite(path, "update", new_text, refreshed)
                 return PlannedWrite(
-                    path, "update", text,
+                    path, "update", new_text,
                     f"{disp}: removed the old Reverie block (current "
                     "block already present)")
             return PlannedWrite(path, "unchanged", None,
