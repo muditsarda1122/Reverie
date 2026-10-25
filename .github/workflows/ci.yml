@@ -13,12 +13,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
-      - run: ruff check ec tests bench conftest.py
+      - run: pip install -e ".[dev]"
+      - run: ruff check reverie tests bench conftest.py
+      - run: mypy
 
   test:
     # One supported Python version for now: the pinned heavy deps
-    # (torch==2.2.2, numpy<2, scikit-learn<1.5) ship wheels for 3.12 only.
+    # (torch==2.2.2, numpy<2, scikit-learn<1.5) ship wheels for 3.12 only,
+    # matching requires-python = ">=3.12" and the mypy/ruff target py312.
     strategy:
       fail-fast: false
       matrix:
