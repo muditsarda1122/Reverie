@@ -16,6 +16,7 @@ All offline: LLM calls are mocked and embeddings use a deterministic fake.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import signal
 import time
@@ -23,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
 import reverie
 from reverie import cli, core_api, hooks, install, uninstall
@@ -538,6 +540,89 @@ def test_uninstall_removes_inlined_or_legacy_block(key, relative, tmp_path):
     text = path.read_text(encoding="utf-8")
     assert LEGACY_REFERENCE_BLOCK_MARKER not in text
     assert "My notes" in text
+
+
+# ---------------------------------------------------------------------------
+# 1c. Codex skills replace the retired custom prompts
+# ---------------------------------------------------------------------------
+
+CODEX_SKILLS_DIR = Path(".agents/skills")
+
+
+def _skill_frontmatter(path: Path) -> tuple[dict, str]:
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("---\n")
+    frontmatter, body = text[4:].split("\n---\n", 1)
+    return yaml.safe_load(frontmatter), body
+
+
+@pytest.mark.parametrize("name,tool", [
+    ("reverie-review", "review_list"),
+    ("reverie-status", "summary"),
+])
+def test_codex_install_writes_skills_with_frontmatter(name, tool, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _run_install(home, "codex")
+
+    skill = home / CODEX_SKILLS_DIR / name / "SKILL.md"
+    assert skill.is_file()
+    meta, body = _skill_frontmatter(skill)
+    assert meta["name"] == name
+    assert ("only when the user asks to review or check Reverie"
+            in meta["description"])
+    assert tool in body
+
+    openai = home / CODEX_SKILLS_DIR / name / "agents" / "openai.yaml"
+    assert yaml.safe_load(openai.read_text(encoding="utf-8")) == {
+        "allow_implicit_invocation": False}
+
+
+def test_codex_install_writes_no_custom_prompts(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _run_install(home, "codex")
+    assert not (home / ".codex" / "prompts").exists()
+
+
+@pytest.mark.parametrize("name", ["reverie-review", "reverie-status"])
+def test_codex_uninstall_removes_skill_folders(name, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _run_install(home, "codex")
+    assert (home / CODEX_SKILLS_DIR / name / "SKILL.md").is_file()
+
+    rc = uninstall.run(home=home, reverie_home=home / ".reverie",
+                       yes=True, print_fn=lambda _s: None)
+    assert rc == 0
+    assert not (home / CODEX_SKILLS_DIR / name).exists()
+
+
+def test_codex_removes_only_owned_legacy_prompts(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    prompts = home / ".codex" / "prompts"
+    prompts.mkdir(parents=True)
+    owned = prompts / "reverie-review.md"
+    owned.write_text("old Reverie prompt\n", encoding="utf-8")
+    unowned = prompts / "reverie-status.md"
+    unowned.write_text("my own prompt\n", encoding="utf-8")
+    manifest = install.install_manifest_path(home / ".reverie")
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"version": 1, "files": {
+        str(owned.resolve()):
+            hashlib.sha256(owned.read_bytes()).hexdigest(),
+    }}), encoding="utf-8")
+
+    out = _run_install(home, "codex")
+    assert not owned.exists()
+    assert unowned.exists()
+    assert "not created by Reverie" in out
+
+    rc = uninstall.run(home=home, reverie_home=home / ".reverie",
+                       yes=True, print_fn=lambda _s: None)
+    assert rc == 0
+    assert unowned.exists()
 
 
 @pytest.mark.parametrize("key,expected", [

@@ -71,6 +71,10 @@ def _apply(removal: PlannedRemoval) -> None:
     if removal.action == "delete-file":
         removal.path.unlink(missing_ok=True)
         return
+    if removal.action == "delete-dir":
+        if removal.path.is_dir():
+            shutil.rmtree(removal.path)
+        return
     removal.path.write_text(removal.after or "", encoding="utf-8")
 
 
@@ -102,6 +106,8 @@ def _emit(removal: PlannedRemoval, home: Path, dry_run: bool, print_fn,
                 print_fn(f"        {line}")
         elif removal.action == "delete-file":
             print_fn("      (file would be removed)")
+        elif removal.action == "delete-dir":
+            print_fn("      (folder would be removed)")
         return
     _apply(removal)
     print_fn(f"  ✓ {mark}: {removal.detail}")

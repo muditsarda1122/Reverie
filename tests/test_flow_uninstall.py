@@ -144,6 +144,8 @@ def test_uninstall_removes_entries_it_created(home, reverie_home):
     assert not (home / ".config" / "opencode" / "commands"
                 / "reverie-review.md").exists()
     assert not (home / ".codex" / "prompts" / "reverie-review.md").exists()
+    assert not (home / ".agents" / "skills" / "reverie-review").exists()
+    assert not (home / ".agents" / "skills" / "reverie-status").exists()
     assert not (home / ".gemini" / "commands" / "reverie-review.toml").exists()
 
 

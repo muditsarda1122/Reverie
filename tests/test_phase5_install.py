@@ -382,8 +382,9 @@ def test_user_level_commands_per_harness(home, reverie_home):
     for name in ("reverie-review.md", "reverie-status.md"):
         text = (home / ".claude" / "commands" / name).read_text()
         assert "review_list" in text or "summary" in text
-    # Codex: ~/.codex/prompts/*.md (frontmatter; invoked /prompts:<name>)
-    text = (home / ".codex" / "prompts" / "reverie-review.md").read_text()
+    # Codex: ~/.agents/skills/<name>/SKILL.md (frontmatter; invoked /skills)
+    text = (home / ".agents" / "skills" / "reverie-review"
+            / "SKILL.md").read_text()
     assert "description:" in text and "review_list" in text
     # OpenCode: ~/.config/opencode/commands/*.md (frontmatter)
     text = (home / ".config" / "opencode" / "commands"

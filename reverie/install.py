@@ -836,6 +836,9 @@ def _verbatim_file(path: Path, home: Path, content: str,
 def _apply(write: PlannedWrite) -> None:
     if write.action == "unchanged":
         return
+    if write.action == "delete-file":
+        write.path.unlink(missing_ok=True)
+        return
     if write.action == "create-db":
         write.path.parent.mkdir(parents=True, exist_ok=True)
         Brain(write.path).close()          # auto-creates with the full schema

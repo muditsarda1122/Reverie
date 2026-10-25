@@ -33,7 +33,7 @@ class InstallError(RuntimeError):
 @dataclass
 class PlannedWrite:
     path: Path
-    action: str                # create | merge | append | update | unchanged | create-db
+    action: str                # create | merge | append | update | delete-file | unchanged | create-db
     content: str | None        # full resulting content (None for unchanged/create-db)
     detail: str                # transcript-style note for the ✓ line
 
@@ -44,7 +44,7 @@ class PlannedRemoval:
     mirror of PlannedWrite."""
     path: Path
     action: str            # remove-entry | remove-line | remove-block |
-                           # delete-file | unchanged | skipped
+                           # delete-file | delete-dir | unchanged | skipped
     detail: str
     after: str | None = None    # resulting content (None for delete/unchanged)
     removed: str | None = None  # what would be removed (for dry-run display)

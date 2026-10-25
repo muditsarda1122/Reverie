@@ -1,8 +1,10 @@
 """Codex CLI integration.
 
 Owns ``~/.codex/config.toml`` (a real TOML table, not JSON), the Codex
-``AGENTS.md`` reference, and the deprecated-but-working user prompts under
-``~/.codex/prompts/``.
+``AGENTS.md`` reference, and the user-level skills under
+``~/.agents/skills/``. Codex 0.163 no longer surfaces custom prompts from
+``~/.codex/prompts/``; older prompt files are removed only when the install
+manifest proves Reverie created them.
 """
 
 from __future__ import annotations
@@ -28,12 +30,13 @@ from ..common import (
     _legacy_reference_block,
     _owned_by_install,
     _plan_block,
-    _plan_verbatim_file,
     _policy_block,
     _server_command,
     _verbatim_file,
 )
 
+#: Retired user prompts (Codex 0.163 no longer shows them). Kept so install
+#: and uninstall can clean up files an older Reverie created.
 CODEX_PROMPTS: dict[str, str] = {
     "reverie-review.md": (
         "---\ndescription: Review pending Reverie conclusions\n---\n"
@@ -44,6 +47,29 @@ CODEX_PROMPTS: dict[str, str] = {
         + _STATUS_COMMAND_BODY
     ),
 }
+
+CODEX_SKILLS: dict[str, str] = {
+    "reverie-review": (
+        "---\n"
+        "name: reverie-review\n"
+        "description: Review pending Reverie conclusions. Use only when the "
+        "user asks to review or check Reverie; never trigger for unrelated "
+        "coding work.\n"
+        "---\n"
+        + _REVIEW_COMMAND_BODY
+    ),
+    "reverie-status": (
+        "---\n"
+        "name: reverie-status\n"
+        "description: Show the current Reverie status. Use only when the "
+        "user asks to review or check Reverie; never trigger for unrelated "
+        "coding work.\n"
+        "---\n"
+        + _STATUS_COMMAND_BODY
+    ),
+}
+
+CODEX_SKILL_OPENAI = "allow_implicit_invocation: false\n"
 
 
 def _config_path(home: Path) -> Path:
@@ -56,6 +82,64 @@ def _agents_path(home: Path) -> Path:
 
 def _prompts_dir(home: Path) -> Path:
     return Path(home) / ".codex" / "prompts"
+
+
+def _skills_root(home: Path) -> Path:
+    return Path(home) / ".agents" / "skills"
+
+
+def _skill_dir(home: Path, name: str) -> Path:
+    return _skills_root(home) / name
+
+
+def _skill_path(home: Path, name: str) -> Path:
+    return _skill_dir(home, name) / "SKILL.md"
+
+
+def _skill_openai_path(home: Path, name: str) -> Path:
+    return _skill_dir(home, name) / "agents" / "openai.yaml"
+
+
+def _manifest(reverie_home: Path) -> dict[str, str]:
+    from ...install import load_install_manifest
+    return load_install_manifest(reverie_home)
+
+
+def _legacy_prompt_plans(home: Path,
+                         manifest: dict[str, str]) -> list[PlannedWrite]:
+    """Remove old Codex prompt files only when Reverie owns them."""
+    plans = []
+    for name in CODEX_PROMPTS:
+        path = _prompts_dir(home) / name
+        if not path.exists():
+            continue
+        disp = _display(path, home)
+        if _owned_by_install(path, manifest):
+            plans.append(PlannedWrite(
+                path, "delete-file", None,
+                f"Removed {disp} (old Codex prompt — Reverie now installs a "
+                "skill)"))
+        else:
+            plans.append(PlannedWrite(
+                path, "unchanged", None,
+                f"Left {disp} (not created by Reverie — remove it by hand if "
+                "unwanted)"))
+    return plans
+
+
+def _plan_owned_file(path: Path, home: Path,
+                     manifest: dict[str, str] | None,
+                     label: str) -> PlannedRemoval:
+    disp = _display(path, home)
+    if not path.exists():
+        return PlannedRemoval(path, "unchanged", f"{disp}: not present")
+    if _owned_by_install(path, manifest):
+        return PlannedRemoval(
+            path, "delete-file", f"Removed {disp} ({label})")
+    return PlannedRemoval(
+        path, "skipped",
+        f"SKIPPED {disp}: not created by Reverie (or edited since install) — "
+        "left in place")
 
 
 def _table(reverie_bin: str | None = None,
@@ -179,9 +263,8 @@ class CodexIntegration(Integration):
     name = "Codex"
     binary = "codex"
     marker = ".codex/config.toml"
-    next_step = ("Restart Codex CLI; /prompts:reverie-review and "
-                 "/prompts:reverie-status are available (custom prompts are "
-                 "deprecated upstream but work).")
+    next_step = ("Restart Codex CLI; the reverie-review and reverie-status "
+                 "skills are available (use /skills or $reverie-review).")
 
     def install(self, home: Path, reverie_bin: str | None = None,
                 dry_run: bool = False, *,
@@ -199,11 +282,16 @@ class CodexIntegration(Integration):
             f"Wrote {_display(agents, home)} (Reverie usage policy)",
             legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
                             _legacy_reference_block(ref))]))
-        for name, body in CODEX_PROMPTS.items():
-            path = _prompts_dir(home) / name
+        for name, body in CODEX_SKILLS.items():
+            path = _skill_path(home, name)
             writes.append(_verbatim_file(
                 path, home, body,
-                f"Wrote {_display(path, home)} (/prompts:{path.stem})"))
+                f"Wrote {_display(path, home)} (Codex skill ${name})"))
+            openai = _skill_openai_path(home, name)
+            writes.append(_verbatim_file(
+                openai, home, CODEX_SKILL_OPENAI,
+                f"Wrote {_display(openai, home)} (explicit invocation only)"))
+        writes.extend(_legacy_prompt_plans(home, _manifest(reverie_home)))
         return writes
 
     def uninstall(self, home: Path, dry_run: bool = False, *,
@@ -221,9 +309,39 @@ class CodexIntegration(Integration):
                 legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
                                 _legacy_reference_block(ref))]),
         ]
-        for name, body in CODEX_PROMPTS.items():
-            path = _prompts_dir(home) / name
-            removals.append(_plan_verbatim_file(path, home, body, path.stem))
+        for name in CODEX_PROMPTS:
+            removals.append(_plan_owned_file(
+                _prompts_dir(home) / name, home, manifest, "old Codex prompt"))
+        for name in CODEX_SKILLS:
+            folder = _skill_dir(home, name)
+            files = [(path, label) for path, label in (
+                (_skill_path(home, name), "Codex skill"),
+                (_skill_openai_path(home, name), "Codex skill config"),
+            )]
+            owned_any = False
+            blocked = False
+            for path, label in files:
+                removal = _plan_owned_file(path, home, manifest, label)
+                removals.append(removal)
+                if removal.action == "delete-file":
+                    owned_any = True
+                elif removal.action == "skipped":
+                    blocked = True
+            if not folder.exists() or blocked:
+                continue
+            expected = {path for path, _label in files}
+            extras = [path for path in folder.rglob("*")
+                      if path.is_file() and path not in expected]
+            disp = _display(folder, home)
+            if extras:
+                removals.append(PlannedRemoval(
+                    folder, "skipped",
+                    f"SKIPPED {disp}: contains files Reverie did not create — "
+                    "left in place"))
+            elif owned_any:
+                removals.append(PlannedRemoval(
+                    folder, "delete-dir",
+                    f"Removed {disp} (Reverie-owned skill folder)"))
         return removals
 
     def configured_server(self, home: Path) -> ConfiguredServer | None:
