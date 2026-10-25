@@ -6,14 +6,13 @@ applies the same merge logic in reverse:
 
 - For every supported harness, only Reverie's own entries are removed:
   the ``reverie`` MCP server entry in ``~/.claude.json``,
-  ``~/.cursor/mcp.json``, ``~/.config/opencode/opencode.json``,
-  ``~/.codex/config.toml`` and ``~/.gemini/settings.json``; the
-  ``@~/.reverie/AGENTS.md`` line in ``~/.claude/CLAUDE.md``; the Reverie
-  SessionStart and Stop hook handlers in ``~/.claude/settings.json`` (emptied
-  matcher groups and keys are dropped with them); the reference
-  blocks in the OpenCode/Codex ``AGENTS.md`` and Gemini ``GEMINI.md``
-  files; the user-level slash-command files (only while their content is
-  still Reverie's verbatim text). Every other key, line and file stays
+  ``~/.cursor/mcp.json``, ``~/.config/opencode/opencode.json`` and
+  ``~/.codex/config.toml``; the ``@~/.reverie/AGENTS.md`` line in
+  ``~/.claude/CLAUDE.md``; the Reverie SessionStart and Stop hook handlers
+  in ``~/.claude/settings.json`` (emptied matcher groups and keys are
+  dropped with them); the reference blocks in the OpenCode/Codex
+  ``AGENTS.md`` files; the user-level slash-command files (only while their
+  content is still Reverie's verbatim text). Every other key, line and file stays
   byte-identical. A file that is invalid JSON/TOML, or was edited so that
   Reverie's entry can't be found unambiguously, is skipped and reported —
   never guessed at.

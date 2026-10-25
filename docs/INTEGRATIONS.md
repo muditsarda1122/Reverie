@@ -31,7 +31,7 @@ Every package exposes one `INTEGRATION` instance subclassing
 
 | Member | Meaning |
 |---|---|
-| `key` | Stable machine key used by `--only` and config (`claude_code`, `cursor`, `opencode`, `codex`, `gemini_cli`) |
+| `key` | Stable machine key used by `--only` and config (`claude_code`, `cursor`, `opencode`, `codex`) |
 | `name` | Human name shown by the installer |
 | `binary` | Executable used for detection (optional) |
 | `marker` | Path relative to the user's home that also counts as installed |
@@ -55,14 +55,13 @@ may ignore it.
 | **Cursor** | `~/.cursor/mcp.json` → `mcpServers.reverie` | None (Cursor documents no global rules file; MCP `instructions` carries the contract) | `~/.cursor/commands/reverie-review.md`, `reverie-status.md` (beta) | — | — | `cursor` binary or `.cursor/mcp.json` | ❌ offline install tests only |
 | **OpenCode** | `~/.config/opencode/opencode.json` → `mcp.reverie` (`type: local`, `enabled: true`, `environment`) | `~/.config/opencode/AGENTS.md` reference block | `~/.config/opencode/commands/reverie-review.md`, `reverie-status.md` | — | — | `opencode` binary or the config | ✅ offline tests + live E2E + EC-Bench |
 | **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | `~/.codex/AGENTS.md` reference block | `~/.codex/prompts/reverie-review.md`, `reverie-status.md` (`/prompts:`) | — | — | `codex` binary or `.codex/config.toml` | ❌ offline install tests only |
-| **Gemini CLI** | `~/.gemini/settings.json` → `mcpServers.reverie` | `~/.gemini/GEMINI.md` reference block | `~/.gemini/commands/reverie-review.toml`, `reverie-status.toml` | — | — | `gemini` binary or `.gemini/settings.json` | ❌ offline install tests only |
 
 **Honest status.** “Smoke-tested” is the same honest column as the README.
 OpenCode is exercised end-to-end. Claude Code has been exercised by hand in a
 smoke test: session start state and capture of a conclusion on request. It has
 not been exercised with the per-reply Stop capture, which is new on this
 branch; that path is verified offline only and needs one live check in Claude
-Code before merge. Codex, Cursor, and Gemini CLI have their written shapes
+Code before merge. Codex and Cursor have their written shapes
 checked against the vendors' current docs and the server tested over real
 stdio, but no live sessions. Use [`SMOKE_TEST.md`](SMOKE_TEST.md) for the
 manual checklist.
@@ -115,7 +114,7 @@ timed-out extraction is left in the pending queue and can be retried with
   capture already happens at Stop.
 - No `SubagentStop` hook. The main Stop transcript contains the final answer;
   duplicating subagent turns would add noise.
-- Cursor, OpenCode, Codex, and Gemini CLI have no context-injection hook in
+- Cursor, OpenCode, and Codex have no context-injection hook in
   this branch. Their `instructions` / rule-file guidance is loaded at session
   start by the harness; retrieval remains demand-driven.
 
@@ -132,9 +131,10 @@ Both commands are plan-first.
   one only when its content still exactly matches what Reverie wrote.
 - Instruction references are appended once and removed as an exact block or
   line. An edited block is skipped and reported, never guessed at.
-- `~/.reverie/install-manifest.json` records files created by install with
-  their SHA-256. A file is deleted on uninstall only when install created it
-  and it is still unedited; otherwise only Reverie's entry is removed.
+- `~/.reverie/install_manifest.json` records files created by install with
+  their SHA-256, plus config entries install added to existing files. A file
+  is deleted on uninstall only when install created it and it is still
+  unedited; otherwise only Reverie's entries are removed.
 - Invalid JSON/TOML is never rewritten. The installer stops with the path and
   the fix, and changes nothing.
 
@@ -144,23 +144,28 @@ Both commands are plan-first.
 touches only `mcpServers.reverie`. The Stop hook reuses the SessionStart
 handler's launch form (exec `args` or shell command), so dev-checkout and
 pip-installed layouts both work. `CLAUDE.md` receives a single
-`@~/.reverie/AGENTS.md` import line.
+`@~/.reverie/AGENTS.md` import line. `settings.json` gets
+`"mcp__reverie__*"` in `permissions.allow` so its tools run without a
+prompt; existing permissions are preserved and uninstall removes only the
+entry install recorded as its own.
 
 **Cursor** — no global rules file is written. Cursor's documented global
 mechanism is in-app User Rules; the MCP server's `instructions` and tool
-descriptions carry the usage contract. Command files are beta.
+descriptions carry the usage contract. Command files are beta. The CLI
+config (`~/.cursor/cli-config.json`) gets `"Mcp(reverie:*)"` in
+`permissions.allow`; `approvalMode` and every other key are preserved, and
+uninstall removes only the entry install recorded as its own.
 
 **OpenCode** — MCP entries use `mcp.reverie` with `{"type": "local",
 "enabled": true}` and `environment` instead of `env`. The config gets
 `$schema: https://opencode.ai/config.json` when created.
 
-**Codex CLI** — `config.toml` gets a real `[mcp_servers.reverie]` table. User
+**Codex CLI** — `config.toml` gets a real `[mcp_servers.reverie]` table with
+`default_tools_approval_mode = "writes"`: write-capable tools keep their
+approval prompt. Codex treats any tool without MCP `readOnlyHint` as a write,
+and Reverie's tools are unannotated, so `query` and `summary` prompt too. User
 prompts under `prompts/` are deprecated upstream but still the user-level
 command mechanism.
-
-**Gemini CLI** — commands are TOML with a required `prompt` string, not
-markdown. Gemini CLI was replaced by Antigravity CLI for unpaid/Google One
-users in June 2026; the config format is unchanged.
 
 ## Adding a harness
 
@@ -194,7 +199,7 @@ capture — it prints nothing, so it never extends a conversation.
 The honest promise: Reverie does not secretly read conversations, does not
 inject memories mid-session, does not modify your repositories, and does not
 overwrite unrelated config. Retrieval is demand-driven; Claude, OpenCode,
-Cursor, Codex, and Gemini CLI must ground themselves in the current code
+Cursor, and Codex must ground themselves in the current code
 before calling `query`, and query results are past beliefs to verify, not
 authoritative context.
 

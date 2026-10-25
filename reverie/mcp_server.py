@@ -146,7 +146,7 @@ SERVER_NAME = "reverie"
 #: Claude Code, but clients truncate instructions), then the full usage
 #: contract from ``reverie/policy.py`` follows verbatim. Clients that
 #: surface server instructions to the model show it directly (Claude Code,
-#: Cursor, Codex and Gemini CLI do; OpenCode captures it in recent versions).
+#: Cursor and Codex do; OpenCode captures it in recent versions).
 SERVER_INSTRUCTIONS = (
     "Reverie is engineering memory. Call query before a non-trivial decision "
     "between approaches, when debugging has no obvious cause, or before "

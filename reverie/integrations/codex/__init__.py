@@ -145,7 +145,11 @@ def _plan_owned_file(path: Path, home: Path,
 def _table(reverie_bin: str | None = None,
            client: str | None = None) -> str:
     command, args, env = _server_command(reverie_bin, client=client)
-    lines = ["[mcp_servers.reverie]", f"command = {json.dumps(command)}"]
+    lines = [
+        "[mcp_servers.reverie]",
+        f"command = {json.dumps(command)}",
+        'default_tools_approval_mode = "writes"',
+    ]
     if args:
         lines.append(f"args = {json.dumps(args)}")
     if env:

@@ -45,14 +45,13 @@ from reverie.session import SessionManager
 
 ROOT = Path(reverie.__file__).parent
 FIXTURE = Path(__file__).parent / "fixtures" / "claude_transcript.jsonl"
-HARNESSES = ("claude", "opencode", "codex", "cursor", "gemini")
+HARNESSES = ("claude", "opencode", "codex", "cursor")
 HOOK_EVENTS = ("SessionStart", "Stop", "UserPromptSubmit", "PreToolUse",
                "PostToolUse", "SessionEnd", "SubagentStop")
 HARNESS_PATHS = ("~/.claude", ".claude/", "~/.cursor", ".cursor/mcp.json",
                  ".cursor/commands", ".config/opencode", "~/.codex",
-                 ".codex/config.toml", ".codex/prompts", "~/.gemini",
-                 ".gemini/settings.json", ".gemini/commands", "CLAUDE.md",
-                 "GEMINI.md", "opencode.json")
+                 ".codex/config.toml", ".codex/prompts", "CLAUDE.md",
+                 "opencode.json")
 LEGACY_DEFERRED_TOOLS_LINE = (
     "Reverie's MCP tools may be deferred in this session. Before your first "
     "decision in a Reverie-enabled repo, load them with ToolSearch: "
@@ -247,7 +246,7 @@ def test_every_integration_implements_the_contract(tmp_path):
 
 
 @pytest.mark.parametrize("key", ["claude_code", "cursor", "opencode",
-                                 "codex", "gemini_cli"])
+                                 "codex"])
 def test_sandboxed_install_uninstall_round_trip(key, tmp_path):
     home = tmp_path / key
     home.mkdir()
@@ -279,7 +278,6 @@ def test_sandboxed_install_uninstall_round_trip(key, tmp_path):
 POLICY_FILES = {
     "opencode": Path(".config/opencode/AGENTS.md"),
     "codex": Path(".codex/AGENTS.md"),
-    "gemini_cli": Path(".gemini/GEMINI.md"),
 }
 
 
@@ -367,7 +365,6 @@ INSTRUCTION_FILES = {
     "claude_code": Path(".reverie/AGENTS.md"),
     "opencode": Path(".config/opencode/AGENTS.md"),
     "codex": Path(".codex/AGENTS.md"),
-    "gemini_cli": Path(".gemini/GEMINI.md"),
 }
 
 #: Claude's harness-side file: the import line, not the policy itself.
@@ -405,7 +402,6 @@ UNINSTALL_INSTRUCTION_FILES = {
     "claude_code": CLAUDE_MD,
     "opencode": Path(".config/opencode/AGENTS.md"),
     "codex": Path(".codex/AGENTS.md"),
-    "gemini_cli": Path(".gemini/GEMINI.md"),
 }
 
 
@@ -630,7 +626,6 @@ def test_codex_removes_only_owned_legacy_prompts(tmp_path):
     ("cursor", "cursor"),
     ("opencode", "opencode"),
     ("codex", "codex"),
-    ("gemini_cli", "gemini"),
 ])
 def test_every_integration_launches_with_its_client_key(key, expected,
                                                          tmp_path):
@@ -662,8 +657,8 @@ def test_server_records_client_and_accepts_flag(monkeypatch):
     assert args.client == "opencode"
     set_client(None)
     try:
-        server = ReverieServer(client="gemini")
-        assert server.client == "gemini"
+        server = ReverieServer(client="cursor")
+        assert server.client == "cursor"
         monkeypatch.setattr(mcp_server, "serve", lambda *_a, **_k: None)
         monkeypatch.setattr(ReverieServer, "start_maintenance",
                             lambda *_a, **_k: None)
@@ -847,4 +842,3 @@ def test_capture_turn_cli_routes_through_integrations(home, reverie_home,
 
 def test_harness_hook_names_stay_with_integrations():
     assert get_integration("claude_code").name == "Claude Code"
-    assert get_integration("gemini_cli").name == "Gemini CLI"

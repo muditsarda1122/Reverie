@@ -20,12 +20,10 @@ from .codex import CODEX_PROMPTS
 from .codex import INTEGRATION as CODEX
 from .cursor import CURSOR_COMMANDS
 from .cursor import INTEGRATION as CURSOR
-from .gemini import GEMINI_COMMANDS
-from .gemini import INTEGRATION as GEMINI
 from .opencode import INTEGRATION as OPENCODE
 from .opencode import OPENCODE_COMMANDS
 
-INTEGRATIONS: list[Integration] = [CLAUDE, CURSOR, OPENCODE, CODEX, GEMINI]
+INTEGRATIONS: list[Integration] = [CLAUDE, CURSOR, OPENCODE, CODEX]
 
 #: Back-compat name used by the installer/uninstaller.
 AGENTS: list[Integration] = INTEGRATIONS
@@ -86,7 +84,6 @@ __all__ = [
     "CLAUDE_CODE_COMMANDS",
     "CODEX_PROMPTS",
     "CURSOR_COMMANDS",
-    "GEMINI_COMMANDS",
     "INTEGRATIONS",
     "OPENCODE_COMMANDS",
     "Integration",

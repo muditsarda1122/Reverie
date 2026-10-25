@@ -579,7 +579,8 @@ class TestConsoleScriptDetection:
         import tomllib
         codex = tomllib.loads((home / ".codex" / "config.toml").read_text())
         assert codex["mcp_servers"]["reverie"] == {
-            "command": fake, "args": ["--client", "codex"]}
+            "command": fake, "args": ["--client", "codex"],
+            "default_tools_approval_mode": "writes"}
 
     def test_entry_point_registered_and_launches(self, tmp_path, monkeypatch):
         """The console script exists in the installed distribution and its

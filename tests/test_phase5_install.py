@@ -245,7 +245,8 @@ def test_codex_toml_create_append_replace(dev_install, home, reverie_home):
     assert parsed["mcp_servers"]["reverie"] == {
         "command": python, "args": ["-m", "reverie.mcp_server",
                                     "--client", "codex"],
-        "env": {"PYTHONPATH": str(ROOT)}}
+        "env": {"PYTHONPATH": str(ROOT)},
+        "default_tools_approval_mode": "writes"}
 
     # append to an existing config with other tables
     cfg.write_text('[profile.default]\nmodel = "gpt-5"\n')
@@ -372,8 +373,7 @@ def test_user_level_commands_per_harness(home, reverie_home):
     user-level command location and format (Phase 3)."""
     # mark every harness as installed (detection: binary or marker file)
     for marker in (".claude.json", ".cursor/mcp.json",
-                   ".config/opencode/opencode.json", ".codex/config.toml",
-                   ".gemini/settings.json"):
+                   ".config/opencode/opencode.json", ".codex/config.toml"):
         path = home / marker
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}" if marker.endswith(".toml") is False else "")
@@ -390,12 +390,6 @@ def test_user_level_commands_per_harness(home, reverie_home):
     text = (home / ".config" / "opencode" / "commands"
             / "reverie-status.md").read_text()
     assert text.startswith("---") and "summary" in text
-    # Gemini CLI: ~/.gemini/commands/*.toml (TOML `prompt`)
-    import tomllib as _toml
-    raw = (home / ".gemini" / "commands" / "reverie-review.toml").read_text()
-    parsed = _toml.loads(raw)
-    assert parsed["prompt"].startswith("Review your pending Reverie")
-    assert parsed["description"]
 
 
 def test_claude_review_command_prints_tool_output_verbatim(home, reverie_home):
@@ -826,8 +820,7 @@ def test_cli_subprocess(tmp_path):
     # mark every harness as installed so detection is deterministic
     # (real PATH binaries would make it machine-dependent)
     for marker in (".claude.json", ".cursor/mcp.json",
-                   ".config/opencode/opencode.json", ".codex/config.toml",
-                   ".gemini/settings.json"):
+                   ".config/opencode/opencode.json", ".codex/config.toml"):
         path = fake_home / marker
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}" if not marker.endswith(".toml") else "")
@@ -850,7 +843,6 @@ def test_cli_subprocess(tmp_path):
     assert (rv_dir / "AGENTS.md").exists()
     # per-harness summary names the configured harnesses
     assert "Claude Code:" in proc.stdout
-    assert "Gemini CLI:" in proc.stdout
     assert "Next:" in proc.stdout
     # every written file is inside the fake home — nothing escaped
     assert proc.stdout.count("✓") >= 4

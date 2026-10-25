@@ -671,11 +671,34 @@ def load_install_manifest(reverie_home: Path) -> dict[str, str]:
     return {k: v for k, v in files.items() if isinstance(v, str)}
 
 
-def _record_install_manifest(reverie_home: Path,
-                             created_paths: list[Path]) -> None:
+def load_owned_entries(reverie_home: Path) -> dict[str, tuple[str, ...]]:
+    """Config entries Reverie added, keyed by resolved file path."""
+    try:
+        data = json.loads(install_manifest_path(reverie_home).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, dict):
+        return {}
+    owned: dict[str, tuple[str, ...]] = {}
+    for path, values in entries.items():
+        if isinstance(path, str) and isinstance(values, list):
+            cleaned = tuple(value for value in values
+                            if isinstance(value, str))
+            if cleaned:
+                owned[path] = cleaned
+    return owned
+
+
+def _record_install_manifest(
+        reverie_home: Path, created_paths: list[Path],
+        owned_entries: dict[str, list[str]] | None = None) -> None:
     """Record sha256 hashes for files this run CREATED. Existing entries
     keep their original hash (a user edit must never be re-owned), so this
-    is merge-only and idempotent."""
+    is merge-only and idempotent. ``owned_entries`` records list entries
+    Reverie added to an existing config file, so uninstall removes only
+    those."""
     files = load_install_manifest(reverie_home)
     for path in created_paths:
         try:
@@ -683,11 +706,21 @@ def _record_install_manifest(reverie_home: Path,
         except OSError:
             continue
         files.setdefault(str(Path(path).resolve()), digest)
+    owned = {path: list(values)
+             for path, values in load_owned_entries(reverie_home).items()}
+    for path, values in (owned_entries or {}).items():
+        resolved = str(Path(path).resolve())
+        current = owned.setdefault(resolved, [])
+        for value in values:
+            if value not in current:
+                current.append(value)
+    payload: dict[str, object] = {"version": 1, "files": files}
+    if owned:
+        payload["entries"] = owned
     manifest = install_manifest_path(reverie_home)
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(
-        json.dumps({"version": 1, "files": files}, indent=2) + "\n",
-        encoding="utf-8")
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _command_exists(command: str, which=shutil.which) -> bool:
@@ -971,6 +1004,7 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
 
     current_agent: str | None = None
     created_paths: list[Path] = []
+    owned_entries: dict[str, list[str]] = {}
     for agent_name, write in writes:
         if agent_name != current_agent:
             print_fn(f"\nConfiguring {agent_name}...")
@@ -978,6 +1012,9 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
         _emit(write, home, dry_run, print_fn)
         if not dry_run and write.action in ("create", "create-db"):
             created_paths.append(write.path)
+        if not dry_run and write.owned_entries:
+            owned_entries.setdefault(str(Path(write.path).resolve()),
+                                     []).extend(write.owned_entries)
 
     # -- ~/.reverie bootstrap (§28.2) -------------------------------------------
     # review fix 48: only announce directory creation when it happens.
@@ -1072,7 +1109,7 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     # Record what this run created (folded in, hashes as written) so the
     # uninstaller can distinguish Reverie-created files from user files.
     if not dry_run:
-        _record_install_manifest(reverie_home, created_paths)
+        _record_install_manifest(reverie_home, created_paths, owned_entries)
 
     if dry_run:
         if selected:

@@ -3,7 +3,7 @@
 Everything here is harness-neutral: planned writes/removals, merge helpers,
 the instruction-reference block, and reading a configured MCP entry back.
 A concrete integration lives in its own package (``claude``, ``opencode``,
-``codex``, ``cursor``, ``gemini``) and owns every file path, key name and
+``codex``, ``cursor``) and owns every file path, key name and
 hook schema for that harness.
 
 The core modules import this package only through the registry; nothing in
@@ -36,6 +36,7 @@ class PlannedWrite:
     action: str                # create | merge | append | update | delete-file | unchanged | create-db
     content: str | None        # full resulting content (None for unchanged/create-db)
     detail: str                # transcript-style note for the ✓ line
+    owned_entries: tuple[str, ...] = ()   # config entries this write adds
 
 
 @dataclass
@@ -116,6 +117,45 @@ def _json_merge(path: Path, home: Path, section: str, entry: dict,
     node["reverie"] = merged
     action = "merge" if existed else "create"
     return PlannedWrite(path, action, json.dumps(data, indent=2) + "\n", detail)
+
+
+def _add_permission_entry(data: dict, entry: str, disp: str) -> bool:
+    """Add ``entry`` to ``permissions.allow`` once; return whether it was new."""
+    permissions = data.setdefault("permissions", {})
+    if not isinstance(permissions, dict):
+        raise InstallError(
+            f"{disp}: `permissions` is not a JSON object. Fix or remove it, "
+            "then re-run `reverie install`. No changes were made to it."
+        )
+    allow = permissions.setdefault("allow", [])
+    if not isinstance(allow, list):
+        raise InstallError(
+            f"{disp}: `permissions.allow` must be a JSON list. Fix or remove "
+            "it, then re-run `reverie install`. No changes were made to it."
+        )
+    if entry in allow:
+        return False
+    allow.append(entry)
+    return True
+
+
+def _remove_permission_entry(data: dict, entry: str) -> bool:
+    """Remove one occurrence of ``entry``; drop now-empty owners."""
+    permissions = data.get("permissions")
+    if not isinstance(permissions, dict):
+        return False
+    allow = permissions.get("allow")
+    if not isinstance(allow, list) or entry not in allow:
+        return False
+    index = allow.index(entry)
+    kept = allow[:index] + allow[index + 1:]
+    if kept:
+        permissions["allow"] = kept
+    else:
+        permissions.pop("allow", None)
+        if not permissions:
+            data.pop("permissions", None)
+    return True
 
 
 def _line_once(path: Path, home: Path, line: str, detail: str) -> PlannedWrite:

@@ -2663,13 +2663,6 @@ command = "/absolute/path/to/reverie-mcp"
 - Commands: `~/.codex/prompts/reverie-review.md` / `reverie-status.md` (invoked as `/prompts:reverie-review`; custom prompts are deprecated upstream in favour of skills, but remain the user-level command mechanism).
 - Codex reads the MCP `instructions` field of the initialize response as server-wide guidance (documented).
 
-**Gemini CLI (Phase 3):**
-- Detection: `gemini` binary on PATH or `~/.gemini/settings.json` exists.
-- MCP config: Write to `~/.gemini/settings.json` (JSON, `mcpServers.reverie` with `command`/`args`/`env`).
-- Agent instructions: block appended to `~/.gemini/GEMINI.md` (its global context file; `@file` imports supported).
-- Commands: `~/.gemini/commands/reverie-review.toml` / `reverie-status.toml` (TOML, required `prompt`, optional `description`).
-- Gemini CLI appends MCP server instructions to its system instructions (documented).
-
 ### 28.9 AGENTS.md (Copy-Paste Ready for Development)
 
 This is the complete `~/.reverie/AGENTS.md` file. The install script writes this verbatim. Development should produce this file exactly.
@@ -3139,9 +3132,8 @@ every call. This works in any client that surfaces server instructions and
 is the fallback where instruction files aren't read. Client support
 (vendor docs, 2026-10-15): Claude Code — documented; Codex — documented
 ("reads the MCP `instructions` field … uses it as server-wide guidance");
-Gemini CLI — documented ("appended to the system instructions"); OpenCode —
-captured in recent versions (source; not clearly documented); Cursor — not
-documented (rely on tool descriptions).
+OpenCode — captured in recent versions (source; not clearly documented);
+Cursor — not documented (rely on tool descriptions).
 
 ### 30.3 Harness integration (per current vendor docs, 2026-10-15)
 
@@ -3161,9 +3153,6 @@ documented (rely on tool descriptions).
   (`type: local`, argv `command`, `environment` key — v1 shape); global
   rules `~/.config/opencode/AGENTS.md`; commands
   `~/.config/opencode/commands/*.md` (plural; markdown + frontmatter).
-- **Gemini CLI** — `mcpServers.reverie` in `~/.gemini/settings.json`;
-  global context `~/.gemini/GEMINI.md`; commands
-  `~/.gemini/commands/*.toml` (TOML, required `prompt`).
 
 Each harness gets `/reverie-review` and `/reverie-status`. The installer
 ends with a per-harness summary of what was written and the next step.

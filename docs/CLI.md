@@ -44,7 +44,7 @@ reverie install --import memory.zip # restore an export on a new machine
 | Flag | Effect |
 |---|---|
 | `--all` | configure every detected agent (non-interactive) |
-| `--only A[,B…]` | configure exactly these agents by key (`claude_code`, `codex`, `cursor`, `opencode`, `gemini_cli`); may be undetected |
+| `--only A[,B…]` | configure exactly these agents by key (`claude_code`, `codex`, `cursor`, `opencode`); may be undetected |
 | `--provider NAME` | select the LLM provider without prompting (registry key, e.g. `anthropic`, `openai`, `google`, `openrouter`, `opencode_zen`, `ollama`) |
 | `--no-verify` | skip the live provider ping |
 | `--import FILE` | import a brain export during setup (only into an empty brain) |

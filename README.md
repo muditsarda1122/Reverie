@@ -2,7 +2,7 @@
 
 **Reverie is engineering memory for coding agents.** While you and your agent work, it captures the engineering conclusions you reach — invariants, root causes, decisions, corrected assumptions — and brings them back in a later conversation, after they've been reviewed by you and grounded in your code.
 
-Everything lives in one SQLite file on your machine. Reverie is an MCP server: it plugs into Claude Code, Codex CLI, Cursor, OpenCode and Gemini CLI (see [Supported harnesses](#supported-harnesses) for honest status per harness).
+Everything lives in one SQLite file on your machine. Reverie is an MCP server: it plugs into Claude Code, Codex CLI, Cursor and OpenCode (see [Supported harnesses](#supported-harnesses) for honest status per harness).
 
 ## Install
 
@@ -50,9 +50,8 @@ Observe → extract → review → ground → retrieve. Your agent's reasoning i
 | **Claude Code** | `~/.claude.json` (`mcpServers.reverie`, user scope), `@import` in `~/.claude/CLAUDE.md`, `commands/*.md`, SessionStart + Stop hooks in `settings.json` | 🟡 hand smoke test: SessionStart state + on-request capture; Stop capture offline only | Reads server `instructions`; `~/.claude.json` is also Claude Code's state file (the merge only ever touches its own key); the Stop hook is async and never blocks a session |
 | **Codex CLI** | `~/.codex/config.toml` (`[mcp_servers.reverie]`), `AGENTS.md` block, `prompts/*.md` | ❌ offline install tests only | Reads server `instructions`; custom prompts are deprecated upstream (still the user-level command mechanism) |
 | **Cursor** | `~/.cursor/mcp.json` (`mcpServers.reverie`), `commands/*.md` (beta) | ❌ offline install tests only | No global rules file is written (Cursor documents no global rules file; use Settings → Rules to paste the guidance if you want it always on). Server `instructions` support is not documented by Cursor |
-| **Gemini CLI** | `~/.gemini/settings.json` (`mcpServers.reverie`), `GEMINI.md` block, `commands/*.toml` | ❌ offline install tests only | Reads server `instructions`; Gemini CLI was replaced by Antigravity CLI for unpaid/Google One users in June 2026 (config format unchanged) |
 
-"Smoke-tested" means what it says: OpenCode is exercised end-to-end. Claude Code has been exercised by hand in a smoke test (session start state and capture of a conclusion on request) but not with the per-reply Stop capture, which is new on this branch; that path is verified offline only and needs one live check in Claude Code before merge. Codex, Cursor and Gemini CLI have their written shapes verified against each vendor's current docs and the server is tested over real stdio, but no live sessions — check [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md) if you want the checklist. Any other MCP client works with the manual snippet in [`docs/INSTALLATION.md`](docs/INSTALLATION.md). The integration contract, per-harness paths, hook behaviour and verification date are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
+"Smoke-tested" means what it says: OpenCode is exercised end-to-end. Claude Code has been exercised by hand in a smoke test (session start state and capture of a conclusion on request) but not with the per-reply Stop capture, which is new on this branch; that path is verified offline only and needs one live check in Claude Code before merge. Codex and Cursor have their written shapes verified against each vendor's current docs and the server is tested over real stdio, but no live sessions — check [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md) if you want the checklist. Any other MCP client works with the manual snippet in [`docs/INSTALLATION.md`](docs/INSTALLATION.md). The integration contract, per-harness paths, hook behaviour and verification date are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 
 ## Model providers
 

@@ -146,7 +146,6 @@ def test_uninstall_removes_entries_it_created(home, reverie_home):
     assert not (home / ".codex" / "prompts" / "reverie-review.md").exists()
     assert not (home / ".agents" / "skills" / "reverie-review").exists()
     assert not (home / ".agents" / "skills" / "reverie-status").exists()
-    assert not (home / ".gemini" / "commands" / "reverie-review.toml").exists()
 
 
 def test_uninstall_removes_absolute_path_entries(home, reverie_home):
@@ -365,7 +364,7 @@ def test_confirmation_covers_whole_plan(home, reverie_home, tmp_path):
     # the plan preceded the prompt and named the harnesses + the data step
     plan = "\n".join(out[:plan_at[0]])
     assert "The plan:" in plan
-    assert "Claude Code" in plan and "Gemini CLI" in plan
+    assert "Claude Code" in plan and "Codex" in plan
     assert "final export" in plan
     assert reverie_home.exists() is False        # applied in full
     assert len(list(tmp_path.glob("reverie-final-export-*.zip"))) == 1

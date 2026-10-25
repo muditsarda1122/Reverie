@@ -1,7 +1,7 @@
 # Smoke test — run this yourself in each real harness
 
 A step-by-step checklist for verifying Reverie in a real harness (Claude
-Code, Codex CLI, Cursor, OpenCode, Gemini CLI). Every step gives the exact
+Code, Codex CLI, Cursor, OpenCode). Every step gives the exact
 action and what you should see. Run it against a scratch repo you don't mind
 getting a `.reverie` entry in your global brain about — nothing is written
 inside the repo itself.
@@ -16,9 +16,9 @@ Run the same checklist per harness. Time: ~15 minutes each.
 |---|---|---|
 | 1.1 | `pip install reverie` (or `pip install -e .` in a checkout) | Installs cleanly; `reverie --help` lists the subcommands |
 | 1.2 | `reverie install` | Detects your harnesses (✓/✗ table), asks which to configure, runs the provider step (or offers Ollama), then prints **"Reverie is ready!"** with a per-harness summary — every written file listed with a `Next:` line |
-| 1.3 | Inspect what was written | The harness config contains the `reverie` MCP server entry (e.g. `~/.claude.json` has `mcpServers.reverie`; `~/.codex/config.toml` has `[mcp_servers.reverie]`; `~/.config/opencode/opencode.json` has `mcp.reverie`; `~/.cursor/mcp.json` has `mcpServers.reverie`; `~/.gemini/settings.json` has `mcpServers.reverie`) |
+| 1.3 | Inspect what was written | The harness config contains the `reverie` MCP server entry (e.g. `~/.claude.json` has `mcpServers.reverie`; `~/.codex/config.toml` has `[mcp_servers.reverie]`; `~/.config/opencode/opencode.json` has `mcp.reverie`; `~/.cursor/mcp.json` has `mcpServers.reverie`) |
 | 1.4 | Check `~/.reverie/` | Contains `reverie.db`, `config.yaml`, `AGENTS.md` — no `commands/` directory (commands live per harness now) |
-| 1.5 | Check the harness command directory | `~/.claude/commands/reverie-review.md` + `reverie-status.md`, or `~/.codex/prompts/…`, or `~/.config/opencode/commands/…`, or `~/.cursor/commands/…`, or `~/.gemini/commands/*.toml` |
+| 1.5 | Check the harness command directory | `~/.claude/commands/reverie-review.md` + `reverie-status.md`, or `~/.codex/prompts/…`, or `~/.config/opencode/commands/…`, or `~/.cursor/commands/…` |
 | 1.6 | Start the harness fresh (restart it so the MCP server loads) | The harness's MCP log/panel shows a `reverie` server with 7 tools: `observe`, `query`, `summary`, `reconsolidate`, `set_repo_state`, `review_list`, `review_decide` |
 
 ## 2. The agent asks to turn Reverie on
@@ -97,7 +97,7 @@ Run the same checklist per harness. Time: ~15 minutes each.
 
 ## Known limits to keep in mind while smoke testing
 
-- Claude Code, Codex, Cursor and Gemini CLI are verified against vendor docs
+- Claude Code, Codex and Cursor are verified against vendor docs
   and offline tests, but not yet driven live by the developers — that's what
   this checklist is for. OpenCode is exercised end-to-end.
 - Review through the agent relies on the agent relaying your choices; the
@@ -107,8 +107,6 @@ Run the same checklist per harness. Time: ~15 minutes each.
   seems to ignore the usage contract, paste it into Cursor Settings → Rules.
 - Codex custom prompts are deprecated upstream (still work as
   `/prompts:reverie-review`).
-- Gemini CLI was replaced by Antigravity CLI for unpaid/Google One users
-  (June 2026); the config format is unchanged for existing users.
 - With no LLM key, extraction fails gracefully (pending queue + retry) and
   the review-gate accept can print a "promoted without diffusion" warning —
   `reverie retry --rediffuse` recovers it once a key is configured.

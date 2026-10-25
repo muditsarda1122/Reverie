@@ -24,7 +24,6 @@ from reverie import install, mcp_server
 from reverie.integrations import (
     CLAUDE_CODE_COMMANDS,
     CODEX_PROMPTS,
-    GEMINI_COMMANDS,
     OPENCODE_COMMANDS,
 )
 
@@ -57,7 +56,6 @@ def _agent_facing_texts() -> dict[str, str]:
         ("claude_code command", CLAUDE_CODE_COMMANDS),
         ("opencode command", OPENCODE_COMMANDS),
         ("codex prompt", CODEX_PROMPTS),
-        ("gemini command", GEMINI_COMMANDS),
     ):
         for name, body in commands.items():
             texts[f"{label} {name}"] = body

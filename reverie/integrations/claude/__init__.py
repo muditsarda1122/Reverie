@@ -26,6 +26,7 @@ from ..common import (
     InstallError,
     PlannedRemoval,
     PlannedWrite,
+    _add_permission_entry,
     _agents_ref,
     _display,
     _json_configured_server,
@@ -36,9 +37,13 @@ from ..common import (
     _plan_json_entry,
     _plan_line,
     _plan_verbatim_file,
+    _remove_permission_entry,
     _server_command,
     _verbatim_file,
 )
+
+#: Permission rule that lets Claude call Reverie's MCP tools without prompting.
+_CLAUDE_PERMISSION = "mcp__reverie__*"
 
 #: The retired deferred-ToolSearch line. Install no longer writes it, but
 #: uninstall still removes it from homes written by older versions.
@@ -240,19 +245,26 @@ def _settings_plan(home: Path, session_handler: dict, stop_handler: dict
         )
     _upsert_handler(session_groups, session_handler, "SessionStart", "startup")
     _upsert_handler(stop_groups, stop_handler, "Stop", None)
+    added_permission = _add_permission_entry(data, _CLAUDE_PERMISSION, disp)
     if original and json.dumps(data, sort_keys=True) == original:
         return PlannedWrite(
             path, "unchanged", None,
             f"{disp} already has Reverie hooks — unchanged")
-    detail = (f"Updated Reverie hooks in {disp} (SessionStart + Stop)"
-              if existed else
-              f"Created {disp} with Reverie SessionStart + Stop hooks")
-    return PlannedWrite(path, "merge" if existed else "create",
-                        json.dumps(data, indent=2) + "\n", detail)
+    detail = (
+        f"Updated Reverie settings in {disp} (SessionStart + Stop hooks, "
+        "permissions.allow)" if existed else
+        f"Created {disp} with Reverie SessionStart + Stop hooks and "
+        "permissions.allow")
+    return PlannedWrite(
+        path, "merge" if existed else "create",
+        json.dumps(data, indent=2) + "\n", detail,
+        owned_entries=(_CLAUDE_PERMISSION,) if added_permission else ())
 
 
 def _uninstall_settings(home: Path,
-                        manifest: dict[str, str] | None) -> PlannedRemoval:
+                        manifest: dict[str, str] | None,
+                        owned_entries: set[str] | None = None
+                        ) -> PlannedRemoval:
     path = _settings_path(home)
     disp = _display(path, home)
     if not path.exists():
@@ -267,53 +279,57 @@ def _uninstall_settings(home: Path,
     if not isinstance(data, dict):
         return PlannedRemoval(
             path, "skipped", f"SKIPPED {disp}: does not contain a JSON object.")
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
-        return PlannedRemoval(path, "unchanged", f"{disp}: no Reverie hooks")
     changed = False
     removed_labels = []
-    for event in ("SessionStart", "Stop"):
-        groups = hooks.get(event)
-        if not isinstance(groups, list):
-            continue
-        kept_groups = []
-        for group in groups:
-            if not isinstance(group, dict):
-                kept_groups.append(group)
+    hooks = data.get("hooks")
+    if isinstance(hooks, dict):
+        for event in ("SessionStart", "Stop"):
+            groups = hooks.get(event)
+            if not isinstance(groups, list):
                 continue
-            entries = group.get("hooks")
-            if not isinstance(entries, list):
-                kept_groups.append(group)
-                continue
-            kept = [hook for hook in entries
-                    if not _is_reverie_hook(hook, event)]
-            if len(kept) != len(entries):
-                changed = True
-                removed_labels.append(event)
-            if kept:
-                group = dict(group)
-                group["hooks"] = kept
-                kept_groups.append(group)
-        if kept_groups:
-            hooks[event] = kept_groups
-        else:
-            hooks.pop(event, None)
+            kept_groups = []
+            for group in groups:
+                if not isinstance(group, dict):
+                    kept_groups.append(group)
+                    continue
+                entries = group.get("hooks")
+                if not isinstance(entries, list):
+                    kept_groups.append(group)
+                    continue
+                kept = [hook for hook in entries
+                        if not _is_reverie_hook(hook, event)]
+                if len(kept) != len(entries):
+                    changed = True
+                    removed_labels.append(event)
+                if kept:
+                    group = dict(group)
+                    group["hooks"] = kept
+                    kept_groups.append(group)
+            if kept_groups:
+                hooks[event] = kept_groups
+            else:
+                hooks.pop(event, None)
+        if not hooks:
+            data.pop("hooks", None)
+    if _CLAUDE_PERMISSION in (owned_entries or set()):
+        if _remove_permission_entry(data, _CLAUDE_PERMISSION):
+            changed = True
+            removed_labels.append("permissions.allow")
     if not changed:
         return PlannedRemoval(path, "unchanged", f"{disp}: no Reverie hooks")
-    if not hooks:
-        data.pop("hooks", None)
     if not data:
         if _owned_by_install(path, manifest):
             return PlannedRemoval(
                 path, "delete-file",
-                f"Removed {disp} (Reverie created it; only its hooks were in it)")
+                f"Removed {disp} (Reverie created it; only its Reverie "
+                "entries were in it)")
         return PlannedRemoval(
             path, "remove-entry",
-            f"Removed Reverie hooks from {disp} (empty file kept — it existed "
-            "before install)",
+            f"Removed Reverie hooks/settings from {disp} (empty file kept — "
+            "it existed before install)",
             after="{}\n", removed=", ".join(removed_labels))
     return PlannedRemoval(
-        path, "remove-entry", f"Removed Reverie hooks from {disp}",
+        path, "remove-entry", f"Removed Reverie hooks/settings from {disp}",
         after=json.dumps(data, indent=2) + "\n",
         removed=", ".join(removed_labels))
 
@@ -363,12 +379,15 @@ class ClaudeIntegration(Integration):
         home = Path(home)
         reverie_home = Path(reverie_home) if reverie_home else home / ".reverie"
         ref = _agents_ref(home, reverie_home)
+        from ...install import load_owned_entries
+        owned = set(load_owned_entries(reverie_home).get(
+            str(_settings_path(home).resolve()), ()))
         removals: list[PlannedRemoval] = []
         removals.append(_plan_json_entry(
             home / ".claude.json", home, "mcpServers", "claude", False,
             manifest))
         removals.append(_reference_removal(home, ref, manifest))
-        removals.append(_uninstall_settings(home, manifest))
+        removals.append(_uninstall_settings(home, manifest, owned))
         for name, body in CLAUDE_CODE_COMMANDS.items():
             path = _commands_dir(home) / name
             removals.append(_plan_verbatim_file(

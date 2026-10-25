@@ -66,7 +66,7 @@ What it does, in order:
 
 1. **Detects harnesses** — binary on PATH or the harness's config file exists.
 2. **Selects** — interactive picker, `--all`, or `--only` (keys:
-   `claude_code`, `codex`, `cursor`, `opencode`, `gemini_cli`).
+   `claude_code`, `codex`, `cursor`, `opencode`).
 3. **Per-harness writes** — see the table below. All merges are idempotent:
    only Reverie's own entry is added or replaced, every other key/line/byte
    is preserved, and a malformed file aborts with no changes to it.
@@ -86,9 +86,10 @@ What it does, in order:
 Re-running `reverie install` is safe and is the upgrade path: entries
 upsert idempotently, owned files refresh verbatim, your `config.yaml` is
 kept. Every file the installer *creates* is recorded (path + hash) in
-`~/.reverie/install_manifest.json`, which lets `reverie uninstall` remove
-exactly what it made; a file that existed before install is never deleted —
-uninstall only removes Reverie's entry from it.
+`~/.reverie/install_manifest.json`, along with any list entry it added to an
+existing config file, which lets `reverie uninstall` remove exactly what it
+made; a file that existed before install is never deleted — uninstall only
+removes Reverie's entries from it.
 
 ## What gets written per harness
 
@@ -98,7 +99,16 @@ uninstall only removes Reverie's entry from it.
 | **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | block appended to `~/.codex/AGENTS.md` | `~/.codex/prompts/reverie-review.md`, `reverie-status.md` (invoked `/prompts:reverie-review`) |
 | **Cursor** | `~/.cursor/mcp.json` → `mcpServers.reverie` | **none written** — Cursor documents no global rules file; guidance arrives via the server `instructions` + tool descriptions (paste into Settings → Rules if you want it always on) | `~/.cursor/commands/reverie-review.md`, `reverie-status.md` (beta) |
 | **OpenCode** | `~/.config/opencode/opencode.json` → `mcp.reverie` (`type: local`, argv-list `command`, `environment` key) | block appended to `~/.config/opencode/AGENTS.md` | `~/.config/opencode/commands/reverie-review.md`, `reverie-status.md` |
-| **Gemini CLI** | `~/.gemini/settings.json` → `mcpServers.reverie` | block appended to `~/.gemini/GEMINI.md` | `~/.gemini/commands/reverie-review.toml`, `reverie-status.toml` (TOML `prompt`) |
+
+Claude Code also gets `"mcp__reverie__*"` in `permissions.allow` in
+`~/.claude/settings.json`; Cursor CLI gets `"Mcp(reverie:*)"` in
+`permissions.allow` in `~/.cursor/cli-config.json`. Both merge with existing
+permissions, and uninstall removes the entry only if install added it.
+
+Codex's `[mcp_servers.reverie]` table sets
+`default_tools_approval_mode = "writes"`. Codex prompts for any tool that
+does not declare MCP `readOnlyHint`; Reverie declares no annotations, so
+`query` and `summary` still prompt alongside the write tools.
 
 The server entry itself (pip-installed — pipx, uv tool, venv or system):
 
@@ -132,7 +142,7 @@ and **`/reverie-status`** (the session + brain report through
 `summary`). Formats: plain markdown for Claude Code and Cursor;
 markdown + YAML frontmatter for OpenCode; frontmatter markdown under
 `~/.codex/prompts/` for Codex (custom prompts are deprecated upstream —
-still the user-level mechanism); TOML (`prompt` string) for Gemini CLI.
+still the user-level mechanism).
 All are removed by `reverie uninstall` (verbatim content only — edited
 files are reported, not deleted).
 
@@ -147,8 +157,6 @@ Reverie on. Client support, per each vendor's docs (2026-10-15):
   (documented).
 - **Codex CLI** — "Codex reads the MCP `instructions` field returned during
   initialization and uses it as server-wide guidance" (documented).
-- **Gemini CLI** — instructions are "appended to the system instructions"
-  (documented).
 - **OpenCode** — captured in recent versions (visible in the v1.18+ source;
   not clearly documented).
 - **Cursor** — not documented; rely on tool descriptions there.
@@ -174,11 +182,6 @@ Reverie on. Client support, per each vendor's docs (2026-10-15):
   (`~/.config/opencode/AGENTS.md`), commands
   (`~/.config/opencode/commands/`) — <https://opencode.ai/docs/mcp-servers/>,
   <https://opencode.ai/docs/rules/>, <https://opencode.ai/docs/commands/>
-- Gemini CLI: `~/.gemini/settings.json` (`mcpServers`), `~/.gemini/GEMINI.md`,
-  TOML commands (`~/.gemini/commands/`), server instructions —
-  <https://geminicli.com/docs/tools/mcp-server/>,
-  <https://geminicli.com/docs/cli/gemini-md/>,
-  <https://geminicli.com/docs/cli/custom-commands>
 
 ## Other MCP clients
 
