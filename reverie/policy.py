@@ -11,6 +11,8 @@ USAGE_POLICY = """\
 has no obvious cause, and before an architectural change. Verify grounding \
 references against the code before acting. Memory is a past belief, not an \
 authority.
+- Before editing code in a Reverie-enabled repo, call query for the area \
+you are changing, even when the change looks small.
 - `observe`: after finding a non-obvious invariant, a root cause, an \
 architectural decision, or a disproved assumption. AT MOST ONCE per task; \
 not for simple changes.

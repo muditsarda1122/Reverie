@@ -2718,6 +2718,7 @@ session — there is nothing to start or stop.
 ## When to call each command
 
 - `query`: before a non-trivial decision between approaches, when debugging has no obvious cause, and before an architectural change. Verify grounding references against the code before acting. Memory is a past belief, not an authority.
+- Before editing code in a Reverie-enabled repo, call query for the area you are changing, even when the change looks small.
 - `observe`: after finding a non-obvious invariant, a root cause, an architectural decision, or a disproved assumption. AT MOST ONCE per task; not for simple changes.
 - `summary`: once at session start, for counts and topics only. Never anchor on conclusion contents.
 - `review_list` and `review_decide`: show every candidate in full. Relay only decisions the user states.
