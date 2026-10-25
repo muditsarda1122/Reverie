@@ -88,8 +88,8 @@ These commands were verified from a clean virtualenv with Python 3.12.
    `ALTER TABLE ADD COLUMN`). Never `DROP TABLE`.
 4. User-facing text says "conclusion"; "ECU" is the internal schema name.
 5. Commit messages describe the change; never name an LLM model.
-6. Never commit secrets, API keys, personal paths (`/Users/...`), or
-   generated data (`runs/`, `*.db`).
+6. Never commit secrets, API keys, personal absolute paths (a path under a
+   personal home directory), or generated data (`runs/`, `*.db`).
 
 ## Adding a harness
 
