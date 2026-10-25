@@ -31,6 +31,7 @@ from reverie import cli, core_api, hooks, install, uninstall
 from reverie.brain import Brain
 from reverie.client import get_client, set_client
 from reverie.integrations import AGENTS, get_integration
+from reverie.integrations import common as integration_common
 from reverie.integrations.claude.capture import main as capture_main
 from reverie.integrations.claude.capture import read_exchange
 from reverie.integrations.common import (
@@ -442,6 +443,44 @@ def test_install_inlines_usage_policy_between_markers(key, relative,
     _run_install(home, key)
     again = (home / relative).read_text(encoding="utf-8")
     assert again.count(POLICY_BLOCK_START) == 1
+
+
+@pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
+def test_install_refreshes_stale_policy_block(key, relative, tmp_path,
+                                              monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    path = home / relative
+    path.parent.mkdir(parents=True)
+    path.write_text("# My notes\n", encoding="utf-8")
+    _run_install(home, key)
+    before = path.read_text(encoding="utf-8")
+    start = before.index(POLICY_BLOCK_START)
+    end = before.index(POLICY_BLOCK_END, start) + len(POLICY_BLOCK_END) + 1
+    outside = before[:start] + before[end:]
+
+    new_policy = "## When to call each command\n\n- A brand-new trigger.\n"
+    monkeypatch.setattr(integration_common, "USAGE_POLICY", new_policy)
+    new_block = f"{POLICY_BLOCK_START}\n{new_policy}{POLICY_BLOCK_END}\n"
+
+    transcript = _run_install(home, key)
+    assert transcript.count("refreshed the Reverie block") == 1
+    after = path.read_text(encoding="utf-8")
+    assert after.count(new_block) == 1
+    assert after.count(POLICY_BLOCK_START) == 1
+    assert after.count(POLICY_BLOCK_END) == 1
+    assert USAGE_POLICY not in after          # the stale policy text is gone
+    start = after.index(POLICY_BLOCK_START)
+    end = after.index(POLICY_BLOCK_END, start) + len(POLICY_BLOCK_END) + 1
+    assert after[:start] + after[end:] == outside
+
+    rc = uninstall.run(home=home, reverie_home=home / ".reverie",
+                       yes=True, print_fn=lambda _s: None)
+    assert rc == 0
+    final_text = path.read_text(encoding="utf-8") if path.exists() else ""
+    assert POLICY_BLOCK_START not in final_text
+    assert POLICY_BLOCK_END not in final_text
+    assert new_policy not in final_text
 
 
 @pytest.mark.parametrize("key,relative", sorted(POLICY_FILES.items()))
