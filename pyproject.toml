@@ -9,7 +9,7 @@ description = "Engineering memory for coding agents — conclusions, not logs"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Mudit Sarda", email = "muditsarda23@gmail.com" }]
+authors = [{ name = "Mudit Sarda", email = "mudit@muditsarda.com" }]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
