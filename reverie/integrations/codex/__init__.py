@@ -142,6 +142,11 @@ def _plan_owned_file(path: Path, home: Path,
         "left in place")
 
 
+#: Read-like MCP tools Codex may run without its own approval prompt under
+#: ``default_tools_approval_mode = "writes"``. Every other tool prompts.
+_CODEX_APPROVED_TOOLS: tuple[str, ...] = ("query", "summary", "review_list")
+
+
 def _table(reverie_bin: str | None = None,
            client: str | None = None) -> str:
     command, args, env = _server_command(reverie_bin, client=client)
@@ -155,7 +160,22 @@ def _table(reverie_bin: str | None = None,
     if env:
         lines.append(
             f"env = {{ PYTHONPATH = {json.dumps(env['PYTHONPATH'])} }}")
+    for tool in _CODEX_APPROVED_TOOLS:
+        lines.append("")
+        lines.append(f"[mcp_servers.reverie.tools.{tool}]")
+        lines.append('approval_mode = "approve"')
     return "\n".join(lines)
+
+
+def _table_block_end(lines: list[str], start: int) -> int:
+    """End of the Reverie TOML block: the next table header that is not a
+    Reverie subtable."""
+    return next(
+        (i for i in range(start + 1, len(lines))
+         if lines[i].strip().startswith("[")
+         and not lines[i].strip().startswith("[mcp_servers.reverie.")),
+        len(lines),
+    )
 
 
 def _toml_plan(path: Path, home: Path, table: str) -> PlannedWrite:
@@ -184,11 +204,7 @@ def _toml_plan(path: Path, home: Path, table: str) -> PlannedWrite:
             new += "\n"
         new += table + "\n"
     else:
-        end = next(
-            (i for i in range(start + 1, len(lines))
-             if lines[i].strip().startswith("[")),
-            len(lines),
-        )
+        end = _table_block_end(lines, start)
         replacement = table.splitlines()
         if end < len(lines):
             replacement.append("")
@@ -232,11 +248,7 @@ def _uninstall_toml(path: Path, home: Path,
     )
     if start is None:
         return PlannedRemoval(path, "unchanged", f"{disp}: no reverie table")
-    end = next(
-        (i for i in range(start + 1, len(lines))
-         if lines[i].strip().startswith("[")),
-        len(lines),
-    )
+    end = _table_block_end(lines, start)
     new_lines = lines[:start] + lines[end:]
     after = "\n".join(new_lines).rstrip("\n")
     if not after.strip():

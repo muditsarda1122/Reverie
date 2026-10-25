@@ -246,7 +246,9 @@ def test_codex_toml_create_append_replace(dev_install, home, reverie_home):
         "command": python, "args": ["-m", "reverie.mcp_server",
                                     "--client", "codex"],
         "env": {"PYTHONPATH": str(ROOT)},
-        "default_tools_approval_mode": "writes"}
+        "default_tools_approval_mode": "writes",
+        "tools": {tool: {"approval_mode": "approve"}
+                  for tool in ("query", "summary", "review_list")}}
 
     # append to an existing config with other tables
     cfg.write_text('[profile.default]\nmodel = "gpt-5"\n')
@@ -255,15 +257,20 @@ def test_codex_toml_create_append_replace(dev_install, home, reverie_home):
     assert parsed["profile"]["default"]["model"] == "gpt-5"    # untouched
     assert parsed["mcp_servers"]["reverie"]["command"] == python
 
-    # an existing ec table is replaced, not duplicated
+    # an existing ec table (with stale tool tables) is replaced, not duplicated
     cfg.write_text(
         cfg.read_text().replace(f'command = {json.dumps(python)}',
-                                'command = "old"'))
+                                'command = "old"')
+        .replace('approval_mode = "approve"', 'approval_mode = "prompt"'))
     run_install(home, reverie_home, only=["codex"])
     text = cfg.read_text()
     assert text.count("[mcp_servers.reverie]") == 1
     assert 'command = "old"' not in text
-    assert tomllib.loads(text)["profile"]["default"]["model"] == "gpt-5"
+    parsed = tomllib.loads(text)
+    assert parsed["profile"]["default"]["model"] == "gpt-5"
+    assert parsed["mcp_servers"]["reverie"]["tools"] == {
+        tool: {"approval_mode": "approve"}
+        for tool in ("query", "summary", "review_list")}
 
 
 def test_codex_agents_md_append_idempotent(home, reverie_home):

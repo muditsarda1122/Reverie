@@ -161,11 +161,11 @@ uninstall removes only the entry install recorded as its own.
 `$schema: https://opencode.ai/config.json` when created.
 
 **Codex CLI** — `config.toml` gets a real `[mcp_servers.reverie]` table with
-`default_tools_approval_mode = "writes"`: write-capable tools keep their
-approval prompt. Codex treats any tool without MCP `readOnlyHint` as a write,
-and Reverie's tools are unannotated, so `query` and `summary` prompt too. User
-prompts under `prompts/` are deprecated upstream but still the user-level
-command mechanism.
+`default_tools_approval_mode = "writes"` plus per-tool
+`[mcp_servers.reverie.tools.<tool>] approval_mode = "approve"` for the
+read-like `query`, `summary` and `review_list`; write tools keep their
+approval prompt. User prompts under `prompts/` are deprecated upstream but
+still the user-level command mechanism.
 
 ## Adding a harness
 

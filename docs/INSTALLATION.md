@@ -106,9 +106,10 @@ Claude Code also gets `"mcp__reverie__*"` in `permissions.allow` in
 permissions, and uninstall removes the entry only if install added it.
 
 Codex's `[mcp_servers.reverie]` table sets
-`default_tools_approval_mode = "writes"`. Codex prompts for any tool that
-does not declare MCP `readOnlyHint`; Reverie declares no annotations, so
-`query` and `summary` still prompt alongside the write tools.
+`default_tools_approval_mode = "writes"` and per-tool
+`[mcp_servers.reverie.tools.<tool>] approval_mode = "approve"` for `query`,
+`summary` and `review_list`. Write tools (`observe`, `reconsolidate`,
+`set_repo_state`, `review_decide`) keep Codex's approval prompt.
 
 The server entry itself (pip-installed — pipx, uv tool, venv or system):
 

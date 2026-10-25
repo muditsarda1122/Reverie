@@ -7,6 +7,7 @@ All offline, everything under tmp_path (sandboxed home + REVERIE_HOME).
 
 import json
 import os
+import tomllib
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
@@ -146,6 +147,25 @@ def test_uninstall_removes_entries_it_created(home, reverie_home):
     assert not (home / ".codex" / "prompts" / "reverie-review.md").exists()
     assert not (home / ".agents" / "skills" / "reverie-review").exists()
     assert not (home / ".agents" / "skills" / "reverie-status").exists()
+
+
+def test_codex_uninstall_removes_tool_approval_tables(home, reverie_home):
+    cfg = home / ".codex" / "config.toml"
+    cfg.parent.mkdir()
+    cfg.write_text('model = "gpt-5"\n')
+    do_install(home, reverie_home)
+    parsed = tomllib.loads(cfg.read_text())
+    assert parsed["mcp_servers"]["reverie"]["default_tools_approval_mode"] == \
+        "writes"
+    assert set(parsed["mcp_servers"]["reverie"]["tools"]) == {
+        "query", "summary", "review_list"}
+
+    code, transcript = do_uninstall(home, reverie_home)
+    assert code == 0
+    parsed = tomllib.loads(cfg.read_text())
+    assert "mcp_servers" not in parsed or "reverie" not in parsed["mcp_servers"]
+    assert "reverie" not in cfg.read_text()
+    assert parsed["model"] == "gpt-5"
 
 
 def test_uninstall_removes_absolute_path_entries(home, reverie_home):
