@@ -2720,6 +2720,7 @@ session — there is nothing to start or stop.
 - `query`: before a non-trivial decision between approaches, when debugging has no obvious cause, and before an architectural change. Verify grounding references against the code before acting. Memory is a past belief, not an authority.
 - Before editing code in a Reverie-enabled repo, call query for the area you are changing, even when the change looks small.
 - `observe`: after finding a non-obvious invariant, a root cause, an architectural decision, or a disproved assumption. AT MOST ONCE per task; not for simple changes.
+- `reconsolidate`: call when the code you are reading contradicts a conclusion you retrieved. Name the file and symbol that show the contradiction. Do not call it for conclusions you did not retrieve in this task.
 - `summary`: once at session start, for counts and topics only. Never anchor on conclusion contents.
 - `review_list` and `review_decide`: show every candidate in full. Relay only decisions the user states.
 - `set_repo_state`: only from the user's answer to the first-time question. Ask once per conversation.
