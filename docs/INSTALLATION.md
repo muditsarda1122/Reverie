@@ -32,19 +32,21 @@ work tree.
 reverie install                    # interactive
 reverie install --all              # every detected harness, non-interactive
 reverie install --only claude_code,codex --provider anthropic --no-verify
-reverie install --reconfigure      # ask the provider question again
 reverie install --dry-run          # print every planned write, change nothing
 reverie install --import memory.zip  # new machine: restore an export
 ```
 
 `--provider <key>` configures an LLM provider without prompting (see the
-provider table below); `--reconfigure` asks the provider question again even
-when `config.yaml` already carries an `llm` block (by default an existing
-block is kept and only re-verified); `--no-verify` skips the live ping.
-After the provider is configured the installer pings it once with the model
-name read from the written config. A failed ping makes the install **exit
-non-zero** with "Reverie is installed, but the LLM is not reachable." — the
-config and harness entries are still written; fix the key/model and re-run.
+provider table below). By default an existing `llm` block in `config.yaml` is
+kept and only re-verified — `--provider` is the explicit way to change it.
+`--no-verify` skips the live ping. (The standalone `python -m reverie.install`
+entry point also accepts `--reconfigure`, which re-asks the provider question
+even when an `llm` block exists; the `reverie install` subcommand does not
+expose that flag.) After the provider is configured the installer pings it
+once with the model name read from the written config. A failed ping makes
+the install **exit non-zero** with "Reverie is installed, but the LLM is not
+reachable." — the config and harness entries are still written; fix the
+key/model and re-run.
 
 | Provider (`--provider`) | Key environment variable | Default model |
 |---|---|---|
@@ -78,8 +80,8 @@ What it does, in order:
    line, and pings the provider once with the configured model name. A
    failed ping is reported and the install **exits 1**. If `config.yaml`
    already contains an `llm` block it is kept and only re-verified —
-   `--provider` or `--reconfigure` are the explicit ways to change it. Keys
-   are never written to disk.
+   `--provider` is the explicit way to change it. Keys are never written to
+   disk.
 6. **Per-harness summary** — exactly what was written and the next step in
    that harness.
 
@@ -93,10 +95,10 @@ removes Reverie's entries from it.
 
 ## What gets written per harness
 
-| Harness | MCP server (user scope) | Instructions | Slash commands |
+| Harness | MCP server (user scope) | Instructions | Commands |
 |---|---|---|---|
-| **Claude Code** | `~/.claude.json` → top-level `mcpServers.reverie` (`type: stdio`) | `@~/.reverie/AGENTS.md` import appended to `~/.claude/CLAUDE.md` | `~/.claude/commands/reverie-review.md`, `reverie-status.md` |
-| **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | block appended to `~/.codex/AGENTS.md` | `~/.codex/prompts/reverie-review.md`, `reverie-status.md` (invoked `/prompts:reverie-review`) |
+| **Claude Code** | `~/.claude.json` → top-level `mcpServers.reverie` (`type: stdio`, `alwaysLoad: true`) | `@~/.reverie/AGENTS.md` import appended to `~/.claude/CLAUDE.md` | `~/.claude/commands/reverie-review.md`, `reverie-status.md` |
+| **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | block appended to `~/.codex/AGENTS.md` | skills under `~/.agents/skills/` (Codex 0.163 no longer loads `~/.codex/prompts/`; old prompt files are removed by install) |
 | **Cursor** | `~/.cursor/mcp.json` → `mcpServers.reverie` | **none written** — Cursor documents no global rules file; guidance arrives via the server `instructions` + tool descriptions (paste into Settings → Rules if you want it always on) | `~/.cursor/commands/reverie-review.md`, `reverie-status.md` (beta) |
 | **OpenCode** | `~/.config/opencode/opencode.json` → `mcp.reverie` (`type: local`, argv-list `command`, `environment` key) | block appended to `~/.config/opencode/AGENTS.md` | `~/.config/opencode/commands/reverie-review.md`, `reverie-status.md` |
 
@@ -141,9 +143,9 @@ mechanism: **`/reverie-review`** (asks the agent to list review candidates,
 show every candidate's full text, and relay only the decisions you state)
 and **`/reverie-status`** (the session + brain report through
 `summary`). Formats: plain markdown for Claude Code and Cursor;
-markdown + YAML frontmatter for OpenCode; frontmatter markdown under
-`~/.codex/prompts/` for Codex (custom prompts are deprecated upstream —
-still the user-level mechanism).
+markdown + YAML frontmatter for OpenCode; skills under `~/.agents/skills/`
+for Codex 0.163+ (invoked `$reverie-review` / listed under `/skills`;
+older prompt-file installs are cleaned up by install).
 All are removed by `reverie uninstall` (verbatim content only — edited
 files are reported, not deleted).
 
@@ -170,10 +172,10 @@ Reverie on. Client support, per each vendor's docs (2026-10-15):
   <https://code.claude.com/docs/en/mcp>, <https://code.claude.com/docs/en/memory>,
   <https://code.claude.com/docs/en/slash-commands>
 - Codex CLI: MCP config (`~/.codex/config.toml`, `[mcp_servers.*]`), global
-  `AGENTS.md`, custom prompts (`~/.codex/prompts/`, deprecated), server
+  `AGENTS.md`, skills (`~/.agents/skills/`; custom prompts
+  `~/.codex/prompts/` are no longer loaded by Codex 0.163+), server
   instructions — <https://developers.openai.com/codex/mcp>,
-  <https://developers.openai.com/codex/guides/agents-md>,
-  <https://developers.openai.com/codex/custom-prompts>
+  <https://developers.openai.com/codex/guides/agents-md>
 - Cursor: global MCP (`~/.cursor/mcp.json`), rules (User Rules in settings;
   no documented global rules **file**), commands (`~/.cursor/commands/`,
   beta) — <https://www.cursor.com/docs/mcp>,
@@ -193,7 +195,8 @@ Any client that launches a stdio MCP server works:
   `<venv>/bin/python -m reverie.mcp_server` with `PYTHONPATH=<repo root>`
   (dev checkout)
 - transport: stdio, NDJSON JSON-RPC 2.0, protocol `2024-11-05`
-- 7 tools (see the README's glossary + `docs/CLI.md`)
+- 7 tools (`observe`, `query`, `summary`, `reconsolidate`,
+  `set_repo_state`, `review_list`, `review_decide`)
 
 ## Uninstall
 

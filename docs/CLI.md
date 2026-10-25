@@ -3,16 +3,15 @@
 Every `reverie` command and flag. Exit codes: `0` success, `1` failure
 (printed to stderr), `2` unknown command / usage error.
 
+Global flag: `reverie --client KEY <command>` records the harness key that
+launched the command (for logs; no behaviour change).
+
 The MCP server is `reverie-mcp` (launched by your agent's config — not meant
 to run by hand). There are no other console scripts.
 
 ## reverie (bare)
 
-Prints the command help.
-
-```bash
-reverie
-```
+Prints the command help (as does `reverie --help`).
 
 A mistyped first word (`reverie reveiw`) is an error with a "did you mean"
 hint (exit 2).

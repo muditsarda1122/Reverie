@@ -51,20 +51,18 @@ may ignore it.
 
 | Harness | MCP config | Instruction reference | Commands / prompts | SessionStart | Stop capture | Detection | Smoke-tested |
 |---|---|---|---|---|---|---|---|
-| **Claude Code** | `~/.claude.json` → `mcpServers.reverie` (`type: stdio`) | `~/.claude/CLAUDE.md` → `@~/.reverie/AGENTS.md` | `~/.claude/commands/reverie-review.md`, `reverie-status.md` | ✅ `settings.json` → `hooks.SessionStart`, matcher `startup` | ✅ `settings.json` → `hooks.Stop`, async, 20s timeout | `claude` binary or `.claude.json` | 🟡 hand smoke test: SessionStart state + on-request capture; Stop capture offline only |
-| **Cursor** | `~/.cursor/mcp.json` → `mcpServers.reverie` | None (Cursor documents no global rules file; MCP `instructions` carries the contract) | `~/.cursor/commands/reverie-review.md`, `reverie-status.md` (beta) | — | — | `cursor` binary or `.cursor/mcp.json` | ❌ offline install tests only |
-| **OpenCode** | `~/.config/opencode/opencode.json` → `mcp.reverie` (`type: local`, `enabled: true`, `environment`) | `~/.config/opencode/AGENTS.md` reference block | `~/.config/opencode/commands/reverie-review.md`, `reverie-status.md` | — | — | `opencode` binary or the config | ✅ offline tests + live E2E + EC-Bench |
-| **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | `~/.codex/AGENTS.md` reference block | `~/.codex/prompts/reverie-review.md`, `reverie-status.md` (`/prompts:`) | — | — | `codex` binary or `.codex/config.toml` | ❌ offline install tests only |
+| **Claude Code** | `~/.claude.json` → `mcpServers.reverie` (`type: stdio`, `alwaysLoad: true`) | `~/.claude/CLAUDE.md` → `@~/.reverie/AGENTS.md` | `~/.claude/commands/reverie-review.md`, `reverie-status.md` | ✅ `settings.json` → `hooks.SessionStart`, matcher `startup` | ✅ `settings.json` → `hooks.Stop`, async, 20s timeout | `claude` binary or `.claude.json` | ✅ tools load upfront; memory use verified (see [`SUPPORTED_HARNESSES.md`](SUPPORTED_HARNESSES.md)) |
+| **Cursor** | `~/.cursor/mcp.json` → `mcpServers.reverie` | None (Cursor documents no global rules file; MCP `instructions` carries the contract) | `~/.cursor/commands/reverie-review.md`, `reverie-status.md` (beta) | — | — | `cursor` binary or `.cursor/mcp.json` | ✅ CLI 2026.10.22: tools + commands verified, memory use |
+| **OpenCode** | `~/.config/opencode/opencode.json` → `mcp.reverie` (`type: local`, `enabled: true`, `environment`) | `~/.config/opencode/AGENTS.md` reference block | `~/.config/opencode/commands/reverie-review.md`, `reverie-status.md` | — | — | `opencode` binary or the config | ✅ offline tests + live E2E + benchmark |
+| **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | `~/.codex/AGENTS.md` reference block | skills under `~/.agents/skills/` (`$reverie-review`; Codex 0.163 no longer loads `~/.codex/prompts/`, and install removes old prompt files) | — | — | `codex` binary or `.codex/config.toml` | ✅ CLI 0.163.0: tools + skills verified, memory use |
 
-**Honest status.** “Smoke-tested” is the same honest column as the README.
-OpenCode is exercised end-to-end. Claude Code has been exercised by hand in a
-smoke test: session start state and capture of a conclusion on request. It has
-not been exercised with the per-reply Stop capture, which is new on this
-branch; that path is verified offline only and needs one live check in Claude
-Code before merge. Codex and Cursor have their written shapes
-checked against the vendors' current docs and the server tested over real
-stdio, but no live sessions. Use [`SMOKE_TEST.md`](SMOKE_TEST.md) for the
-manual checklist.
+**Honest status.** The tested version and the exact verification for each
+harness live in [`SUPPORTED_HARNESSES.md`](SUPPORTED_HARNESSES.md) — that
+table is updated with the same commit as the change it verifies, so it stays
+the authority. OpenCode is additionally exercised end-to-end by the offline
+test suite, the live E2E test, and the benchmark; the Claude Code Stop
+capture is verified offline and in hand smoke tests. Use
+[`SMOKE_TEST.md`](SMOKE_TEST.md) for the manual checklist.
 
 ## Lifecycle hooks
 
@@ -164,8 +162,8 @@ uninstall removes only the entry install recorded as its own.
 `default_tools_approval_mode = "writes"` plus per-tool
 `[mcp_servers.reverie.tools.<tool>] approval_mode = "approve"` for the
 read-like `query`, `summary` and `review_list`; write tools keep their
-approval prompt. User prompts under `prompts/` are deprecated upstream but
-still the user-level command mechanism.
+approval prompt. Commands are installed as skills under `~/.agents/skills/`
+(Codex 0.163+; install also removes old `~/.codex/prompts/` files it wrote).
 
 ## Adding a harness
 

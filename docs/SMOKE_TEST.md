@@ -18,10 +18,10 @@ Run the same checklist per harness. Time: ~15 minutes each.
 | Step | Action | Expected |
 |---|---|---|
 | 1.1 | `pip install reverie` (or `pip install -e .` in a checkout) | Installs cleanly; `reverie --help` lists the subcommands |
-| 1.2 | `reverie install` | Detects your harnesses (✓/✗ table), asks which to configure, runs the provider step (or offers Ollama), then prints **"Reverie is ready!"** with a per-harness summary — every written file listed with a `Next:` line |
+| 1.2 | `reverie install` | Detects your harnesses (✓/✗ table), asks which to configure, runs the provider step (or offers Ollama), verifies each written server command starts (✓/✗), and prints a per-harness summary — every written file listed with a `Next:` line |
 | 1.3 | Inspect what was written | The harness config contains the `reverie` MCP server entry (e.g. `~/.claude.json` has `mcpServers.reverie`; `~/.codex/config.toml` has `[mcp_servers.reverie]`; `~/.config/opencode/opencode.json` has `mcp.reverie`; `~/.cursor/mcp.json` has `mcpServers.reverie`) |
 | 1.4 | Check `~/.reverie/` | Contains `reverie.db`, `config.yaml`, `AGENTS.md` — no `commands/` directory (commands live per harness now) |
-| 1.5 | Check the harness command directory | `~/.claude/commands/reverie-review.md` + `reverie-status.md`, or `~/.codex/prompts/…`, or `~/.config/opencode/commands/…`, or `~/.cursor/commands/…` |
+| 1.5 | Check the harness command directory | `~/.claude/commands/reverie-review.md` + `reverie-status.md`, or `~/.agents/skills/…` (Codex), or `~/.config/opencode/commands/…`, or `~/.cursor/commands/…` |
 | 1.6 | Start the harness fresh (restart it so the MCP server loads) | The harness's MCP log/panel shows a `reverie` server with 7 tools: `observe`, `query`, `summary`, `reconsolidate`, `set_repo_state`, `review_list`, `review_decide` |
 
 ## 2. The agent asks to turn Reverie on
@@ -43,7 +43,7 @@ Run the same checklist per harness. Time: ~15 minutes each.
 
 | Step | Action | Expected |
 |---|---|---|
-| 4.1 | Type `/reverie-review` in the harness chat (Codex: `/prompts:reverie-review`) | The agent calls `review_list`, shows the candidate's full conclusion text, and asks what to do — it does NOT decide for you |
+| 4.1 | Type `/reverie-review` in the harness chat (Codex: `$reverie-review`) | The agent calls `review_list`, shows the candidate's full conclusion text, and asks what to do — it does NOT decide for you |
 | 4.2 | In a terminal: `reverie review` | The same candidate appears in the TUI, strongest first, one at a time with a/r/s hints. Press `q` to quit without deciding (leave it for step 5) |
 | 4.3 | (optional) `reverie status` | The brain report shows the pending-review count |
 
@@ -108,8 +108,8 @@ Run the same checklist per harness. Time: ~15 minutes each.
 - Cursor: no global rules file exists; guidance arrives via the MCP server
   instructions (if Cursor surfaces them) + tool descriptions. If the agent
   seems to ignore the usage contract, paste it into Cursor Settings → Rules.
-- Codex custom prompts are deprecated upstream (still work as
-  `/prompts:reverie-review`).
+- Codex commands are skills under `~/.agents/skills/` (Codex 0.163+;
+  `$reverie-review`).
 - With no LLM key, extraction fails gracefully (pending queue + retry) and
   the review-gate accept can print a "promoted without diffusion" warning —
   `reverie retry --rediffuse` recovers it once a key is configured.

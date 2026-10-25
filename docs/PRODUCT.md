@@ -276,7 +276,7 @@ Same core fields plus: `session_id` (FK), `review_status` (`pending | accepted |
     "created_at": "2026-08-13T08:52:11.415901+00:00"
   },
   "grounding": {
-    "repo_path": "/Users/me/src/myapp",
+    "repo_path": "/home/me/src/myapp",
     "files": ["auth/token_manager.rs", "auth/cache.rs"],
     "symbols": ["TokenManager::refresh", "TokenManager::clear_cache"],
     "commit_hash": "d64d0e07c1ab"

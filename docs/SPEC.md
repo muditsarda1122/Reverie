@@ -2541,7 +2541,7 @@ Configuring Claude Code...
 
 Configuring Codex...
   ✓ Added [mcp_servers.reverie] to ~/.codex/config.toml
-  ✓ Wrote ~/.codex/prompts/reverie-review.md (/prompts:reverie-review)
+  ✓ Wrote ~/.agents/skills/reverie-review.md (Codex skill $reverie-review)
 
 Creating ~/.reverie/ directory...
   ✓ Created ~/.reverie/reverie.db (empty brain, initialised)
@@ -2660,7 +2660,9 @@ command = "/absolute/path/to/reverie-mcp"
 ```
 - If `~/.codex/config.toml` already exists, append the `[mcp_servers.reverie]` table without overwriting other configuration.
 - Agent instructions: Codex reads `AGENTS.md`. The install script creates or appends to `~/.codex/AGENTS.md` with a reference to `~/.reverie/AGENTS.md`.
-- Commands: `~/.codex/prompts/reverie-review.md` / `reverie-status.md` (invoked as `/prompts:reverie-review`; custom prompts are deprecated upstream in favour of skills, but remain the user-level command mechanism).
+- Commands: skills under `~/.agents/skills/` (`$reverie-review`,
+  `$reverie-status`; Codex 0.163 no longer loads custom prompts from
+  `~/.codex/prompts/`, and install removes old prompt files Reverie wrote).
 - Codex reads the MCP `instructions` field of the initialize response as server-wide guidance (documented).
 
 ### 28.9 AGENTS.md (Copy-Paste Ready for Development)
@@ -2889,9 +2891,9 @@ At `/ec-stop`, all Session Brain ECUs go to the Review Gate. Only after human re
 │  (Claude Code / Cursor / OpenCode / Codex)                  │
 │                                                             │
 │  Reads ~/.reverie/AGENTS.md (via CLAUDE.md import,               │
-│    .cursor/rules/, ~/.config/opencode/, ~/.codex/AGENTS.md) │
+│    ~/.config/opencode/AGENTS.md, ~/.codex/AGENTS.md)        │
 │                                                             │
-│  User runs: /ec-start, /ec-stop, /ec-status                 │
+│  Sessions are automatic; the user never starts or stops one │
 └────────────────────────┬────────────────────────────────────┘
                          │
                     stdio (MCP)
@@ -3140,13 +3142,15 @@ Cursor — not documented (rely on tool descriptions).
 ### 30.3 Harness integration (per current vendor docs, 2026-10-15)
 
 - **Claude Code** — user-scope MCP in `~/.claude.json` (top-level
-  `mcpServers`); `@~/.reverie/AGENTS.md` import in `~/.claude/CLAUDE.md`
+  `mcpServers`, `type: stdio`, `alwaysLoad: true` so the tools load
+  upfront); `@~/.reverie/AGENTS.md` import in `~/.claude/CLAUDE.md`
   (auto-trusted for user files); user-level commands in
   `~/.claude/commands/*.md` (legacy command files still work; commands
   have merged into skills).
 - **Codex** — `[mcp_servers.reverie]` in `~/.codex/config.toml`; global
-  instructions `~/.codex/AGENTS.md`; commands `~/.codex/prompts/*.md`
-  (deprecated upstream, still the user-level mechanism).
+  instructions `~/.codex/AGENTS.md`; skills under `~/.agents/skills/`
+  (Codex 0.163 no longer loads `~/.codex/prompts/*.md`; install removes
+  old prompt files Reverie wrote).
 - **Cursor** — global MCP `~/.cursor/mcp.json`; **no global rules file is
   written** (Cursor documents no global rules file format; the documented
   global mechanism is User Rules in settings); commands
