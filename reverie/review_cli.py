@@ -34,6 +34,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+from typing import Any, cast
 
 from . import repos, review_queue
 from .brain import Brain, BrainError
@@ -172,7 +173,7 @@ def decide_candidate(
         "action": action,
         "diffused": action != "accept" or (
             result is not None and candidate["id"] not in result.undiffused),
-        "warning": diffusion_failure_warning(result)
+        "warning": diffusion_failure_warning(cast(Any, result))
         if action == "accept" else None,
     }
 

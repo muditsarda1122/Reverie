@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import PurePath
+from typing import Any
 
 from .activation import ActivationState
 from .confidence import ecu_effective_confidence
@@ -400,7 +401,7 @@ def _build_group(brain, core_entry: dict, *, depth: int, session_id: str | None)
     highest-priority slot (contradicts > depends_on > supports > supersedes).
     """
     core = core_entry["ecu"]
-    group = {
+    group: dict[str, Any] = {
         "core": core_entry,
         "supporting_evidence": [],
         "contradictions": [],

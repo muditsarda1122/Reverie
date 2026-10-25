@@ -40,8 +40,7 @@ from reverie.integrations.common import (
     POLICY_BLOCK_START,
     _legacy_reference_block,
 )
-from reverie.mcp_server import (_RECONSOLIDATE_DESCRIPTION,
-                                SERVER_INSTRUCTIONS, ReverieServer)
+from reverie.mcp_server import _RECONSOLIDATE_DESCRIPTION, SERVER_INSTRUCTIONS, ReverieServer
 from reverie.policy import USAGE_POLICY
 from reverie.session import SessionManager
 

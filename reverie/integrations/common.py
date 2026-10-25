@@ -235,7 +235,9 @@ def _block_once(path: Path, home: Path, marker: str, block: str,
             span = _inline_block_span(text)
             stale = span is not None and text[span[0]:span[1]] != block
             if stale or spans:
-                edits = ([(span[0], span[1], block)] if stale else []) + [
+                inline = ([(span[0], span[1], block)]
+                          if stale and span is not None else [])
+                edits = inline + [
                     (start, end, "") for start, end in spans]
                 edits.sort()
                 out: list[str] = []
@@ -285,7 +287,7 @@ def _verbatim_file(path: Path, home: Path, content: str,
         path, "update" if path.exists() else "create", content, detail)
 
 
-def _mcp_entry(command: str, args: list[str], env: dict,
+def _mcp_entry(command: "str | list[str]", args: list[str], env: dict,
                extra: dict | None = None) -> dict:
     """JSON MCP-server entry; empty args/env keys are omitted (D45 writes the
     absolute console-script path as just {"command": "/abs/path/reverie-mcp"})."""

@@ -28,6 +28,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import cast
 
 import numpy as np
 
@@ -420,7 +421,7 @@ def _contradicts_edges_between(brain: Brain, id_a: str, id_b: str) -> list[dict]
 
 
 def find_open_question_pairs(brain: Brain, now: datetime | None = None,
-                             config=None) -> list[dict]:
+                             config=None) -> dict[str, list[dict]]:
     """Open_question ECUs grouped into their competing pairs (§17.5).
 
     A pair is two open_question canonical ECUs joined by a contradicts edge.
@@ -435,7 +436,8 @@ def find_open_question_pairs(brain: Brain, now: datetime | None = None,
     parked = brain.list_ecus(status="open_question")
     by_id = {e["id"]: e for e in parked}
     seen: set[frozenset] = set()
-    pairs, paired_ids = [], set()
+    pairs: list[dict] = []
+    paired_ids: set[str] = set()
     entries = []
     for ecu in parked:
         since = (ecu.get("metadata") or {}).get("competing_since")
@@ -454,7 +456,7 @@ def find_open_question_pairs(brain: Brain, now: datetime | None = None,
                 continue
             seen.add(key)
             other = by_id[other_id]
-            paired_ids.update((ecu["id"], other_id))
+            paired_ids.update((ecu["id"], cast(str, other_id)))
             since = (ecu.get("metadata") or {}).get("competing_since") or \
                     (other.get("metadata") or {}).get("competing_since")
             since_dt = _parse_iso(since) if since else None
@@ -517,10 +519,11 @@ def apply_open_question_resolution(
             raise ReviewGateError(
                 f"choice (b) needs preferred_id of the pair, got {preferred_id!r}"
             )
+
     note_date = now.date().isoformat()
 
     def _both(action) -> None:
-        action(ecu_a)
+        action(cast(dict, ecu_a))
         if ecu_b is not None:
             action(ecu_b)
 
@@ -533,8 +536,8 @@ def apply_open_question_resolution(
         message = (f"{id_a} and {id_b} returned to challenged; "
                    "the persistence clock was reset.")
     elif choice == "b":                                 # (b) mark one preferred
-        loser = ecu_b if preferred_id == id_a else ecu_a
-        winner = ecu_a if preferred_id == id_a else ecu_b
+        loser = cast(dict, ecu_b) if preferred_id == id_a else cast(dict, ecu_a)
+        winner = cast(dict, ecu_a) if preferred_id == id_a else cast(dict, ecu_b)
         bumped = conf.reinforce_stored_confidence(winner["confidence"], cfg)
         brain.update_ecu_confidence(winner["id"], bumped)
         brain.update_ecu_status(winner["id"], "active")
@@ -552,7 +555,7 @@ def apply_open_question_resolution(
                 ecu["id"],
                 orthogonal_note=(f"User reclassified as orthogonal on "
                                  f"{note_date}"))
-        for edge in _contradicts_edges_between(brain, id_a, id_b):
+        for edge in _contradicts_edges_between(brain, id_a, cast(str, id_b)):
             brain.delete_edge(edge["id"])
         _both(_orthogonal)
         message = (f"{id_a} and {id_b} are both active again; the contradicts "
@@ -790,7 +793,8 @@ def _resolve_pending_updates(brain: Brain, session_id: str,
                                                   last_challenged=now.isoformat())
                         refreshed = brain.get_ecu(target["id"])
                         _surface_contradiction(
-                            brain, result, new_ecu, refreshed, cfg, now, set())
+                            brain, result, new_ecu, cast(dict, refreshed),
+                            cfg, now, set())
                     _notify_propagation(
                         brain, result,
                         conf.propagate(target["id"], new_c, brain, cfg), cfg)
@@ -835,7 +839,7 @@ _ACTIONS = ("accept", "reject", "skip")
 
 def _parse_decisions(decisions: dict | None) -> dict:
     """Normalize {ecu_id: action | {"action": …, "edited_cognition": …}}."""
-    parsed = {}
+    parsed: dict[str, tuple[str | None, str | None]] = {}
     for ecu_id, raw in (decisions or {}).items():
         if isinstance(raw, str):
             parsed[ecu_id] = (raw, None)
@@ -962,7 +966,7 @@ def apply_review_decisions(
                     already_flagged.add(frozenset(f.get("ecu_ids", [])))
                 for edge in dres.edges_created:
                     handled_pairs.add((canonical_id, edge["target_id"]))
-                new_ecu = brain.get_ecu(canonical_id)
+                new_ecu = cast(dict, brain.get_ecu(canonical_id))
                 for contra in dres.contradictions:
                     existing = brain.get_ecu(contra["ecu_id"])
                     if existing is not None:

@@ -458,7 +458,7 @@ def extract_answer(transcript_path: Path) -> tuple[str | None, dict]:
                       "path": str(transcript_path)}
 
     raw = transcript_path.read_text(encoding="utf-8")
-    lines = [l for l in raw.strip().split("\n") if l.strip()]
+    lines = [line for line in raw.strip().split("\n") if line.strip()]
     if not lines:
         return None, {"error": "empty_transcript", "path": str(transcript_path)}
 
@@ -644,7 +644,7 @@ def format_transcript(transcript_path: Path) -> tuple[str | None, dict]:
                       "path": str(transcript_path)}
 
     raw = transcript_path.read_text(encoding="utf-8")
-    lines = [l for l in raw.strip().split("\n") if l.strip()]
+    lines = [line for line in raw.strip().split("\n") if line.strip()]
     if not lines:
         return None, {"error": "empty_transcript"}
 
@@ -1288,7 +1288,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Get your key from https://opencode.ai/auth", file=sys.stderr)
         return 1
 
-    print(f"EC-Bench v2 Judge")
+    print("EC-Bench v2 Judge")
     print(f"  run dir:    {run_dir}")
     print(f"  spec:       {spec_path}")
     print(f"  model:      {args.model}")

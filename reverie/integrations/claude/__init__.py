@@ -149,7 +149,7 @@ def _command_handler(tail: list[str],
         return {"type": "command",
                 "command": " ".join([reverie_bin, *tail])}
     command, args = launch.reverie_command(tail)
-    handler = {"type": "command", "command": command}
+    handler: dict = {"type": "command", "command": command}
     if args:
         handler["args"] = args
     return handler
@@ -202,10 +202,10 @@ def _upsert_handler(groups: list, handler: dict, event: str,
                 return
         hooks.append(handler)
         return
-    group: dict = {"hooks": [handler]}
+    new_group: dict = {"hooks": [handler]}
     if matcher is not None:
-        group["matcher"] = matcher
-    groups.append(group)
+        new_group["matcher"] = matcher
+    groups.append(new_group)
 
 
 def _settings_plan(home: Path, session_handler: dict, stop_handler: dict

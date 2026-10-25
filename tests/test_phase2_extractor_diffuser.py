@@ -514,11 +514,11 @@ class TestFullDiffuser:
             brain, model, "Database migrations must run before deployment")
         with patch("reverie.diffuser.call_llm",
                    return_value=classifications_response("unrelated")):
-            result2 = diffuse_ecu(brain, other, embedding_model=model)
+            diffuse_ecu(brain, other, embedding_model=model)
         assert brain.get_edges_from(other) == []
 
     def test_tolerant_classification_parse(self, brain, model):
-        existing = self._insert_with_embedding(
+        self._insert_with_embedding(
             brain, model, "Pool caps at 10 connections", confidence=0.5)
         new = self._insert_with_embedding(
             brain, model, "Load tests confirm pool exhaustion at 10 connections",
@@ -689,7 +689,7 @@ class TestLive:
 
     def test_lightweight_classification_live(self, brain, model):
         session_id = brain.create_session("/tmp/live", "main")
-        s1 = brain.insert_session_ecu(
+        brain.insert_session_ecu(
             session_id,
             make_ecu("Tests must use explicit timezones to be reproducible in CI",
                      confidence=0.5),

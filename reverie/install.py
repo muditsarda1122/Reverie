@@ -706,10 +706,10 @@ def _record_install_manifest(
         except OSError:
             continue
         files.setdefault(str(Path(path).resolve()), digest)
-    owned = {path: list(values)
-             for path, values in load_owned_entries(reverie_home).items()}
-    for path, values in (owned_entries or {}).items():
-        resolved = str(Path(path).resolve())
+    owned = {owned_path: list(values)
+             for owned_path, values in load_owned_entries(reverie_home).items()}
+    for owned_path, values in (owned_entries or {}).items():
+        resolved = str(Path(owned_path).resolve())
         current = owned.setdefault(resolved, [])
         for value in values:
             if value not in current:
@@ -1060,24 +1060,25 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
                  "--reconfigure to change it)")
         verify_existing = True
     else:
-        detected = [
+        detected_keys = [
             key for key in providers.MENU_KEYS
             if providers.key_env_for(providers.REGISTRY[key], environ)
         ]
-        for key in detected:
+        for key in detected_keys:
             entry = providers.REGISTRY[key]
             print_fn(f"  ✓ {providers.key_env_for(entry, environ)} detected "
                      f"({entry.name})")
-        if len(detected) == 1:
+        if len(detected_keys) == 1:
             try:
                 answer = input_fn(
-                    f"\nConfigure Reverie for {providers.REGISTRY[detected[0]].name} "
-                    f"using {providers.key_env_for(providers.REGISTRY[detected[0]], environ)}? "
+                    f"\nConfigure Reverie for "
+                    f"{providers.REGISTRY[detected_keys[0]].name} "
+                    f"using {providers.key_env_for(providers.REGISTRY[detected_keys[0]], environ)}? "
                     "(Y/n): ")
             except EOFError:
                 answer = ""
             if answer.strip().lower() in ("", "y", "yes"):
-                chosen = providers.REGISTRY[detected[0]]
+                chosen = providers.REGISTRY[detected_keys[0]]
         if chosen is None:
             menu_choice = _provider_menu(input_fn, print_fn, environ)
             chosen = providers.get(menu_choice)
@@ -1134,12 +1135,12 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
                          "after install")
                 failures.append(agent.name)
                 continue
-            key = (configured.command, tuple(configured.args),
-                   tuple(sorted(configured.env.items())))
-            if key not in results:
-                results[key] = checker(configured.command, configured.args,
-                                       configured.env)
-            ok, detail = results[key]
+            server_key = (configured.command, tuple(configured.args),
+                          tuple(sorted(configured.env.items())))
+            if server_key not in results:
+                results[server_key] = checker(configured.command,
+                                              configured.args, configured.env)
+            ok, detail = results[server_key]
             print_fn(f"  {'✓' if ok else '✗'} {agent.name}: {detail}")
             if not ok:
                 failures.append(agent.name)

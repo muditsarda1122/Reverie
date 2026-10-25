@@ -54,7 +54,7 @@ def cand(level, path, cognition="cognition text", similarity=0.9,
 # unit — _filter_by_scope_hierarchy
 # ---------------------------------------------------------------------------
 
-ANCHOR = ("repo", "/Users/dev/api-server")
+ANCHOR = ("repo", "/repos/api-server")
 
 
 def test_up_only_keeps_general_filters_specific():
@@ -139,7 +139,7 @@ def test_scope_param_narrows_working_scope():
 
     # anchor narrowed to module: repo is now UP (kept), subsystem is DOWN
     kept = _filter_by_scope_hierarchy(
-        [repo_ecu, subsystem_ecu], "module", "/Users/dev/api-server")
+        [repo_ecu, subsystem_ecu], "module", "/repos/api-server")
     assert [c["ecu"]["id"] for c in kept] == ["repo-level ECU"]
 
 

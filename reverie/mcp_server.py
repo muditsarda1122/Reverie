@@ -81,6 +81,7 @@ import subprocess
 import sys
 import threading
 from contextlib import contextmanager
+from typing import cast
 
 from . import (
     __version__,
@@ -119,7 +120,7 @@ def _time_limit(seconds: float | None):
     main thread (or on platforms without SIGALRM) the limit is not applied —
     the hook's own ``timeout`` still bounds the process.
     """
-    usable = (bool(seconds) and seconds > 0
+    usable = (seconds is not None and seconds > 0
               and hasattr(signal, "SIGALRM")
               and threading.current_thread() is threading.main_thread())
     if not usable:
@@ -130,7 +131,7 @@ def _time_limit(seconds: float | None):
         raise _ExtractionTimeout()
 
     previous = signal.signal(signal.SIGALRM, _raise)
-    signal.setitimer(signal.ITIMER_REAL, float(seconds))
+    signal.setitimer(signal.ITIMER_REAL, float(cast("int", seconds)))
     try:
         yield
     finally:
@@ -684,7 +685,7 @@ class ReverieServer:
                            f"Method not found: {method!r}")
 
     def _handle_tool_call(self, msg_id, params: dict) -> dict:
-        name = params.get("name")
+        name = cast(str, params.get("name"))
         arguments = params.get("arguments") or {}
         handler = {
             "observe": self._tool_observe,
@@ -1247,7 +1248,7 @@ class ReverieServer:
             }[state]
         return {"status": "ok", "repo": info.repo_path,
                 "repo_key": info.repo_key, "state": effective,
-                "asked_at": row["asked_at"], "message": message}
+                "asked_at": cast(dict, row)["asked_at"], "message": message}
 
     def _duplicate_notes(self, rows: list[dict]) -> dict[str, list[str]]:
         """Item 22: rows sharing a conclusion_type AND grounding signature
@@ -1443,7 +1444,7 @@ class ReverieServer:
         # decision call — the next batch needs a fresh review_list. This
         # adds friction, it is not a security boundary: Reverie cannot
         # verify who is on the other end of the channel.
-        del self._review_tokens[token]
+        del self._review_tokens[cast(str, token)]
         return {
             "status": "ok",
             "decided": out["decided"],

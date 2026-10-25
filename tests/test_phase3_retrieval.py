@@ -402,7 +402,7 @@ class TestRanking:
         assert groups["A"]["rank"] == pytest.approx(rank_active)
         assert groups["A"]["core_ecu"]["status"] == "challenged"
         assert "⚠️ This cognition is challenged" in challenged["formatted"]
-        assert f"See: [B]" in challenged["formatted"]
+        assert "See: [B]" in challenged["formatted"]
         assert any("1 conclusion is challenged" == w for w in challenged["warnings"])
 
     def test_mode_reweighting(self, brain, model):

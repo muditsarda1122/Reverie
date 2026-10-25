@@ -45,7 +45,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from . import review_gate
 from .activation import ActivationState
@@ -150,7 +150,8 @@ def brain_summary(brain: Brain, session_row: dict | None = None,
     last_added = brain.last_ecu_added()
     active = session_row is not None
     if active and session_brain_count is None:
-        session_brain_count = brain.count_session_ecus(session_row["id"])
+        session_brain_count = brain.count_session_ecus(
+            cast(dict, session_row)["id"])
     # Item 23: the review queue is one queue across all sessions (D57) —
     # the pending number is always brain-wide, and it is kept separate from
     # the session-memory count.
@@ -158,9 +159,9 @@ def brain_summary(brain: Brain, session_row: dict | None = None,
     session_block = {
         "active": active,
         "session_brain_count": session_brain_count if active else 0,
-        "started_at": session_row["started_at"] if active else None,
-        "repo": session_row["repo_path"] if active else None,
-        "branch": session_row["branch"] if active else None,
+        "started_at": cast(dict, session_row)["started_at"] if active else None,
+        "repo": cast(dict, session_row)["repo_path"] if active else None,
+        "branch": cast(dict, session_row)["branch"] if active else None,
     }
 
     nonzero = [f"{level}: {n}" for level, n in by_scope.items() if n]
@@ -172,12 +173,12 @@ def brain_summary(brain: Brain, session_row: dict | None = None,
         f"last conclusion added: {_local_time(last_added)}."
     )
     if active:
-        started = _local_time(session_row["started_at"]) \
-            if session_row.get("started_at") else "unknown"
+        started = _local_time(cast(dict, session_row)["started_at"]) \
+            if cast(dict, session_row).get("started_at") else "unknown"
         message += (
-            f" Active session on branch '{session_row['branch']}' "
-            f"({session_row['repo_path']}), started {started} — "
-            f"{_fmt_count(session_brain_count, 'conclusion')} in this "
+            f" Active session on branch '{cast(dict, session_row)['branch']}' "
+            f"({cast(dict, session_row)['repo_path']}), started {started} — "
+            f"{_fmt_count(cast(int, session_brain_count), 'conclusion')} in this "
             "session's memory; "
             f"{_fmt_count(pending, 'candidate')} awaiting review "
             "(all sessions)."
@@ -360,7 +361,7 @@ class SessionManager:
                 f" ({len(moved)} unreviewed conclusion{'s' if len(moved) != 1 else ''} "
                 "carried over from a previous session.)"
             )
-        row = self.brain.get_session(session_id)
+        row = cast(dict, self.brain.get_session(session_id))
         self._run_startup_grounding(repo_path, now=now)   # D35
         return {
             "status": "ok",

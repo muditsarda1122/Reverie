@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import Any
 
 from .brain import Brain, BrainError
 from .config import get_config
@@ -69,8 +70,8 @@ def retry_pending(
     items = brain.list_pending_extractions(repo_path=repo_path, branch=branch)
     if item_id:
         items = [i for i in items if i["id"] == item_id]
-    summary = {"pending": len(items), "recovered": 0, "failed": 0,
-               "skipped": 0, "details": []}
+    summary: dict[str, Any] = {"pending": len(items), "recovered": 0,
+                               "failed": 0, "skipped": 0, "details": []}
     for item in items:
         active = brain.get_active_session(item["repo_path"], item["branch"])
         if active is None:
@@ -124,8 +125,8 @@ def rediffuse(
     """
     cfg = config or get_config()
     targets = [ecu_id] if ecu_id else brain.list_undiffused_ecus()
-    summary = {"targets": len(targets), "rediffused": 0, "failed": 0,
-               "missing": 0, "details": []}
+    summary: dict[str, Any] = {"targets": len(targets), "rediffused": 0,
+                               "failed": 0, "missing": 0, "details": []}
     for target_id in targets:
         if brain.get_ecu(target_id) is None:
             summary["missing"] += 1

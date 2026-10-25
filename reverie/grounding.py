@@ -46,6 +46,7 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger("reverie.grounding")
 
@@ -197,7 +198,7 @@ def validate_references(
     "invalid_symbols"}``. ``checked=False`` (repo not on disk / no path)
     means nothing was verified; callers keep every reference untouched.
     """
-    out = {
+    out: dict[str, Any] = {
         "checked": True,
         "mode": "worktree",
         "valid_files": [], "invalid_files": [],
