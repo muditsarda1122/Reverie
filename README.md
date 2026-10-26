@@ -115,7 +115,7 @@ Contributions are welcome — start with [CONTRIBUTING.md](CONTRIBUTING.md) for 
   author  = {Sarda, Mudit},
   title   = {Reverie},
   year    = {2026},
-  url     = {https://ems-gold-seven.vercel.app/},
+  url     = {https://reverie.muditsarda.com/},
   version = {0.2.0}
 }
 ```
