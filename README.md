@@ -1,108 +1,119 @@
 # Reverie
 
-Reverie is engineering memory for coding agents. While you and your agent work, it captures the engineering conclusions you reach — invariants, root causes, design decisions, corrected assumptions — and stores them in one local SQLite file. In a later conversation, after you have reviewed them, those conclusions come back to the agent with their confidence, their grounding in your code, and their current status, framed as past understanding to verify — never as authority.
+Reverie is engineering memory for coding agents. While you and your agent work, it captures the engineering conclusions you reach (invariants, root causes, design decisions, corrected assumptions) and stores them in one local SQLite file. In a later conversation, after you have reviewed them, those conclusions come back to the agent with their confidence, their grounding in your code, and their current status, framed as past understanding to verify, never as authority.
+
+> **Status: early.** Reverie has been used on a small number of projects so far. Some candidate conclusions are wrong, and your agent doesn't always check memory on its own. Review what Reverie keeps, and tell us where it fails.
 
 ## Install
 
-Requires Python 3.12, pip, and git. From a clean machine:
-
-**Easiest — an isolated environment on your PATH** ([pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/)):
+You need Python 3.12 and git. Run these commands from a clean machine:
 
 ```bash
-pipx install reverie         # or: uv tool install reverie
-reverie install              # configure your agents + ~/.reverie
-```
-
-Plain pip works just as well — install into a virtualenv and run the CLI from there:
-
-```bash
-python -m venv ~/.reverie-venv
-source ~/.reverie-venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install reverie
+git clone https://github.com/muditsarda1122/Reverie.git
+cd Reverie
+python3.12 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -e .
 reverie install
 ```
 
-The installer writes the **absolute path** of the `reverie-mcp` script into every harness config — harnesses launch MCP servers outside your virtualenv, so a bare command name is not enough. It then starts the written command, performs an MCP `initialize` handshake, and prints ✓ or ✗ per harness; a failing setup is reported (with the command and the error) instead of "Reverie is ready!". If you later move or delete the environment, `reverie status` flags the broken path and tells you to re-run `reverie install`.
+The first install downloads PyTorch and a sentence-embedding model. Expect several gigabytes and a few minutes.
 
-`reverie install` detects which harnesses you have, wires the MCP server into each, writes the per-harness instructions and the `/reverie-review` / `/reverie-status` commands, creates `~/.reverie`, detects an LLM API key in your environment (or offers Ollama for local-only), and prints a per-harness summary of exactly what it wrote. For Claude Code it also installs a read-only SessionStart hook and an async Stop capture hook. Non-interactive: `reverie install --all` (every detected harness) or `--only claude_code,codex`; `--dry-run` previews everything without writing.
+`reverie install` detects which agents you have, wires the MCP server into each one, writes the per-agent instructions and the `/reverie-review` and `/reverie-status` commands, creates `~/.reverie`, and prints a summary of exactly what it wrote. It then starts the server and checks that it answers, and it reports success or failure for each agent. Restart each agent afterwards.
 
-Provide a key for one of the supported providers before the provider prompt, or choose "Local via Ollama" — see [Model providers](#model-providers).
+The installer writes absolute paths into each agent's config, so agents can find the server outside your virtualenv. If you move the `Reverie` folder, run `reverie install` again.
+
+To see what the installer would change without writing anything, run `reverie install --dry-run`. Non-interactive: `reverie install --all` configures every detected agent, and `--only claude_code,codex` configures only the ones you name.
+
+You need an LLM provider key before Reverie can extract anything. Set one before running the installer, or choose "Local via Ollama". See [Model providers](#model-providers).
 
 ## Quick start
 
 1. Open your agent in any project.
-2. **The first time, your harness asks once:** "Reverie isn't on for this repo. Turn it on? (yes / not now / never)". Your answer is remembered; `reverie enable` / `reverie disable` flip it any time.
-3. **Just code.** Sessions are automatic per branch. As your agent works it calls `observe` when it reaches a real engineering conclusion — not for every edit.
-4. **Review when you like.** Conclusions wait as candidates in one review queue across every branch and repo. Run `reverie review` in a terminal (a calm one-candidate-at-a-time UI), say *"show my Reverie candidates"* in the chat, or type `/reverie-review`. Nothing reaches long-term memory without your decision.
-5. That's it. In a future conversation, after your agent reads the relevant code it calls `query` and past conclusions come back with their confidence, grounding and current status — framed as *past understanding to verify*, never as authoritative context.
+2. **The first time, your agent asks once:** "Reverie isn't on for this repo. Turn it on? (yes / not now / never)". Your answer is remembered. `reverie enable` and `reverie disable` change it at any time.
+3. **Just code.** Sessions are automatic per branch. As your agent works, it records a conclusion when it reaches a real engineering insight, not for every edit. A candidate from one branch isn't visible on another branch. Accepted conclusions are visible everywhere.
+4. **Review when you like.** Candidates wait in one review queue across every branch and repo. Run `reverie review` in a terminal, say "show my Reverie candidates" in the chat, or type `/reverie-review`. Nothing reaches long-term memory without your decision.
+5. In a later conversation, after your agent reads the relevant code, it asks Reverie for past conclusions. They come back with their confidence, grounding and status, framed as past understanding to verify, never as authoritative context.
 
-## Supported harnesses
+## Supported agents
 
-Reverie plugs into Claude Code, Codex CLI, Cursor and OpenCode as an MCP server. The tested versions, what Reverie writes to each, and exactly what was verified for each version are listed in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md); the per-harness file paths, hooks and permission setup are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). Any other MCP client works with the manual snippet in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+Reverie connects to Claude Code, Codex CLI, Cursor and OpenCode as an MCP server. The tested versions, what Reverie writes for each, and what was verified are in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md). The file paths, hooks and permission setup for each agent are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). Any other MCP client can be set up by hand, as described in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
 ## Model providers
 
-One provider serves every LLM call (extraction, relationship classification, mode detection). Configure with `reverie install` or the `llm:` block of `~/.reverie/config.yaml`:
+Reverie makes its own LLM calls to extract conclusions and classify relationships. These calls are separate from your agent. Set the key for one provider, then choose it during `reverie install`, or set `provider:` in the `llm:` block of `~/.reverie/config.yaml`.
 
-| Provider | Default model | Key env var | Notes |
-|---|---|---|---|
-| OpenCode Zen *(default)* | `claude-haiku-5-5` | `OPENCODE_ZEN_API_KEY` | Multi-family endpoint |
-| Anthropic | `claude-haiku-5-5` | `ANTHROPIC_API_KEY` | Recent Anthropic models reject non-default sampling parameters; the request shape is handled for you |
-| OpenAI | `gpt-5-mini` | `OPENAI_API_KEY` | Reasoning models: `max_completion_tokens` shape auto-applied |
-| Google Gemini | `gemini-3.8-flash` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | OpenAI-compatible endpoint |
-| OpenRouter | `anthropic/claude-haiku-5.5` | `OPENROUTER_API_KEY` | Vendor-prefixed model names |
-| Ollama (local) | `qwen2.5-coder:14b` | none | Nothing leaves your machine |
+| Provider | Default model | Key environment variable |
+|---|---|---|
+| OpenCode Zen (default) | `claude-haiku-5-5` | `OPENCODE_ZEN_API_KEY` |
+| Anthropic | `claude-haiku-5-5` | `ANTHROPIC_API_KEY` |
+| OpenAI | `gpt-5-mini` | `OPENAI_API_KEY` |
+| Google Gemini | `gemini-3.8-flash` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) |
+| OpenRouter | `anthropic/claude-haiku-5.5` | `OPENROUTER_API_KEY` |
+| Ollama (local) | `qwen2.5-coder:14b` | none |
 
-Switching: `reverie install --provider anthropic`, or edit `llm:` in `~/.reverie/config.yaml` (`provider:`, and optionally `model:`, `base_url:`, `api_key_env:`, `wire_format:`). Everything unset is filled from the registry; anything you set explicitly wins. Per-task models: `llm.models.extraction` / `models.classification` / `models.mode_detection`.
+To switch provider, run `reverie install --provider anthropic`, or edit the `llm:` block directly. Anything you don't set is filled from the registry, and anything you set wins. You can also choose a different model for each task under `llm.models`.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `reverie install` | Configure agents + `~/.reverie` |
-| `reverie enable` / `reverie disable` | Turn Reverie on/off for a repo |
-| `reverie repos` | Every known repo with state and counts |
-| `reverie review` | Review pending candidates (terminal UI) |
-| `reverie status` | Session + brain report |
-| `reverie export` / `reverie import` | Backup / restore (one ZIP) |
-| `reverie reset` | Wipe the brain (or one repo), auto-backup first |
-| `reverie retry` | Recover failed extractions / re-diffuse |
-| `reverie repair` | Brain integrity check + safe recovery |
-| `reverie uninstall` | Remove Reverie's harness entries (memory kept unless `--delete-data`) |
+| `reverie install` | Configure your agents and `~/.reverie` |
+| `reverie enable` / `reverie disable` | Turn Reverie on or off for the current repo |
+| `reverie repos` | List every repo Reverie knows about, with its state and counts |
+| `reverie review` | Review pending candidates in a terminal interface |
+| `reverie status` | Show the session and brain report |
+| `reverie export` / `reverie import` | Back up or restore your memory as one ZIP file |
+| `reverie reset` | Wipe the brain, or one repo, after an automatic backup |
+| `reverie retry` | Recover failed extractions |
+| `reverie repair` | Check brain integrity and recover safely |
+| `reverie uninstall` | Remove what `reverie install` added (memory is kept unless `--delete-data`) |
 
-Full reference with flags, examples and exit behaviour: [`docs/CLI.md`](docs/CLI.md).
+The full reference, with flags and examples, is in [`docs/CLI.md`](docs/CLI.md).
 
 ## Where your data lives
 
-- Everything is local: one SQLite file, `~/.reverie/reverie.db` (config, agent instructions and slash commands live beside it). No account, no cloud, no telemetry.
-- **Reverie never writes into your repositories.** Its per-repo state (on/off, asked) is stored in `~/.reverie`, keyed by the repo's git identity — not in a file inside your project.
-- **What leaves your machine:** only what the LLM features need — the extraction prompt, your agent's reasoning and output, and candidate pairs for classification — sent to the endpoint **you** configure. Pick Ollama and nothing leaves your machine at all.
-- **API keys** are read from environment variables only; Reverie never writes them anywhere.
-- **Export / import:** `reverie export` writes one ZIP (consistent snapshot + manifest); `reverie import` restores it (`--replace` takes an automatic backup first).
+- Everything is local, in one SQLite file: `~/.reverie/reverie.db`. Your configuration, the agent instructions and the slash commands sit beside it. There is no account, no cloud service and no telemetry.
+- **Reverie never writes into your repositories.** Each repo's state (on, off, asked) is stored in `~/.reverie`, not in a file inside your project.
+- **What leaves your machine:** only what the LLM features need, such as the extraction prompt, your agent's reasoning and output, and candidate pairs for classification. Those go to the provider you configured. With Ollama, nothing leaves your machine.
+- **API keys** are read from environment variables. Reverie never writes them to disk.
+- **Backups:** `reverie export` writes one ZIP file with a consistent snapshot. `reverie import` restores it. `--replace` makes an automatic backup first.
 
 ## Uninstall
 
 ```bash
-reverie uninstall                 # removes the harness entries; keeps ~/.reverie
-reverie uninstall --delete-data   # also removes ~/.reverie (final export first)
+reverie uninstall                 # removes the agent entries; keeps ~/.reverie
+reverie uninstall --delete-data   # also removes ~/.reverie, after a final export
 ```
 
-Uninstall removes exactly what `reverie install` wrote: Reverie's MCP entries in each harness config, its instruction references, its slash-command files, and the hooks and permission entries it added — nothing else in those files is touched, and an edited file is reported, never damaged. Your memory (`~/.reverie`) is **kept** by default; `--delete-data` takes a final export outside `~/.reverie` first (the path is printed) and only then removes it. Uninstall shows the full plan and asks **one** confirmation before touching anything (`--yes` skips it; the export-before-delete rule always holds). The last step prints the `pip uninstall reverie` command to run by hand — the running package can't remove itself.
+Uninstall removes only what `reverie install` wrote: Reverie's server entries, instruction references, slash-command files, hooks and permission entries. Anything else in those files is left alone. If you've edited one of them, Reverie reports it and doesn't touch it. Uninstall shows the full plan and asks for one confirmation. Use `--yes` to skip the prompt. Your memory in `~/.reverie` is kept unless you pass `--delete-data`, which exports a final backup first and prints where it saved it.
+
+The last step prints `pip uninstall reverie` for you to run yourself. A running package can't remove itself.
 
 ## Troubleshooting
 
-**The agent doesn't call `query` (or ignores Reverie).**
-The usage contract reaches the agent through the harness's instruction file and the server's `instructions` field — if the agent never sees them, it has no reason to call the tools. Check, in order: (1) the harness loads the instructions — Claude Code needs 2.1.121+ for `"alwaysLoad": true`, older Codex versions don't read skills, details in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md); (2) restart the harness so the MCP server and instructions are reloaded; (3) `reverie status` — a moved or deleted virtualenv breaks the configured server path, and re-running `reverie install` repairs both the path and the instruction files (a stale instruction block from an older version is refreshed on reinstall).
+**The agent doesn't use Reverie.**
+Your agent learns how to use Reverie from its instruction file and from the server. If it never sees them, it has no reason to call the tools. Check these in order:
+1. Your agent's version is listed in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md). Claude Code needs 2.1.121 or later.
+2. Restart the agent, so it reloads the server and its instructions.
+3. Run `reverie install` again. It repairs the server path and refreshes any outdated instruction block.
 
 **A permission prompt appears for Reverie's tools.**
-`reverie install` adds allow entries for the read tools to each harness's permission config (`mcp__reverie__*` in `~/.claude/settings.json`, per-tool approvals in `~/.codex/config.toml`, `Mcp(reverie:*)` in `~/.cursor/cli-config.json`). If a read tool still prompts: re-run `reverie install` (it merges the entry back if it is missing), or check your harness version — older versions ignore per-tool approval settings. Write tools (`observe`, `reconsolidate`, `set_repo_state`, `review_decide`) are allowed to prompt on purpose.
+`reverie install` allows Reverie's read tools in each agent's permission settings. If a read tool still prompts, run `reverie install` again. If it still prompts, check your agent's version. Older versions ignore per-tool approval settings. Write tools (`observe`, `reconsolidate`, `set_repo_state`, `review_decide`) prompt on purpose.
 
-**An old install is still configured.**
-Console scripts only update on reinstall — if `reverie install` behaves like an older version (or an `ec` command still exists), re-run `pip install reverie` (or `pip install -e .` in a checkout) and then `reverie install`. Instruction blocks written by an older version are refreshed by the next `reverie install`; `reverie status` reports a server path that no longer exists; `reverie uninstall --dry-run` shows exactly which entries are configured where before you change anything.
+**Reverie behaves like an older version.**
+Run `git pull` in your checkout, then `pip install -e .` and `reverie install`. `reverie uninstall --dry-run` shows which entries are configured and where, before you change anything.
+
+## Documentation
+
+- [Installation](docs/INSTALLATION.md)
+- [CLI reference](docs/CLI.md)
+- [Supported agents](docs/SUPPORTED_HARNESSES.md)
+- Website: https://reverie.muditsarda.com/
 
 ## Contributing
 
-Contributions are welcome — start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup and ground rules, and the [code of conduct](CODE_OF_CONDUCT.md). Reverie also ships with a benchmark harness (`bench/`) that runs a real agent through sequential sessions on a target repository with and without memory; it is published as a research instrument, not as proof of advantage.
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup and ground rules, and read the [code of conduct](CODE_OF_CONDUCT.md). Reverie also includes a benchmark harness (`bench/`) that runs a real agent through sequential sessions on a target repository, with and without memory. It's published as a research tool, not as proof of an advantage.
 
 ## License
 
@@ -120,4 +131,4 @@ Contributions are welcome — start with [CONTRIBUTING.md](CONTRIBUTING.md) for 
 }
 ```
 
-Machine-readable metadata: [`CITATION.cff`](CITATION.cff).
+Machine-readable metadata is in [`CITATION.cff`](CITATION.cff).
