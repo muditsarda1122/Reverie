@@ -48,16 +48,22 @@ import os
 
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
+import copy
 import json
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
+from reverie import confidence as conf
+from reverie import maintainer as maintainer_mod
 from reverie.brain import Brain
-from reverie.config import load_config
+from reverie.config import DEFAULT_CONFIG, AttrDict, _to_attrdict, load_config
 from reverie.llm import api_key
 from reverie.mcp_server import ReverieServer
 from reverie.session import SessionManager
@@ -256,6 +262,7 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
     # process-wide config cache)
     if OLLAMA:
         import yaml
+
         from reverie.install import OLLAMA_LLM_BLOCK
         REVERIE_HOME_DIR.mkdir(parents=True, exist_ok=True)
         (REVERIE_HOME_DIR / "config.yaml").write_text(
@@ -520,16 +527,6 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
 # relationships), real embeddings from the HF cache, tmp_path brains,
 # hermetic DEFAULT_CONFIG (never ~/.reverie).
 # ============================================================================
-
-import copy
-from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
-
-import numpy as np
-
-from reverie import confidence as conf
-from reverie import maintainer as maintainer_mod
-from reverie.config import DEFAULT_CONFIG, AttrDict, _to_attrdict
 
 OFFLINE_REPO, OFFLINE_BRANCH = "/repos/e2e-offline", "main"
 

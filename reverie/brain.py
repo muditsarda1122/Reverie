@@ -23,6 +23,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -42,7 +43,7 @@ log = logging.getLogger("reverie.brain")
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
-_DEFAULT_METADATA = {
+_DEFAULT_METADATA: dict = {
     "last_reinforced": None,
     "last_challenged": None,
     "last_retrieved": None,
@@ -315,7 +316,8 @@ class Brain:
         Ordered by created_at.
         """
         query = "SELECT * FROM ecus"
-        clauses, params = [], []
+        clauses: list[str] = []
+        params: list[object] = []
         if statuses:
             clauses.append(
                 f"status IN ({', '.join('?' for _ in statuses)})")
@@ -350,7 +352,8 @@ class Brain:
         Python-side (brain sizes are small — 50–100 ECUs at current scale).
         Ordered by created_at like list_ecus."""
         query = "SELECT * FROM ecus"
-        clauses, params = [], []
+        clauses: list[str] = []
+        params: list[object] = []
         if statuses:
             clauses.append(
                 f"status IN ({', '.join('?' for _ in statuses)})")
@@ -1184,7 +1187,7 @@ class Brain:
     # clears the flag after a successful diffusion.
     # ------------------------------------------------------------------
 
-    def list_undiffused_ecus(self) -> list[dict]:
+    def list_undiffused_ecus(self) -> list[str]:
         """Canonical ECUs whose review-time diffusion failed (flag in metadata)."""
         rows = self._conn.execute(
             "SELECT id, metadata_json FROM ecus"
@@ -1532,9 +1535,8 @@ class Brain:
         for path in paths:
             session_ids.extend(
                 r["id"] for r in self.list_sessions(repo_path=path))
-        seen: set[str] = set()
-        session_ids = [sid for sid in session_ids
-                       if not (sid in seen or seen.add(sid))]
+        # order-preserving dedup (same as the previous seen-set comprehension)
+        session_ids = list(dict.fromkeys(session_ids))
         counts = {"sessions": len(session_ids), "session_ecus": 0,
                   "session_edges": 0, "pending_updates": 0,
                   "pending_extractions": 0}
@@ -1587,7 +1589,7 @@ class Brain:
         for table in self.table_names():
             self._conn.execute(f'DELETE FROM main."{table}"')
 
-    def _copy_tables_from(self, alias: str) -> tuple[dict[str, int], list[str]]:
+    def _copy_tables_from(self, alias: str) -> tuple[dict[str, "int | list[str]"], list[str]]:
         """Copy every destination table from the ATTACHed database using
         EXPLICIT column lists — the intersection of source and destination
         columns by name (feat/flow review fix). Column order is irrelevant
@@ -1612,7 +1614,7 @@ class Brain:
                 f'INSERT INTO main."{table}" ({collist}) '
                 f'SELECT {collist} FROM "{alias}"."{table}"'
             )
-        counts: dict[str, int] = {}
+        counts: dict[str, "int | list[str]"] = {}
         for table in self.table_names():
             counts[table] = self._conn.execute(
                 f'SELECT COUNT(*) FROM main."{table}"').fetchone()[0]
@@ -1851,7 +1853,7 @@ class Brain:
             for r in sess_rows:
                 rows.append((r["id"], r["embedding"], "session"))
 
-        results = []
+        results: list[dict[str, Any]] = []
         for ecu_id, blob, brain in rows:
             sim = float(np.dot(qvec, from_blob(blob)))
             if sim >= threshold:

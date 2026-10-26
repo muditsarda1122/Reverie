@@ -24,7 +24,7 @@ No benchmark run outputs are included in this repository.
 
 ## Running
 
-The runner lives in the `ec` package (`python -m ec.run_ecbench`); the
+The runner lives in the `reverie` package (`python -m reverie.run_ecbench`); the
 harness in this folder wraps it. Both need the target repository locally and,
 for the judge, an API key:
 
@@ -39,7 +39,7 @@ python bench/run_and_judge.py \
     --runs-dir runs
 
 # Run only (judge later)
-python -m ec.run_ecbench \
+python -m reverie.run_ecbench \
     --spec bench/ecbench_v2.json \
     --repo /path/to/target-repo
 

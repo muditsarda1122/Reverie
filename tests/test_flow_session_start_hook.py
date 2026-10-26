@@ -20,8 +20,9 @@ from pathlib import Path
 
 import pytest
 
-from reverie import cli, hooks, install, repos, uninstall
+from reverie import cli, hooks, install, launch, repos, uninstall
 from reverie.brain import Brain
+from reverie.integrations.claude import _session_start_handler
 
 T0 = "2026-10-14T12:00:00+00:00"
 
@@ -127,12 +128,12 @@ def test_enabled_prints_counts_and_rules_never_conclusion_text(
     brain.close()
     code, text = run_hook()
     assert code == 0
-    assert "1 conclusion in memory" in text
+    assert "The brain holds 1 conclusion" in text
     assert "1 candidate awaiting review" in text
     assert "secret pending conclusion text" not in text
     assert "webhook handlers must be idempotent" not in text
-    for rule in hooks.ENABLED_RULES:
-        assert rule in text
+    assert "Usage rules" not in text
+    assert "When to call each command" not in text
 
 
 def test_undecided_with_existing_brain_writes_no_repo_row(home,
@@ -206,26 +207,31 @@ def test_hook_parser_knows_the_session_start_flags():
 
 
 # ---------------------------------------------------------------------------
-# hook_handler — pip install (exec form) vs dev checkout (shell form)
+# launch.py + Claude handler — pip install (exec form) vs dev checkout
 # ---------------------------------------------------------------------------
 
-def test_hook_handler_pip_install_uses_absolute_script(monkeypatch,
-                                                       tmp_path):
-    monkeypatch.setattr(install, "_is_pip_installed", lambda: True)
+def test_launch_pip_install_uses_absolute_script(monkeypatch, tmp_path):
+    monkeypatch.setattr(launch, "_is_pip_installed", lambda: True)
     bin_dir = tmp_path / "venv" / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "python").write_text("#!/usr/bin/env python\n")
     script = bin_dir / "reverie"
     script.write_text("#!/usr/bin/env python\n")
-    handler = install.hook_handler(executable=str(bin_dir / "python"))
+    command, args = launch.reverie_command(
+        list(launch.HOOK_ARGS_TAIL), executable=str(bin_dir / "python"))
+    assert (command, args) == (str(script), ["hook", "session-start"])
+
+    monkeypatch.setattr(launch, "_reverie_script_path",
+                        lambda *a, **k: str(script))
+    handler = _session_start_handler()
     assert handler == {"type": "command", "command": str(script),
                        "args": ["hook", "session-start"]}
     assert install._is_reverie_hook_handler(handler)
 
 
-def test_hook_handler_dev_fallback_sets_pythonpath_shell_form(monkeypatch):
-    monkeypatch.setattr(install, "_is_pip_installed", lambda: False)
-    handler = install.hook_handler()
+def test_launch_dev_fallback_sets_pythonpath_shell_form(monkeypatch):
+    monkeypatch.setattr(launch, "_is_pip_installed", lambda: False)
+    handler = _session_start_handler()
     assert handler["type"] == "command"
     assert "args" not in handler                 # shell form (no env field)
     assert "-m reverie.cli hook session-start" in handler["command"]
@@ -339,7 +345,7 @@ def test_uninstall_removes_only_the_hook_and_keeps_shared_file(
     assert do_install(home, reverie_home) == 0
     code, transcript = do_uninstall(home, reverie_home)
     assert code == 0
-    assert "Removed the Reverie SessionStart hook" in transcript
+    assert "Removed Reverie hooks" in transcript
     assert settings.exists()                    # user file is never deleted
     assert json.loads(settings.read_text()) == {
         "theme": "dark",
@@ -374,5 +380,5 @@ def test_uninstall_without_the_hook_is_unchanged(home, reverie_home):
     settings.write_text(json_text({"theme": "dark"}))
     code, transcript = do_uninstall(home, reverie_home)
     assert code == 0
-    assert "no Reverie SessionStart hook" in transcript
+    assert "no Reverie hooks" in transcript
     assert settings.read_text() == json_text({"theme": "dark"})

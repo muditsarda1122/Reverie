@@ -247,7 +247,7 @@ def test_review_list_flags_unsupported_evidence(server, brain, manager):
         observed, _ = call_tool(server, "observe", payload)
         assert observed["status"] == "ok", observed
     listing, _ = call_tool(server, "review_list", {})
-    assert "[unsupported evidence]" in listing["message"]
+    assert "evidence: UNSUPPORTED" in listing["message"]
     assert listing["candidates"][0]["evidence_status"] == "unsupported"
 
 
@@ -260,9 +260,9 @@ def test_render_screen_shows_unsupported_marker():
     from reverie.review_cli import render_screen
     screen = render_screen(candidate, {"evidence_status": "unsupported"},
                            index=1, total=1, progress={})
-    assert "evidence unsupported" in screen
+    assert "evidence: UNSUPPORTED" in screen
     plain = render_screen(candidate, {}, index=1, total=1, progress={})
-    assert "unsupported" not in plain
+    assert "evidence: UNSUPPORTED" not in plain
 
 
 # ---------------------------------------------------------------------------

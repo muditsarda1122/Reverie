@@ -32,19 +32,21 @@ work tree.
 reverie install                    # interactive
 reverie install --all              # every detected harness, non-interactive
 reverie install --only claude_code,codex --provider anthropic --no-verify
-reverie install --reconfigure      # ask the provider question again
 reverie install --dry-run          # print every planned write, change nothing
 reverie install --import memory.zip  # new machine: restore an export
 ```
 
 `--provider <key>` configures an LLM provider without prompting (see the
-provider table below); `--reconfigure` asks the provider question again even
-when `config.yaml` already carries an `llm` block (by default an existing
-block is kept and only re-verified); `--no-verify` skips the live ping.
-After the provider is configured the installer pings it once with the model
-name read from the written config. A failed ping makes the install **exit
-non-zero** with "Reverie is installed, but the LLM is not reachable." — the
-config and harness entries are still written; fix the key/model and re-run.
+provider table below). By default an existing `llm` block in `config.yaml` is
+kept and only re-verified — `--provider` is the explicit way to change it.
+`--no-verify` skips the live ping. (The standalone `python -m reverie.install`
+entry point also accepts `--reconfigure`, which re-asks the provider question
+even when an `llm` block exists; the `reverie install` subcommand does not
+expose that flag.) After the provider is configured the installer pings it
+once with the model name read from the written config. A failed ping makes
+the install **exit non-zero** with "Reverie is installed, but the LLM is not
+reachable." — the config and harness entries are still written; fix the
+key/model and re-run.
 
 | Provider (`--provider`) | Key environment variable | Default model |
 |---|---|---|
@@ -66,7 +68,7 @@ What it does, in order:
 
 1. **Detects harnesses** — binary on PATH or the harness's config file exists.
 2. **Selects** — interactive picker, `--all`, or `--only` (keys:
-   `claude_code`, `codex`, `cursor`, `opencode`, `gemini_cli`).
+   `claude_code`, `codex`, `cursor`, `opencode`).
 3. **Per-harness writes** — see the table below. All merges are idempotent:
    only Reverie's own entry is added or replaced, every other key/line/byte
    is preserved, and a malformed file aborts with no changes to it.
@@ -78,27 +80,38 @@ What it does, in order:
    line, and pings the provider once with the configured model name. A
    failed ping is reported and the install **exits 1**. If `config.yaml`
    already contains an `llm` block it is kept and only re-verified —
-   `--provider` or `--reconfigure` are the explicit ways to change it. Keys
-   are never written to disk.
+   `--provider` is the explicit way to change it. Keys are never written to
+   disk.
 6. **Per-harness summary** — exactly what was written and the next step in
    that harness.
 
 Re-running `reverie install` is safe and is the upgrade path: entries
 upsert idempotently, owned files refresh verbatim, your `config.yaml` is
 kept. Every file the installer *creates* is recorded (path + hash) in
-`~/.reverie/install_manifest.json`, which lets `reverie uninstall` remove
-exactly what it made; a file that existed before install is never deleted —
-uninstall only removes Reverie's entry from it.
+`~/.reverie/install_manifest.json`, along with any list entry it added to an
+existing config file, which lets `reverie uninstall` remove exactly what it
+made; a file that existed before install is never deleted — uninstall only
+removes Reverie's entries from it.
 
 ## What gets written per harness
 
-| Harness | MCP server (user scope) | Instructions | Slash commands |
+| Harness | MCP server (user scope) | Instructions | Commands |
 |---|---|---|---|
-| **Claude Code** | `~/.claude.json` → top-level `mcpServers.reverie` (`type: stdio`) | `@~/.reverie/AGENTS.md` import appended to `~/.claude/CLAUDE.md` | `~/.claude/commands/reverie-review.md`, `reverie-status.md` |
-| **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | block appended to `~/.codex/AGENTS.md` | `~/.codex/prompts/reverie-review.md`, `reverie-status.md` (invoked `/prompts:reverie-review`) |
+| **Claude Code** | `~/.claude.json` → top-level `mcpServers.reverie` (`type: stdio`, `alwaysLoad: true`) | `@~/.reverie/AGENTS.md` import appended to `~/.claude/CLAUDE.md` | `~/.claude/commands/reverie-review.md`, `reverie-status.md` |
+| **Codex CLI** | `~/.codex/config.toml` → `[mcp_servers.reverie]` | block appended to `~/.codex/AGENTS.md` | skills under `~/.agents/skills/` (Codex 0.163 no longer loads `~/.codex/prompts/`; old prompt files are removed by install) |
 | **Cursor** | `~/.cursor/mcp.json` → `mcpServers.reverie` | **none written** — Cursor documents no global rules file; guidance arrives via the server `instructions` + tool descriptions (paste into Settings → Rules if you want it always on) | `~/.cursor/commands/reverie-review.md`, `reverie-status.md` (beta) |
 | **OpenCode** | `~/.config/opencode/opencode.json` → `mcp.reverie` (`type: local`, argv-list `command`, `environment` key) | block appended to `~/.config/opencode/AGENTS.md` | `~/.config/opencode/commands/reverie-review.md`, `reverie-status.md` |
-| **Gemini CLI** | `~/.gemini/settings.json` → `mcpServers.reverie` | block appended to `~/.gemini/GEMINI.md` | `~/.gemini/commands/reverie-review.toml`, `reverie-status.toml` (TOML `prompt`) |
+
+Claude Code also gets `"mcp__reverie__*"` in `permissions.allow` in
+`~/.claude/settings.json`; Cursor CLI gets `"Mcp(reverie:*)"` in
+`permissions.allow` in `~/.cursor/cli-config.json`. Both merge with existing
+permissions, and uninstall removes the entry only if install added it.
+
+Codex's `[mcp_servers.reverie]` table sets
+`default_tools_approval_mode = "writes"` and per-tool
+`[mcp_servers.reverie.tools.<tool>] approval_mode = "approve"` for `query`,
+`summary` and `review_list`. Write tools (`observe`, `reconsolidate`,
+`set_repo_state`, `review_decide`) keep Codex's approval prompt.
 
 The server entry itself (pip-installed — pipx, uv tool, venv or system):
 
@@ -130,9 +143,9 @@ mechanism: **`/reverie-review`** (asks the agent to list review candidates,
 show every candidate's full text, and relay only the decisions you state)
 and **`/reverie-status`** (the session + brain report through
 `summary`). Formats: plain markdown for Claude Code and Cursor;
-markdown + YAML frontmatter for OpenCode; frontmatter markdown under
-`~/.codex/prompts/` for Codex (custom prompts are deprecated upstream —
-still the user-level mechanism); TOML (`prompt` string) for Gemini CLI.
+markdown + YAML frontmatter for OpenCode; skills under `~/.agents/skills/`
+for Codex 0.163+ (invoked `$reverie-review` / listed under `/skills`;
+older prompt-file installs are cleaned up by install).
 All are removed by `reverie uninstall` (verbatim content only — edited
 files are reported, not deleted).
 
@@ -147,8 +160,6 @@ Reverie on. Client support, per each vendor's docs (2026-10-15):
   (documented).
 - **Codex CLI** — "Codex reads the MCP `instructions` field returned during
   initialization and uses it as server-wide guidance" (documented).
-- **Gemini CLI** — instructions are "appended to the system instructions"
-  (documented).
 - **OpenCode** — captured in recent versions (visible in the v1.18+ source;
   not clearly documented).
 - **Cursor** — not documented; rely on tool descriptions there.
@@ -161,10 +172,10 @@ Reverie on. Client support, per each vendor's docs (2026-10-15):
   <https://code.claude.com/docs/en/mcp>, <https://code.claude.com/docs/en/memory>,
   <https://code.claude.com/docs/en/slash-commands>
 - Codex CLI: MCP config (`~/.codex/config.toml`, `[mcp_servers.*]`), global
-  `AGENTS.md`, custom prompts (`~/.codex/prompts/`, deprecated), server
+  `AGENTS.md`, skills (`~/.agents/skills/`; custom prompts
+  `~/.codex/prompts/` are no longer loaded by Codex 0.163+), server
   instructions — <https://developers.openai.com/codex/mcp>,
-  <https://developers.openai.com/codex/guides/agents-md>,
-  <https://developers.openai.com/codex/custom-prompts>
+  <https://developers.openai.com/codex/guides/agents-md>
 - Cursor: global MCP (`~/.cursor/mcp.json`), rules (User Rules in settings;
   no documented global rules **file**), commands (`~/.cursor/commands/`,
   beta) — <https://www.cursor.com/docs/mcp>,
@@ -174,11 +185,6 @@ Reverie on. Client support, per each vendor's docs (2026-10-15):
   (`~/.config/opencode/AGENTS.md`), commands
   (`~/.config/opencode/commands/`) — <https://opencode.ai/docs/mcp-servers/>,
   <https://opencode.ai/docs/rules/>, <https://opencode.ai/docs/commands/>
-- Gemini CLI: `~/.gemini/settings.json` (`mcpServers`), `~/.gemini/GEMINI.md`,
-  TOML commands (`~/.gemini/commands/`), server instructions —
-  <https://geminicli.com/docs/tools/mcp-server/>,
-  <https://geminicli.com/docs/cli/gemini-md/>,
-  <https://geminicli.com/docs/cli/custom-commands>
 
 ## Other MCP clients
 
@@ -189,7 +195,8 @@ Any client that launches a stdio MCP server works:
   `<venv>/bin/python -m reverie.mcp_server` with `PYTHONPATH=<repo root>`
   (dev checkout)
 - transport: stdio, NDJSON JSON-RPC 2.0, protocol `2024-11-05`
-- 7 tools (see the README's glossary + `docs/CLI.md`)
+- 7 tools (`observe`, `query`, `summary`, `reconsolidate`,
+  `set_repo_state`, `review_list`, `review_decide`)
 
 ## Uninstall
 

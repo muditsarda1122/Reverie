@@ -430,13 +430,13 @@ class TestCommitStaleness:
         assert "stale_commit" not in brain.get_ecu(ecu_id)["metadata"]
 
     def test_unknown_commit_hash_ignored(self, brain, config, repo):
-        ecu_id = insert_grounded_ecu(
+        insert_grounded_ecu(
             brain, repo, commit_hash="deadbeefnotacommit")
         result = run_grounding(brain, config, repo)
         assert result.details["flagged_stale_commits"] == []
 
     def test_should_deprecate_scope_matrix(self):
-        gone, total = ["a.py"], 2
+        gone = ["a.py"]
         assert should_deprecate("engineering", gone, [], 2) is False
         assert should_deprecate("domain", gone, [], 2) is False
         assert should_deprecate("project", gone, [], 2) is False

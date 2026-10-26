@@ -21,6 +21,11 @@ import json
 import re
 
 from reverie import install, mcp_server
+from reverie.integrations import (
+    CLAUDE_CODE_COMMANDS,
+    CODEX_PROMPTS,
+    OPENCODE_COMMANDS,
+)
 
 EXPECTED_TOOLS = [
     "observe",
@@ -48,10 +53,9 @@ def _agent_facing_texts() -> dict[str, str]:
             "~/.reverie/AGENTS.md"),
     }
     for label, commands in (
-        ("claude_code command", install.CLAUDE_CODE_COMMANDS),
-        ("opencode command", install.OPENCODE_COMMANDS),
-        ("codex prompt", install.CODEX_PROMPTS),
-        ("gemini command", install.GEMINI_COMMANDS),
+        ("claude_code command", CLAUDE_CODE_COMMANDS),
+        ("opencode command", OPENCODE_COMMANDS),
+        ("codex prompt", CODEX_PROMPTS),
     ):
         for name, body in commands.items():
             texts[f"{label} {name}"] = body
@@ -81,9 +85,10 @@ def test_every_tool_name_token_matches_the_tool_list():
 
 def test_instructions_point_at_the_registered_names():
     """Spot checks: the exact contract sentences reference the new names."""
-    assert "(query)" in mcp_server.SERVER_INSTRUCTIONS
-    assert "(observe)" in mcp_server.SERVER_INSTRUCTIONS
-    assert "(review_list / review_decide)" in mcp_server.SERVER_INSTRUCTIONS
-    assert "set_repo_state" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`query`" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`observe`" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`review_list`" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`review_decide`" in mcp_server.SERVER_INSTRUCTIONS
+    assert "`set_repo_state`" in mcp_server.SERVER_INSTRUCTIONS
     assert "- observe:" in install.AGENTS_MD
     assert "- review_decide:" in install.AGENTS_MD

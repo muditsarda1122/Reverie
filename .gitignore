@@ -45,9 +45,11 @@ runs/
 /demo/
 /starlette-baseline/
 /prompt.md
-/AGENTS.md
 docs/handoffs/
 docs/ASSESSMENT.md
 docs/SPEC_AUDIT.md
 docs/SPEC_AUDIT_FINAL.md
 docs/EC_TECHNICAL_REFERENCE.md
+
+# --- Scripts --- #
+find-orgs.sh

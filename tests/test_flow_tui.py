@@ -84,20 +84,17 @@ def test_render_screen_snapshot(brain):
         progress={"accepted": 2, "rejected": 1, "skipped": 1},
     )
     assert screen == (
-        "Reverie Review — candidate 3 of 12 "
-        "(2 accepted · 1 rejected · 1 skipped so far)\n"
+        "Reverie Review — 2 accepted · 1 rejected · 1 skipped so far\n"
         "\n"
+        "────────────────────────────────────\n"
+        "Candidate 3 of 12 · invariant · confidence 0.72 · "
+        "evidence: UNKNOWN\n"
         "Token refresh must be optimistic to avoid the retry double-charge.\n"
-        "\n"
-        "    type: invariant\n"
-        "    scope: repo:demo > module:auth\n"
-        "    confidence: 0.72\n"
-        "    grounded: auth/token.py  symbols: —\n"
-        "    evidence: reasoning step 3\n"
-        "    repo: /repos/a (branch main)\n"
-        "\n"
-        "a accept · r reject · s skip · e edit · g accept group · "
-        "u undo · q quit"
+        "Scope: repo:demo > module:auth · Grounded: auth/token.py · "
+        "Repo: /repos/a (branch main) · ID: " + cid + "\n"
+        "Options: a accept · r reject · s skip · e edit · g accept group · "
+        "u undo · q quit\n"
+        "────────────────────────────────────"
     )
 
 
@@ -114,7 +111,7 @@ def test_render_screen_snapshot_contradiction(brain):
         progress={"accepted": 0, "rejected": 0, "skipped": 0},
         partner=partner,
     )
-    assert '    contradicts: "Cache must be invalidated before every ' \
+    assert 'Contradicts: "Cache must be invalidated before every ' \
         'refresh." (0.81)' in screen
     # both conclusions appear — side by side as separate lines, no boxes
     assert "The new cache is always correct." in screen
@@ -129,8 +126,10 @@ def test_render_screen_snapshot_expired(brain):
         progress={"accepted": 0, "rejected": 0, "skipped": 0},
         expired=True,
     )
-    assert screen.endswith(
-        "v revive (back to pending) · a accept · r reject · q quit")
+    assert "Status: expired" in screen
+    assert ("Options: v revive (back to pending) · a accept · r reject · "
+            "q quit") in screen
+    assert "s skip" not in screen
 
 
 # ---------------------------------------------------------------------------

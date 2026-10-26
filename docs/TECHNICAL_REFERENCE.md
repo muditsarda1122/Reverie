@@ -1,5 +1,9 @@
 # Engineering Cognition (EC v2) — Technical Reference
 
+> **Internal document.** A point-in-time technical snapshot — stale by
+> design; trust the code over it. Linked from
+> [CONTRIBUTING.md](../CONTRIBUTING.md) only.
+
 **Document status:** Comprehensive technical reference for external readers. Written from a full read of every file in `reverie/`, `tests/`, `bench/`, `docs/SPEC.md`, `docs/ASSESSMENT.md`, `docs/SPEC_AUDIT.md`, `docs/SPEC_AUDIT_FINAL.md`, and all 24 files in `docs/handoffs/`. Every claim is traceable to a file path (and, where useful, a function name). No code was modified to produce this document.
 
 **Verified at time of writing:** test suite `.venv/bin/python -m pytest tests/` → **512 collected, 506 passed, 6 skipped** (the 6 skips are `OPENCODE_ZEN_API_KEY`-gated live tests). Git HEAD is post-Phase-13 (audit baseline `3dd5320`).

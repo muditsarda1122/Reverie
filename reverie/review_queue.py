@@ -21,11 +21,23 @@ trail behave exactly as the §28.6 stop-path gate — nothing is duplicated.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from .brain import Brain
 from .config import get_config
 from .review_gate import _scope_groups, apply_review_decisions
+
+#: Per-candidate rendering shared by the terminal TUI and the MCP
+#: ``review_list`` view — one formatter so the two surfaces cannot diverge.
+CANDIDATE_RULE = "─" * 36
+OPTIONS_LINE = (
+    "Options: a accept · r reject · s skip · e edit · g accept group · "
+    "u undo · q quit"
+)
+EXPIRED_OPTIONS_LINE = (
+    "Options: v revive (back to pending) · a accept · r reject · q quit"
+)
 
 #: Session statuses whose candidates are reviewable (archived sessions'
 #: candidates stay in the queue — D56).
@@ -131,6 +143,83 @@ def page(queue: list[dict], page_no: int = 1, size: int | None = None,
     size = size or int(cfg.review.page_size)
     start = max(0, (page_no - 1) * size)
     return queue[start:start + size], max(1, (len(queue) + size - 1) // size)
+
+
+# ---------------------------------------------------------------------------
+# rendering — ONE formatter for the terminal TUI and MCP review_list
+# ---------------------------------------------------------------------------
+
+def candidate_detail(brain: Brain, candidate: dict) -> dict:
+    """Grounding/evidence for display (queue rows stay lean).
+
+    Both review surfaces call this — the evidence flag has exactly one
+    source (``metadata.evidence_status``) and the grounding/repo fields
+    shown by the terminal are also shown through the MCP tool.
+    """
+    row = brain.get_session_ecu_row(candidate["id"])
+    if row is None:
+        return {}
+    doc = json.loads(row["document"]) if row.get("document") else {}
+    grounding = doc.get("grounding") or {}
+    return {
+        "grounding_files": grounding.get("files") or [],
+        "evidence": doc.get("evidence_pointers") or [],
+        "grounding_symbols": grounding.get("symbols") or [],
+        "evidence_status": (doc.get("metadata") or {}).get("evidence_status"),
+        "grounding_dropped": (grounding.get("validation") or {}).get(
+            "dropped_files") or [],
+        "symbols_dropped": (grounding.get("validation") or {}).get(
+            "dropped_symbols") or [],
+    }
+
+
+def evidence_flag(detail: dict | None) -> str:
+    """The single evidence check used by every review surface."""
+    status = (detail or {}).get("evidence_status")
+    if status == "unsupported":
+        return "UNSUPPORTED"
+    if status == "supported":
+        return "SUPPORTED"
+    return "UNKNOWN"
+
+
+def _muted(value) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value) if value else "—"
+    return str(value) if value not in (None, "") else "—"
+
+
+def render_candidate_block(candidate: dict, detail: dict | None = None, *,
+                           index: int, total: int, expired: bool = False,
+                           notes: list[str] | None = None) -> str:
+    """One candidate block — the shared snapshot surface for TUI and MCP."""
+    detail = detail or {}
+    lines = [
+        CANDIDATE_RULE,
+        f"Candidate {index} of {total} · "
+        f"{candidate.get('conclusion_type') or '—'} · "
+        f"confidence {candidate['confidence']:.2f} · "
+        f"evidence: {evidence_flag(detail)}",
+        candidate["cognition"],
+    ]
+    grounded = _muted(detail.get("grounding_files"))
+    symbols = _muted(detail.get("grounding_symbols"))
+    if symbols != "—":
+        grounded = f"{grounded} (symbols: {symbols})"
+    repo = candidate.get("repo_path") or "—"
+    if candidate.get("branch"):
+        repo = f"{repo} (branch {candidate['branch']})"
+    lines.append(
+        f"Scope: {candidate.get('scope_path') or '—'} · "
+        f"Grounded: {grounded} · Repo: {repo} · ID: {candidate['id']}"
+    )
+    if notes:
+        lines.extend(notes)
+    if expired:
+        lines.append("Status: expired")
+    lines.append(EXPIRED_OPTIONS_LINE if expired else OPTIONS_LINE)
+    lines.append(CANDIDATE_RULE)
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

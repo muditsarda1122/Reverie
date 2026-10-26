@@ -16,6 +16,7 @@ One entry point, subcommands:
     reverie repair           brain integrity check + safe recovery
     reverie hook             lifecycle hooks invoked by the agent harness
                              itself (installed by `reverie install`)
+    reverie capture-turn     capture the completed exchange (Stop hook)
     reverie uninstall        remove Reverie's harness entries (+ data with
                              --delete-data)
 
@@ -31,6 +32,7 @@ import sys
 
 from . import repos, transport
 from .brain import Brain, BrainError
+from .client import set_client
 
 
 def _brain_or_die():
@@ -144,6 +146,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="reverie",
         description="Reverie — engineering memory for coding agents.",
     )
+    parser.add_argument("--client", default=None,
+                        help="client key that launched this command (recorded "
+                             "for logs; no behaviour change)")
     sub = parser.add_subparsers(dest="command")
 
     p = sub.add_parser("enable", help="turn Reverie on for a repo")
@@ -234,17 +239,20 @@ def _build_parser() -> argparse.ArgumentParser:
                        "harness itself, installed by `reverie install`)")
     hook_sub = p.add_subparsers(dest="hook")
     hs = hook_sub.add_parser("session-start", help="print the session-start "
-                             "context block: repo state + usage rules "
+                             "context block: repo state only "
                              "(read-only; quiet on error; always exit 0)")
     hs.add_argument("--repo", default=None,
                     help="workspace path (default: current directory)")
+    sub.add_parser("capture-turn", help="capture the completed exchange "
+                   "(invoked by the installed hook; reads hook JSON on "
+                   "stdin)")
     return parser
 
 
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "install")
+               "capture-turn", "install")
 
 
 def _unknown_command(word: str) -> int:
@@ -257,8 +265,37 @@ def _unknown_command(word: str) -> int:
     return 2
 
 
+def _extract_client(argv: list[str]) -> list[str] | None:
+    """Strip ``--client <key>`` from anywhere in argv and store the key.
+
+    Accepting it at any position keeps old launch forms and new ones
+    compatible; the value is recorded only (logs / future wording).
+    """
+    rest: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--client":
+            if i + 1 >= len(argv):
+                print("--client requires a value", file=sys.stderr)
+                return None
+            set_client(argv[i + 1])
+            i += 2
+            continue
+        if arg.startswith("--client="):
+            set_client(arg.split("=", 1)[1])
+            i += 1
+            continue
+        rest.append(arg)
+        i += 1
+    return rest
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    argv = _extract_client(argv)
+    if argv is None:
+        return 2
     if not argv or argv[0] in ("--help", "-h"):
         _build_parser().print_help()    # the multi-command help
         return 0
@@ -284,6 +321,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv[0] == "hook":
         from . import hooks
         return hooks.main(argv[1:])
+    if argv[0] == "capture-turn":
+        from . import integrations
+        return integrations.capture_turn_main(argv[1:])
     args = _build_parser().parse_args(argv)
 
     if args.command == "enable":

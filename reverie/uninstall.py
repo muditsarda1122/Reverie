@@ -6,14 +6,13 @@ applies the same merge logic in reverse:
 
 - For every supported harness, only Reverie's own entries are removed:
   the ``reverie`` MCP server entry in ``~/.claude.json``,
-  ``~/.cursor/mcp.json``, ``~/.config/opencode/opencode.json``,
-  ``~/.codex/config.toml`` and ``~/.gemini/settings.json``; the
-  ``@~/.reverie/AGENTS.md`` line in ``~/.claude/CLAUDE.md``; the Reverie
-  SessionStart hook handler in ``~/.claude/settings.json`` (emptied matcher
-  groups and keys are dropped with it); the reference
-  blocks in the OpenCode/Codex ``AGENTS.md`` and Gemini ``GEMINI.md``
-  files; the user-level slash-command files (only while their content is
-  still Reverie's verbatim text). Every other key, line and file stays
+  ``~/.cursor/mcp.json``, ``~/.config/opencode/opencode.json`` and
+  ``~/.codex/config.toml``; the ``@~/.reverie/AGENTS.md`` line in
+  ``~/.claude/CLAUDE.md``; the Reverie SessionStart and Stop hook handlers
+  in ``~/.claude/settings.json`` (emptied matcher groups and keys are
+  dropped with them); the reference blocks in the OpenCode/Codex
+  ``AGENTS.md`` files; the user-level slash-command files (only while their
+  content is still Reverie's verbatim text). Every other key, line and file stays
   byte-identical. A file that is invalid JSON/TOML, or was edited so that
   Reverie's entry can't be found unambiguously, is skipped and reported —
   never guessed at.
@@ -38,343 +37,17 @@ running; as the last step it prints the exact command to run by hand
 
 from __future__ import annotations
 
-import hashlib
-import json
 import shutil
 import sys
-import tomllib
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import transport
 from .brain import Brain
 from .config import reverie_home as _default_reverie_home
-from .install import (
-    AGENTS,
-    DIST_NAME,
-    REFERENCE_BLOCK_MARKER,
-    _agents_ref,
-    _is_reverie_hook_handler,
-    _reference_block,
-    load_install_manifest,
-)
-
-
-@dataclass
-class PlannedRemoval:
-    """One planned uninstall step, computed pure, applied (or printed)
-    separately — the mirror of install.PlannedWrite."""
-    path: Path
-    action: str            # remove-entry | remove-line | remove-block |
-                           # delete-file | unchanged | skipped
-    detail: str
-    after: str | None = None    # resulting content (None for delete/unchanged)
-    removed: str | None = None  # what would be removed (for dry-run display)
-
-
-def _owned_by_install(path: Path, manifest: dict[str, str] | None) -> bool:
-    """True only when install created this exact file and it is unedited
-    (current sha256 == the hash recorded at install time). The manifest is
-    the uninstaller's licence to delete a whole file; without a match the
-    file is kept and only Reverie's entry is removed (review fix 39)."""
-    if not manifest:
-        return False
-    expected = manifest.get(str(Path(path).resolve()))
-    if expected is None:
-        return False
-    try:
-        actual = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    except OSError:
-        return False
-    return actual == expected
-
-
-def _display(path: Path, home: Path) -> str:
-    """`~`-relative display for paths under the user's home."""
-    try:
-        return "~/" + str(path.relative_to(home))
-    except ValueError:
-        return str(path)
-
-
-# ---------------------------------------------------------------------------
-# harness reverse-merge plans
-# ---------------------------------------------------------------------------
-
-def _plan_json_entry(path: Path, home: Path, section: str,
-                     label: str, schema_only_ok: bool = False,
-                     manifest: dict[str, str] | None = None
-                     ) -> PlannedRemoval:
-    """Remove ``data[section]["reverie"]`` — the reverse of install._json_merge.
-
-    The file itself is removed only when install created it and the content
-    still matches the install-time hash (the manifest); a file that existed
-    before install is always kept (reset to whatever remains — down to an
-    empty object). Invalid JSON is skipped, never touched."""
-    disp = _display(path, home)
-    if not path.exists():
-        return PlannedRemoval(path, "unchanged", f"{disp}: not present")
-    text = path.read_text(encoding="utf-8")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        return PlannedRemoval(
-            path, "skipped",
-            f"SKIPPED {disp}: not valid JSON ({exc}) — fix it by hand if "
-            "you want the reverie entry gone.")
-    if not isinstance(data, dict):
-        return PlannedRemoval(
-            path, "skipped",
-            f"SKIPPED {disp}: does not contain a JSON object.")
-    node = data.get(section)
-    if not isinstance(node, dict) or "reverie" not in node:
-        return PlannedRemoval(
-            path, "unchanged", f"{disp}: no reverie entry in '{section}'")
-    node = dict(node)
-    node.pop("reverie")
-    remaining = dict(data)
-    remaining[section] = node
-    if isinstance(remaining[section], dict) and not remaining[section]:
-        del remaining[section]           # the section held only the reverie entry
-    meaningful = {k: v for k, v in remaining.items()
-                  if not (schema_only_ok and k == "$schema")}
-    if not meaningful:
-        if _owned_by_install(path, manifest):
-            return PlannedRemoval(
-                path, "delete-file",
-                f"Removed {disp} (Reverie created it; only its entry was in it)")
-        after = json.dumps(remaining, indent=2) + "\n"
-        return PlannedRemoval(
-            path, "remove-entry",
-            f"Removed the reverie MCP server from {disp} (file kept — it "
-            "existed before install)",
-            after=after, removed=f"[{section}].reverie")
-    after = json.dumps(remaining, indent=2) + "\n"
-    return PlannedRemoval(
-        path, "remove-entry",
-        f"Removed the reverie MCP server from {disp} ('{section}' preserved)",
-        after=after, removed=f"[{section}].reverie")
-
-
-def _plan_line(path: Path, home: Path, line: str, label: str,
-               manifest: dict[str, str] | None = None) -> PlannedRemoval:
-    """Remove the exact import line — the reverse of install._line_once."""
-    disp = _display(path, home)
-    if not path.exists():
-        return PlannedRemoval(path, "unchanged", f"{disp}: not present")
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines(keepends=True)
-    keep = [ln for ln in lines if ln.strip() != line]
-    if len(keep) == len(lines):
-        return PlannedRemoval(
-            path, "unchanged", f"{disp}: no {line!r} line")
-    after = "".join(keep).rstrip("\n")
-    if not after:
-        if _owned_by_install(path, manifest):
-            return PlannedRemoval(
-                path, "delete-file",
-                f"Removed {disp} (Reverie created it; only the import line "
-                "was in it)")
-        return PlannedRemoval(
-            path, "remove-line",
-            f"Removed the {line} import from {disp} (empty file kept — it "
-            "existed before install)",
-            after="", removed=line)
-    # The installer appends `<text>\n<line>\n`; restore exactly one
-    # trailing newline on the original text.
-    after += "\n"
-    return PlannedRemoval(
-        path, "remove-line", f"Removed the {line} import from {disp}",
-        after=after, removed=line)
-
-
-def _plan_block(path: Path, home: Path, block: str, marker: str, label: str,
-                manifest: dict[str, str] | None = None) -> PlannedRemoval:
-    """Remove the appended reference block — the reverse of
-    install._block_once. The block is only removed when it is found
-    verbatim; a block that was edited afterwards is skipped and reported
-    (Reverie never guesses)."""
-    disp = _display(path, home)
-    if not path.exists():
-        return PlannedRemoval(path, "unchanged", f"{disp}: not present")
-    text = path.read_text(encoding="utf-8")
-    if marker not in text:
-        return PlannedRemoval(
-            path, "unchanged", f"{disp}: no Reverie reference block")
-    if block not in text:
-        return PlannedRemoval(
-            path, "skipped",
-            f"SKIPPED {disp}: the Reverie reference block was edited after "
-            "install — remove it by hand if you want it gone.")
-    before = text[:text.index(block)]
-    remainder = before + text[text.index(block) + len(block):]
-    # The installer appends `<text>\n\n<block>`; restore exactly one
-    # trailing newline on the original text. (A file that did not end with
-    # a newline before install is restored with one — the append itself is
-    # not reversible byte-wise.)
-    if not remainder.strip():
-        if _owned_by_install(path, manifest):
-            return PlannedRemoval(
-                path, "delete-file",
-                f"Removed {disp} (Reverie created it; only its reference "
-                "block was in it)")
-        return PlannedRemoval(
-            path, "remove-block",
-            f"Removed the Reverie reference block from {disp} (empty file kept — "
-            "it existed before install)",
-            after="", removed=block.strip().splitlines()[0] + " …")
-    remainder = remainder.rstrip("\n") + "\n"
-    return PlannedRemoval(
-        path, "remove-block", f"Removed the Reverie reference block from {disp}",
-        after=remainder, removed=block.strip().splitlines()[0] + " …")
-
-
-def _plan_verbatim_file(path: Path, home: Path, content: str, label: str
-                        ) -> PlannedRemoval:
-    """Delete a spec-owned file (e.g. ~/.cursor/rules/ec.md) — but only
-    when its content is still exactly what Reverie wrote."""
-    disp = _display(path, home)
-    if not path.exists():
-        return PlannedRemoval(path, "unchanged", f"{disp}: not present")
-    if path.read_text(encoding="utf-8") != content:
-        return PlannedRemoval(
-            path, "skipped",
-            f"SKIPPED {disp}: edited after install — not deleting your "
-            "changes; remove it by hand if you want it gone.")
-    return PlannedRemoval(
-        path, "delete-file", f"Removed {disp} (Reverie-owned file)")
-
-
-def _plan_toml_table(path: Path, home: Path, label: str,
-                     manifest: dict[str, str] | None = None) -> PlannedRemoval:
-    """Remove the ``[mcp_servers.reverie]`` table — the reverse of
-    install._codex_toml. Invalid TOML is skipped, never touched."""
-    disp = _display(path, home)
-    if not path.exists():
-        return PlannedRemoval(path, "unchanged", f"{disp}: not present")
-    text = path.read_text(encoding="utf-8")
-    try:
-        tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        return PlannedRemoval(
-            path, "skipped",
-            f"SKIPPED {disp}: not valid TOML ({exc}) — fix it by hand if "
-            "you want the reverie entry gone.")
-    lines = text.splitlines()
-    start = next(
-        (i for i, line in enumerate(lines)
-         if line.strip() == "[mcp_servers.reverie]"),
-        None,
-    )
-    if start is None:
-        return PlannedRemoval(path, "unchanged", f"{disp}: no reverie table")
-    end = next(
-        (i for i in range(start + 1, len(lines))
-         if lines[i].strip().startswith("[")),
-        len(lines),
-    )
-    new_lines = lines[:start] + lines[end:]
-    after = "\n".join(new_lines).rstrip("\n")
-    if not after.strip():
-        if _owned_by_install(path, manifest):
-            return PlannedRemoval(
-                path, "delete-file",
-                f"Removed {disp} (Reverie created it; only its table was in it)")
-        return PlannedRemoval(
-            path, "remove-entry",
-            f"Removed [mcp_servers.reverie] from {disp} (empty file kept — "
-            "it existed before install)",
-            after="", removed="[mcp_servers.reverie]")
-    # The installer appends `<text>\n<table>\n`; restore exactly one
-    # trailing newline on the original text.
-    after += "\n"
-    try:
-        tomllib.loads(after)
-    except tomllib.TOMLDecodeError as exc:
-        return PlannedRemoval(
-            path, "skipped",
-            f"SKIPPED {disp}: removing the table would not parse ({exc}).")
-    return PlannedRemoval(
-        path, "remove-entry",
-        f"Removed [mcp_servers.reverie] from {disp} (everything else kept)",
-        after=after, removed="[mcp_servers.reverie]")
-
-
-def _plan_claude_session_start(path: Path, home: Path,
-                               manifest: dict[str, str] | None = None
-                               ) -> PlannedRemoval:
-    """Remove Reverie's SessionStart hook handler — the reverse of
-    install._claude_session_start_plan.
-
-    Only matching handlers are removed; emptied matcher groups, an emptied
-    ``SessionStart`` key and an emptied ``hooks`` key are dropped with them.
-    Everything else stays byte-identical. The file itself is deleted only
-    when install created it (manifest hash) and nothing else remains."""
-    disp = _display(path, home)
-    if not path.exists():
-        return PlannedRemoval(path, "unchanged", f"{disp}: not present")
-    text = path.read_text(encoding="utf-8")
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        return PlannedRemoval(
-            path, "skipped",
-            f"SKIPPED {disp}: not valid JSON ({exc}) — fix it by hand if "
-            "you want the reverie hook gone.")
-    if not isinstance(data, dict):
-        return PlannedRemoval(
-            path, "skipped",
-            f"SKIPPED {disp}: does not contain a JSON object.")
-    hooks = data.get("hooks")
-    groups = hooks.get("SessionStart") if isinstance(hooks, dict) else None
-    if not isinstance(groups, list):
-        return PlannedRemoval(
-            path, "unchanged", f"{disp}: no Reverie SessionStart hook")
-    removed_count = 0
-    kept_groups = []
-    for group in groups:
-        if not isinstance(group, dict) or not isinstance(group.get("hooks"),
-                                                         list):
-            kept_groups.append(group)
-            continue
-        kept_handlers = [h for h in group["hooks"]
-                         if not _is_reverie_hook_handler(h)]
-        removed_count += len(group["hooks"]) - len(kept_handlers)
-        if kept_handlers:
-            group = dict(group)
-            group["hooks"] = kept_handlers
-            kept_groups.append(group)
-        # an emptied matcher group is dropped with its handler
-    if removed_count == 0:
-        return PlannedRemoval(
-            path, "unchanged", f"{disp}: no Reverie SessionStart hook")
-    remaining = dict(data)
-    remaining_hooks = dict(hooks)
-    if kept_groups:
-        remaining_hooks["SessionStart"] = kept_groups
-    else:
-        del remaining_hooks["SessionStart"]
-    if remaining_hooks:
-        remaining["hooks"] = remaining_hooks
-    else:
-        del remaining["hooks"]
-    if not remaining:
-        if _owned_by_install(path, manifest):
-            return PlannedRemoval(
-                path, "delete-file",
-                f"Removed {disp} (Reverie created it; only its hook was in it)")
-        return PlannedRemoval(
-            path, "remove-entry",
-            f"Removed the Reverie SessionStart hook from {disp} (file kept — "
-            "it existed before install)",
-            after=json.dumps(remaining, indent=2) + "\n",
-            removed="hooks.SessionStart")
-    return PlannedRemoval(
-        path, "remove-entry",
-        f"Removed the Reverie SessionStart hook from {disp}",
-        after=json.dumps(remaining, indent=2) + "\n",
-        removed="hooks.SessionStart")
+from .install import DIST_NAME, load_install_manifest
+from .integrations import AGENTS
+from .integrations.common import PlannedRemoval, _display
 
 
 def _plan_harnesses(home: Path, reverie_home: Path,
@@ -382,91 +55,12 @@ def _plan_harnesses(home: Path, reverie_home: Path,
                     ) -> list[tuple[str, PlannedRemoval]]:
     """Every planned harness removal, for ALL supported agents — uninstall
     does not depend on detection: it cleans wherever Reverie may have
-    written. Returns [(agent_name, removal), ...]. ``manifest`` is the
-    install-time file hash record; it decides whether a whole file may be
-    deleted (only when install created it and it is unedited)."""
-    from .install import (
-        CLAUDE_CODE_COMMANDS,
-        CODEX_PROMPTS,
-        CURSOR_COMMANDS,
-        GEMINI_COMMANDS,
-        OPENCODE_COMMANDS,
-    )
-    ref = _agents_ref(home, reverie_home)
-    block = _reference_block(ref)
-    marker = REFERENCE_BLOCK_MARKER
+    written. Each integration computes its own reverse plan."""
     plans: list[tuple[str, PlannedRemoval]] = []
-    for agent in AGENTS:
-        if agent.key == "claude_code":
-            entries = [
-                _plan_json_entry(home / ".claude.json", home, "mcpServers",
-                                 "claude_code", manifest=manifest),
-                _plan_line(home / ".claude" / "CLAUDE.md", home,
-                           f"@{ref}", "claude_code", manifest=manifest),
-                _plan_claude_session_start(
-                    home / ".claude" / "settings.json", home,
-                    manifest=manifest),
-            ]
-            entries += [
-                _plan_verbatim_file(home / ".claude" / "commands" / name,
-                                    home, body, "claude_code")
-                for name, body in CLAUDE_CODE_COMMANDS.items()
-            ]
-        elif agent.key == "cursor":
-            entries = [
-                _plan_json_entry(home / ".cursor" / "mcp.json", home,
-                                 "mcpServers", "cursor", manifest=manifest),
-            ]
-            entries += [
-                _plan_verbatim_file(home / ".cursor" / "commands" / name,
-                                    home, body, "cursor")
-                for name, body in CURSOR_COMMANDS.items()
-            ]
-        elif agent.key == "opencode":
-            entries = [
-                _plan_json_entry(home / ".config" / "opencode"
-                                 / "opencode.json", home, "mcp",
-                                 "opencode", schema_only_ok=True,
-                                 manifest=manifest),
-                _plan_block(home / ".config" / "opencode" / "AGENTS.md",
-                            home, block, marker, "opencode",
-                            manifest=manifest),
-            ]
-            entries += [
-                _plan_verbatim_file(
-                    home / ".config" / "opencode" / "commands" / name,
-                    home, body, "opencode")
-                for name, body in OPENCODE_COMMANDS.items()
-            ]
-        elif agent.key == "codex":
-            entries = [
-                _plan_toml_table(home / ".codex" / "config.toml", home,
-                                 "codex", manifest=manifest),
-                _plan_block(home / ".codex" / "AGENTS.md", home, block,
-                            marker, "codex", manifest=manifest),
-            ]
-            entries += [
-                _plan_verbatim_file(home / ".codex" / "prompts" / name,
-                                    home, body, "codex")
-                for name, body in CODEX_PROMPTS.items()
-            ]
-        elif agent.key == "gemini_cli":
-            entries = [
-                _plan_json_entry(home / ".gemini" / "settings.json", home,
-                                 "mcpServers", "gemini_cli",
-                                 manifest=manifest),
-                _plan_block(home / ".gemini" / "GEMINI.md", home, block,
-                            marker, "gemini_cli", manifest=manifest),
-            ]
-            entries += [
-                _plan_verbatim_file(home / ".gemini" / "commands" / name,
-                                    home, body, "gemini_cli")
-                for name, body in GEMINI_COMMANDS.items()
-            ]
-        else:                                   # future agents: nothing yet
-            continue
-        for entry in entries:
-            plans.append((agent.name, entry))
+    for integration in AGENTS:
+        for removal in integration.uninstall(
+                home, True, reverie_home=reverie_home, manifest=manifest):
+            plans.append((integration.name, removal))
     return plans
 
 
@@ -475,6 +69,10 @@ def _apply(removal: PlannedRemoval) -> None:
         return
     if removal.action == "delete-file":
         removal.path.unlink(missing_ok=True)
+        return
+    if removal.action == "delete-dir":
+        if removal.path.is_dir():
+            shutil.rmtree(removal.path)
         return
     removal.path.write_text(removal.after or "", encoding="utf-8")
 
@@ -507,6 +105,8 @@ def _emit(removal: PlannedRemoval, home: Path, dry_run: bool, print_fn,
                 print_fn(f"        {line}")
         elif removal.action == "delete-file":
             print_fn("      (file would be removed)")
+        elif removal.action == "delete-dir":
+            print_fn("      (folder would be removed)")
         return
     _apply(removal)
     print_fn(f"  ✓ {mark}: {removal.detail}")

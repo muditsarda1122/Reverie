@@ -116,20 +116,22 @@ def test_written_configs_carry_existing_absolute_script(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     code, out = run_install_code(
-        home, home / ".reverie", only=["opencode", "cursor", "codex", "gemini_cli"],
+        home, home / ".reverie", only=["opencode", "cursor", "codex"],
         check_fn=lambda *a, **k: (True, "check skipped (test)"))
     assert code == 0
     script = install.console_script_path()
     opencode = json.loads(
         (home / ".config" / "opencode" / "opencode.json").read_text())
-    assert opencode["mcp"]["reverie"]["command"] == [script]
+    assert opencode["mcp"]["reverie"]["command"] == [
+        script, "--client", "opencode"]
     cursor = json.loads((home / ".cursor" / "mcp.json").read_text())
     assert cursor["mcpServers"]["reverie"]["command"] == script
+    assert cursor["mcpServers"]["reverie"]["args"] == [
+        "--client", "cursor"]
     import tomllib
     codex = tomllib.loads((home / ".codex" / "config.toml").read_text())
     assert codex["mcp_servers"]["reverie"]["command"] == script
-    gemini = json.loads((home / ".gemini" / "settings.json").read_text())
-    assert gemini["mcpServers"]["reverie"]["command"] == script
+    assert codex["mcp_servers"]["reverie"]["args"] == ["--client", "codex"]
     assert Path(script).is_absolute() and Path(script).is_file()
 
 
@@ -227,19 +229,21 @@ def test_install_prints_check_per_harness(tmp_path):
 def test_install_checks_each_distinct_command_once(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    calls: list[str] = []
+    calls: list[tuple[str, tuple[str, ...]]] = []
 
     def check(command, args, env):
-        calls.append(command)
+        calls.append((command, tuple(args)))
         return True, "server started (fake)"
 
     code, _ = run_install_code(
         home, home / ".reverie", all_agents=False,
-        only=["claude_code", "cursor", "opencode", "codex", "gemini_cli"],
+        only=["claude_code", "cursor", "opencode", "codex"],
         check_fn=check)
     assert code == 0
-    # all five harnesses share one command: launched once, reported per harness
-    assert len(calls) == 1
+    # each harness now carries its own --client key, so each is checked once
+    assert len(calls) == 4
+    assert {args[-1] for _command, args in calls} == {
+        "claude_code", "cursor", "opencode", "codex"}
 
 
 def test_failed_check_blocks_ready_and_prints_command(tmp_path):
@@ -305,7 +309,8 @@ def test_install_real_check_reports_started(monkeypatch, tmp_path):
     assert cursor["mcpServers"]["reverie"]["command"] == str(script)
     opencode = json.loads(
         (home / ".config" / "opencode" / "opencode.json").read_text())
-    assert opencode["mcp"]["reverie"]["command"] == [str(script)]
+    assert opencode["mcp"]["reverie"]["command"] == [
+        str(script), "--client", "opencode"]
 
 
 def test_dry_run_never_launches_the_check(tmp_path):
@@ -347,19 +352,14 @@ def test_configured_servers_reads_every_harness(tmp_path):
     (home / ".codex" / "config.toml").write_text(
         '[mcp_servers.reverie]\ncommand = "/d/reverie-mcp"\n'
         'args = ["-x"]\n')
-    (home / ".gemini").mkdir()
-    (home / ".gemini" / "settings.json").write_text(json.dumps(
-        {"mcpServers": {"reverie": {"command": "/e/reverie-mcp"}}}))
     servers = {s.agent: s for s in install.configured_servers(home)}
-    assert set(servers) == {"claude_code", "cursor", "opencode", "codex",
-                            "gemini_cli"}
+    assert set(servers) == {"claude_code", "cursor", "opencode", "codex"}
     assert servers["claude_code"].command == "/a/reverie-mcp"
     assert servers["cursor"].command == "/b/reverie-mcp"
     assert servers["opencode"].command == "/c/reverie-mcp"
     assert servers["opencode"].args == ["--flag"]
     assert servers["codex"].command == "/d/reverie-mcp"
     assert servers["codex"].args == ["-x"]
-    assert servers["gemini_cli"].command == "/e/reverie-mcp"
 
 
 def test_status_flags_missing_server_command(tmp_path):
@@ -388,8 +388,8 @@ def test_status_reports_found_command(tmp_path):
 def test_status_bare_command_uses_which(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    (home / ".gemini").mkdir()
-    (home / ".gemini" / "settings.json").write_text(json.dumps(
+    (home / ".cursor").mkdir()
+    (home / ".cursor" / "mcp.json").write_text(json.dumps(
         {"mcpServers": {"reverie": {"command": "reverie-mcp"}}}))
     out: list[str] = []
     ok = install.report_configured_servers(

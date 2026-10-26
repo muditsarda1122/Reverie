@@ -73,13 +73,19 @@ so §3.3's informational commit-staleness check has input.
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
+import signal
 import subprocess
 import sys
+import threading
+from contextlib import contextmanager
+from typing import cast
 
 from . import (
     __version__,
+    core_api,
     diffuser,
     extractor,
     maintainer,
@@ -90,43 +96,66 @@ from . import (
     review_queue,
 )
 from .brain import Brain, BrainError, _now_iso
+from .client import get_client, set_client
 from .confidence import FROZEN_STATUSES, reinforce_stored_confidence
 from .config import MODES, SCOPE_LEVELS, get_config
 from .diffuser import DiffuserError
 from .extractor import ExtractorError
+from .policy import RECONSOLIDATE_TRIGGER, USAGE_POLICY
 from .reconsolidation import ReconsolidationError
-from .session import SessionError, SessionManager, brain_summary, detect_repo_branch
+from .session import SessionError, SessionManager, detect_repo_branch
 
 log = logging.getLogger("reverie.mcp_server")
+
+
+class _ExtractionTimeout(Exception):
+    """Raised inside the extraction thread when the hook time limit expires."""
+
+
+@contextmanager
+def _time_limit(seconds: float | None):
+    """Bound a block with SIGALRM on POSIX main threads; no-op elsewhere.
+
+    Harness hooks must return quickly even when a provider hangs. Outside the
+    main thread (or on platforms without SIGALRM) the limit is not applied —
+    the hook's own ``timeout`` still bounds the process.
+    """
+    usable = (seconds is not None and seconds > 0
+              and hasattr(signal, "SIGALRM")
+              and threading.current_thread() is threading.main_thread())
+    if not usable:
+        yield
+        return
+
+    def _raise(signum, frame):        # pragma: no cover - signal plumbing
+        raise _ExtractionTimeout()
+
+    previous = signal.signal(signal.SIGALRM, _raise)
+    signal.setitimer(signal.ITIMER_REAL, float(cast("int", seconds)))
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "reverie"
 
-#: Sent as the initialize response's ``instructions`` field (Phase 3) — the
-#: core usage contract in a few lines. Read by clients that surface server
-#: instructions to the model (Claude Code, Codex and Gemini CLI document it;
-#: OpenCode captures it in recent versions; Cursor does not document it).
-#: Where an instruction file is loaded this is a redundant summary; where it
-#: is not (e.g. Cursor) this is the fallback. Keep the first ~512 characters
-#: self-contained (Codex's documented guidance).
-SERVER_INSTRUCTIONS = """\
-Reverie is engineering memory for coding agents. Contract:
-- Query only AFTER reading the relevant code (query) — never anchor \
-on injected memory before grounding yourself; results are past understanding \
-to verify against the current code, not authoritative context.
-- Capture engineering conclusions when you find a non-obvious invariant, root \
-cause, decision, or wrong assumption (observe) — not for simple code \
-changes.
-- The user reviews every conclusion before it reaches long-term memory. Show \
-candidates fully and relay only decisions the user states \
-(review_list / review_decide) — never decide reviews for the \
-user.
-- The first time a tool reports this repo as undecided, ask the user once: \
-"Reverie isn't on for this repo. Turn it on? (yes / not now / never)" — and \
-record the answer with set_repo_state. Ask at most once per repo \
-per conversation.
-- Pass the workspace path as repo_path on every call.\
-"""
+#: Sent as the initialize response's ``instructions`` field. The opening
+#: names the tools and the trigger up front (tools are loaded eagerly by
+#: Claude Code, but clients truncate instructions), then the full usage
+#: contract from ``reverie/policy.py`` follows verbatim. Clients that
+#: surface server instructions to the model show it directly (Claude Code,
+#: Cursor and Codex do; OpenCode captures it in recent versions).
+SERVER_INSTRUCTIONS = (
+    "Reverie is engineering memory. Call query before a non-trivial decision "
+    "between approaches, when debugging has no obvious cause, or before "
+    "changing code in a repo where Reverie is enabled.\n\n"
+    "Tools: `query`, `observe`, `summary`, `reconsolidate`, `review_list`, "
+    "`review_decide`, `set_repo_state`.\n\n"
+    + USAGE_POLICY
+)
 
 # §28.4-style messages — verbatim, actionable (feat/flow).
 NO_REPO_ERROR = (
@@ -219,19 +248,19 @@ set_repo_state. Pass the workspace path as 'repo_path' on every call."""
 
 _QUERY_DESCRIPTION = """\
 Retrieve engineering conclusions relevant to your current task. Call this
-AFTER reading the relevant code files, when you recognize a gap that past
-cognition might fill:
-- Before making a decision between multiple approaches
-- When debugging and the cause isn't obvious from the code alone
+before a non-trivial decision between approaches, when debugging and the
+cause isn't obvious, and before an architectural change:
+- Before choosing between multiple approaches
+- When debugging and the cause isn't obvious
 - Before an architectural change (query for existing architectural decisions)
 
 Returns conclusions from both the Session Brain (current branch's working
 memory) and the Canonical Brain (accumulated understanding from past
 sessions). Each includes confidence, scope, grounding references, and status.
 
-Memory is framed as "past beliefs to verify against current code," not
-authoritative context. Always verify grounding references against the
-live codebase before acting on a conclusion.
+Memory is a past belief to verify against the current code, not an
+authority. Verify grounding references against the live codebase before
+acting on a conclusion.
 
 Sessions are automatic: in an enabled repo the session for the current
 branch resolves or is created by this call. Pass the workspace path as
@@ -239,16 +268,18 @@ branch resolves or is created by this call. Pass the workspace path as
 
 _SUMMARY_DESCRIPTION = """\
 Get a summary of what the Reverie brain knows. Call this ONCE at session
-start to understand what engineering memory is already stored before you
-begin work. Returns brain statistics and scope distribution — not
-individual conclusions.
+start for counts and topics only. Returns brain statistics and scope
+distribution — never individual conclusions; never anchor on conclusion
+contents.
 
 If the response contains a pending-review nudge, mention it to the user at
 most once per conversation (counts only, never contents)."""
 
 _REPO_STATE_DESCRIPTION = """\
 Record the user's answer about enabling Reverie for the current repo, or
-turn Reverie on/off for it. Call this with:
+turn Reverie on/off for it. Use this only from the user's answer to the
+first-time question, and ask that question once per conversation. Call this
+with:
 - state="enabled"   — the user said yes (or wants it on)
 - state="not_now"   — the user said "not now": stays off for now; do not
                       ask again in this conversation
@@ -275,7 +306,7 @@ be decided. Bulk-accepting every candidate is refused — Reverie review must
 stay per-candidate or per-group, on the user's explicit instruction. Pass
 the workspace path as 'repo_path'."""
 
-_RECONSOLIDATE_DESCRIPTION = """\
+_RECONSOLIDATE_DESCRIPTION = f"""\
 Re-evaluate a previously retrieved conclusion in light of new evidence you discovered
 during this session. Call this when you find that a past engineering conclusion
 is wrong, outdated, or needs refinement based on what you've learned from the
@@ -287,6 +318,8 @@ trigger supersession. The change is written to the Canonical Brain
 immediately (the conclusion was already human-reviewed when it entered the
 Canonical Brain — reconsolidation is a confidence/evidence update, not a new
 conclusion entering the brain).
+
+Call reconsolidate {RECONSOLIDATE_TRIGGER}
 
 Call reconsolidate when:
 - You verified a retrieved conclusion against the code and found it's no longer accurate
@@ -541,8 +574,9 @@ class ReverieServer:
     of truth (D15), so review decisions from any process take effect immediately."""
 
     def __init__(self, brain: Brain | None = None, manager=None, config=None,
-                 embedding_model=None):
+                 embedding_model=None, client: str | None = None):
         self.config = config or get_config()
+        self.client = client if client is not None else get_client()
         self._brain = brain
         self._manager = manager
         self._embedding_model = embedding_model
@@ -651,7 +685,7 @@ class ReverieServer:
                            f"Method not found: {method!r}")
 
     def _handle_tool_call(self, msg_id, params: dict) -> dict:
-        name = params.get("name")
+        name = cast(str, params.get("name"))
         arguments = params.get("arguments") or {}
         handler = {
             "observe": self._tool_observe,
@@ -772,6 +806,139 @@ class ReverieServer:
         return self._ensure_manager().ensure_session(info.repo_path,
                                                      info.branch)
 
+    def _extract_interaction(self, row: dict, interaction: dict, *,
+                             prequeue: bool = False,
+                             timeout: float | None = None) -> dict:
+        """Extract one interaction (observe path + Stop-hook capture).
+
+        With ``prequeue`` the interaction is saved to the pending queue
+        before the provider call and removed on success — a hook timeout or
+        crash costs nothing. ``timeout`` bounds extraction; on expiry the
+        pending row stays and is retried at the next observe / ``reverie
+        retry``. Never raises for extraction failures.
+        """
+        brain = self._ensure_brain()
+        commit_hash = _current_commit_hash(row["repo_path"])  # D49
+        pending_id = None
+        if prequeue:
+            pending_id = pending.save_pending_extraction(
+                brain, row, interaction,
+                "turn capture: extraction did not complete",
+                commit_hash=commit_hash,
+            )
+        try:
+            with _time_limit(timeout):
+                result, ids = extractor.extract_and_store_session(
+                    brain, row["id"], interaction,
+                    embedding_model=self.embedding_model, config=self.config,
+                    commit_hash=commit_hash, repo_path=row["repo_path"],
+                )
+        except _ExtractionTimeout:
+            if pending_id is not None:
+                brain.mark_pending_extraction_attempt(
+                    pending_id,
+                    f"turn capture timed out after {timeout:g}s")
+            return {
+                "status": "pending",
+                "session_active": True,
+                "ecus_extracted": 0,
+                "pending_extraction_id": pending_id,
+                "message": (
+                    "Capture did not finish within the time limit; the "
+                    "exchange is queued for retry (`reverie retry`)."),
+            }
+        except ExtractorError as exc:
+            if pending_id is not None:
+                brain.mark_pending_extraction_attempt(pending_id, str(exc))
+            else:
+                pending_id = pending.save_pending_extraction(
+                    brain, row, interaction, str(exc),
+                    commit_hash=commit_hash,
+                )
+            error = EXTRACTION_FAILED.format(reason=exc) + (
+                f" The interaction was saved locally (pending id "
+                f"{pending_id[:8]}) and will be retried automatically at "
+                "the next successful observe, or via `reverie retry`."
+            )
+            return {"status": "error", "session_active": True,
+                    "ecus_extracted": 0,
+                    "error": error, "pending_extraction_id": pending_id}
+        except Exception as exc:
+            if pending_id is not None:
+                brain.mark_pending_extraction_attempt(pending_id, str(exc))
+            else:
+                pending_id = pending.save_pending_extraction(
+                    brain, row, interaction, str(exc),
+                    commit_hash=commit_hash,
+                )
+            return {"status": "error", "session_active": True,
+                    "ecus_extracted": 0,
+                    "error": f"Extraction failed: {exc}. The interaction was "
+                             f"saved locally (pending id {pending_id[:8]}).",
+                    "pending_extraction_id": pending_id}
+
+        if pending_id is not None:
+            brain.delete_pending_extraction(pending_id)
+
+        diffusion_failures = 0
+        for ecu_id in ids:
+            try:
+                diffuser.diffuse_session_ecu(
+                    brain, row["id"], ecu_id,
+                    embedding_model=self.embedding_model, config=self.config,
+                )
+            except DiffuserError as exc:
+                log.warning("lightweight diffusion failed for %s: %s",
+                            ecu_id, exc)
+                diffusion_failures += 1
+
+        # feat/providers: this extraction succeeded — opportunistically retry
+        # any other pending extractions for this (repo, branch). Best-effort.
+        retry_summary = pending.retry_pending(
+            brain, repo_path=row["repo_path"], branch=row["branch"],
+            embedding_model=self.embedding_model, config=self.config,
+        )
+
+        count = brain.count_session_ecus(row["id"])
+        plural = "s" if result.rejected_count != 1 else ""
+        if ids:
+            message = (
+                f"Extracted {len(ids)} conclusion{'s' if len(ids) != 1 else ''} into "
+                f"session memory ({result.rejected_count} rejected by the "
+                f"Lifting Test). Session memory now holds {count}."
+            )
+        else:
+            message = (
+                f"Extracted 0 conclusions ({result.rejected_count} candidate{plural} "
+                "rejected by the Lifting Test). This is not an error — not "
+                f"every response produces conclusions. Session memory now "
+                f"holds {count}."
+            )
+        if retry_summary["recovered"]:
+            message += (
+                f" {retry_summary['recovered']} previously failed "
+                "extraction(s) were also recovered into this session."
+            )
+        elif retry_summary["failed"] or retry_summary["skipped"]:
+            message += (
+                f" {retry_summary['failed'] + retry_summary['skipped']} "
+                "pending extraction(s) could not be recovered yet "
+                "(retry at the next observe, or via `reverie retry`)."
+            )
+        return {
+            "status": "ok",
+            "session_active": True,
+            "ecus_extracted": len(ids),
+            "ecus_rejected": result.rejected_count,
+            "rejection_summary": result.rejection_summary,  # §5.3 — visible filtering
+            "session_brain_count": count,
+            "message": message,
+            "skipped_invalid": result.skipped_invalid,
+            "diffusion_failures": diffusion_failures,
+            "pending_recovered": retry_summary["recovered"],
+            "pending_failed": retry_summary["failed"] + retry_summary["skipped"],
+        }
+
     def _record_retrieval_metadata(self, result: dict,
                                    session_id: str | None = None) -> int:
         """§17.5 decay clock (D17) + retrieval reinforcement (design doc
@@ -853,90 +1020,7 @@ class ReverieServer:
         if isinstance(output, str) and output.strip():
             interaction["output"] = output
 
-        brain = self._ensure_brain()
-        commit_hash = _current_commit_hash(row["repo_path"])  # D49
-        try:
-            result, ids = extractor.extract_and_store_session(
-                brain, row["id"], interaction,
-                embedding_model=self.embedding_model, config=self.config,
-                commit_hash=commit_hash, repo_path=row["repo_path"],
-            )
-        except ExtractorError as exc:
-            # feat/providers: the interaction is persisted so the failure
-            # costs nothing — it is retried at the next successful
-            # observe (or via `reverie retry`).
-            pending_id = pending.save_pending_extraction(
-                brain, row, interaction, str(exc),
-                commit_hash=commit_hash,
-            )
-            error = EXTRACTION_FAILED.format(reason=exc) + (
-                f" The interaction was saved locally (pending id "
-                f"{pending_id[:8]}) and will be retried automatically at "
-                "the next successful observe, or via `reverie retry`."
-            )
-            return {"status": "error", "session_active": True,
-                    "error": error, "pending_extraction_id": pending_id}
-
-        diffusion_failures = 0
-        for ecu_id in ids:
-            try:
-                diffuser.diffuse_session_ecu(
-                    brain, row["id"], ecu_id,
-                    embedding_model=self.embedding_model, config=self.config,
-                )
-            except DiffuserError as exc:
-                # Extraction succeeded — the ECUs are stored and retrievable;
-                # lightweight diffusion is best-effort (offline-safe).
-                log.warning("lightweight diffusion failed for %s: %s",
-                            ecu_id, exc)
-                diffusion_failures += 1
-
-        # feat/providers: this observe succeeded — opportunistically retry
-        # any pending extractions for this (repo, branch). Best-effort.
-        retry_summary = pending.retry_pending(
-            brain, repo_path=row["repo_path"], branch=row["branch"],
-            embedding_model=self.embedding_model, config=self.config,
-        )
-
-        count = brain.count_session_ecus(row["id"])
-        plural = "s" if result.rejected_count != 1 else ""
-        if ids:
-            message = (
-                f"Extracted {len(ids)} conclusion{'s' if len(ids) != 1 else ''} into "
-                f"session memory ({result.rejected_count} rejected by the "
-                f"Lifting Test). Session memory now holds {count}."
-            )
-        else:
-            message = (
-                f"Extracted 0 conclusions ({result.rejected_count} candidate{plural} "
-                "rejected by the Lifting Test). This is not an error — not "
-                f"every response produces conclusions. Session memory now "
-                f"holds {count}."
-            )
-        if retry_summary["recovered"]:
-            message += (
-                f" {retry_summary['recovered']} previously failed "
-                "extraction(s) were also recovered into this session."
-            )
-        elif retry_summary["failed"] or retry_summary["skipped"]:
-            message += (
-                f" {retry_summary['failed'] + retry_summary['skipped']} "
-                "pending extraction(s) could not be recovered yet "
-                "(retry at the next observe, or via `reverie retry`)."
-            )
-        return {
-            "status": "ok",
-            "session_active": True,
-            "ecus_extracted": len(ids),
-            "ecus_rejected": result.rejected_count,
-            "rejection_summary": result.rejection_summary,  # §5.3 — visible filtering
-            "session_brain_count": count,
-            "message": message,
-            "skipped_invalid": result.skipped_invalid,
-            "diffusion_failures": diffusion_failures,
-            "pending_recovered": retry_summary["recovered"],
-            "pending_failed": retry_summary["failed"] + retry_summary["skipped"],
-        }
+        return self._extract_interaction(row, interaction)
 
     def _tool_query(self, args: dict) -> dict:
         """The §11.3 demand-driven retrieval path (query)."""
@@ -983,23 +1067,10 @@ class ReverieServer:
         """§16.3 summary — the nudge line included (feat/flow §4).
 
         Gated on enablement when a repo resolves; works repo-less (a
-        global server in the home folder still reports brain stats)."""
-        gate, ctx = self._gate(args, require_repo=False)
-        if gate is not None:
-            return gate
-        row = None
-        if ctx is not None:
-            info = ctx["info"]
-            row = self._enabled_session(info)
-        brain = self._ensure_brain()
-        payload = {"status": "ok", **brain_summary(brain, row)}
-        nudge = review_queue.nudge_line(
-            brain, config=self.config,
-            repo_path=info.repo_path if ctx is not None else None)
-        if nudge:
-            payload["review_nudge"] = nudge
-            payload["message"] = payload["message"] + " " + nudge
-        return payload
+        global server in the home folder still reports brain stats). The
+        harness-neutral implementation lives in ``core_api.summary`` so the
+        SessionStart hook can reuse the exact same formatting."""
+        return core_api.summary(args.get("repo_path"), _server=self)
 
     def _tool_reconsolidate(self, args: dict) -> dict:
         """D37 — reconsolidate (design doc §5.2): re-evaluate a labile
@@ -1177,7 +1248,7 @@ class ReverieServer:
             }[state]
         return {"status": "ok", "repo": info.repo_path,
                 "repo_key": info.repo_key, "state": effective,
-                "asked_at": row["asked_at"], "message": message}
+                "asked_at": cast(dict, row)["asked_at"], "message": message}
 
     def _duplicate_notes(self, rows: list[dict]) -> dict[str, list[str]]:
         """Item 22: rows sharing a conclusion_type AND grounding signature
@@ -1241,23 +1312,22 @@ class ReverieServer:
             f"(page {page_no}/{total_pages})",
         ]
         duplicates = self._duplicate_notes(rows)
+        brain = self._ensure_brain()
+        page_size = int(self.config.review.page_size)
+        start = max(0, (page_no - 1) * page_size)
         for i, row in enumerate(rows, start=1):
-            unsupported = " [unsupported evidence]" \
-                if row.get("evidence_status") == "unsupported" else ""
-            lines.append(
-                f"{i}. [{row['confidence']:.2f}] {row['cognition']}"
-                f"{unsupported}"
-            )
-            lines.append(
-                f"   id: {row['id']} | type: {row['conclusion_type']} | "
-                f"scope: {row['scope_path']} | repo: {row['repo_path']} | "
-                f"branch: {row['branch']}"
-            )
+            notes = []
             if row["id"] in duplicates:
-                lines.append(
-                    "   duplicates (same type + grounding): "
+                notes.append(
+                    "duplicates (same type + grounding): "
                     + ", ".join(duplicates[row["id"]])
                 )
+            lines.append(review_queue.render_candidate_block(
+                row, review_queue.candidate_detail(brain, row),
+                index=start + i, total=total, notes=notes,
+            ))
+            if i != len(rows):
+                lines.append("")
         if total_pages > page_no:
             lines.append(f"(more available — page {page_no + 1} of "
                          f"{total_pages})")
@@ -1281,9 +1351,9 @@ class ReverieServer:
             "instructions": (
                 "Show every candidate's full conclusion text, then relay "
                 "only the decisions the user states via review_decide. "
-                "Never decide on the user's behalf. Candidates marked "
-                "[unsupported evidence] carry no verifiable file, test, or "
-                "commit reference — point that out when showing them. "
+                "Never decide on the user's behalf. Candidates whose block "
+                "says 'evidence: UNSUPPORTED' carry no verifiable file, test, "
+                "or commit reference — point that out when showing them. "
                 "Candidates marked 'duplicates' share their conclusion type "
                 "and grounding with the listed ids — show them together so "
                 "the user can decide the near-duplicates as a set. One "
@@ -1374,7 +1444,7 @@ class ReverieServer:
         # decision call — the next batch needs a fresh review_list. This
         # adds friction, it is not a security boundary: Reverie cannot
         # verify who is on the other end of the channel.
-        del self._review_tokens[token]
+        del self._review_tokens[cast(str, token)]
         return {
             "status": "ok",
             "decided": out["decided"],
@@ -1424,12 +1494,26 @@ def serve(server: ReverieServer, stdin, stdout) -> None:
             stdout.flush()
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="reverie-mcp",
+        description="Reverie MCP server (stdio, newline-delimited JSON-RPC).",
+    )
+    parser.add_argument("--client", default=None,
+                        help="client key that launched this server (recorded "
+                             "for logs; no behaviour change)")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args, _unknown = _build_parser().parse_known_args(argv)
+    set_client(args.client)
     logging.basicConfig(
         stream=sys.stderr, level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
-    log.info("Reverie MCP server starting (protocol %s)", PROTOCOL_VERSION)
+    log.info("Reverie MCP server starting (protocol %s, client %s)",
+             PROTOCOL_VERSION, args.client or "unknown")
     server = ReverieServer()
     server.start_maintenance(
         repo_path=resolve_maintainer_repo_path(server._ensure_brain()))

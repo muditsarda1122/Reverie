@@ -684,7 +684,7 @@ def format_transcript(transcript_path: Path) -> tuple[str | None, dict]:
                       "path": str(transcript_path)}
 
     raw = transcript_path.read_text(encoding="utf-8")
-    lines = [l for l in raw.strip().split("\n") if l.strip()]
+    lines = [line for line in raw.strip().split("\n") if line.strip()]
     if not lines:
         return None, {"error": "empty_transcript"}
 
@@ -1616,9 +1616,9 @@ def main(argv: list[str] | None = None) -> int:
     if do_judge:
         print(f"  judge:      {args.judge_model} (timeout {args.judge_timeout}s)")
     else:
-        print(f"  judge:      skipped")
+        print("  judge:      skipped")
     if args.judge_only:
-        print(f"  judge-only: existing transcripts will be judged")
+        print("  judge-only: existing transcripts will be judged")
 
     if args.dry_run:
         cond_dir = run_dir / args.condition

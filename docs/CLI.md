@@ -3,16 +3,15 @@
 Every `reverie` command and flag. Exit codes: `0` success, `1` failure
 (printed to stderr), `2` unknown command / usage error.
 
+Global flag: `reverie --client KEY <command>` records the harness key that
+launched the command (for logs; no behaviour change).
+
 The MCP server is `reverie-mcp` (launched by your agent's config — not meant
 to run by hand). There are no other console scripts.
 
 ## reverie (bare)
 
-Prints the command help.
-
-```bash
-reverie
-```
+Prints the command help (as does `reverie --help`).
 
 A mistyped first word (`reverie reveiw`) is an error with a "did you mean"
 hint (exit 2).
@@ -22,7 +21,7 @@ hint (exit 2).
 One command configures Reverie for all detected coding agents: the MCP
 server entry per harness (the ABSOLUTE path of the running environment's
 `reverie-mcp` script — harnesses launch servers outside your virtualenv),
-the agent instructions reference, the user-level `/reverie-review` and
+the per-harness instructions reference, the user-level `/reverie-review` and
 `/reverie-status` commands, and the `~/.reverie` bootstrap (database,
 config, instructions). Also runs the LLM-provider step: detects keys in
 your environment, offers the detected one, merges the resolved `llm` block
@@ -44,7 +43,7 @@ reverie install --import memory.zip # restore an export on a new machine
 | Flag | Effect |
 |---|---|
 | `--all` | configure every detected agent (non-interactive) |
-| `--only A[,B…]` | configure exactly these agents by key (`claude_code`, `codex`, `cursor`, `opencode`, `gemini_cli`); may be undetected |
+| `--only A[,B…]` | configure exactly these agents by key (`claude_code`, `codex`, `cursor`, `opencode`); may be undetected |
 | `--provider NAME` | select the LLM provider without prompting (registry key, e.g. `anthropic`, `openai`, `google`, `openrouter`, `opencode_zen`, `ollama`) |
 | `--no-verify` | skip the live provider ping |
 | `--import FILE` | import a brain export during setup (only into an empty brain) |
@@ -272,10 +271,11 @@ reverie hook session-start --repo ~/code/app
 
 `session-start` is installed as a Claude Code SessionStart hook: its
 plain-text stdout is injected into the conversation at startup, so a fresh
-session sees Reverie's state and usage rules without a first tool call.
+session sees Reverie's state and usage rules without a first tool call. The
+matching Stop hook (`reverie capture-turn`) captures the completed exchange.
 Three outputs, one per repo state: **enabled** — brain counts (conclusions
 in memory, candidates awaiting review) plus the usage rules; **undecided** —
-the first-time question for the agent to relay; **disabled** — a one-line
+the first-time question for Claude to relay; **disabled** — a one-line
 "do not capture or retrieve here". Contract: read-only (no LLM, no writes,
 never creates a brain), quiet on error (not a git repo, unreadable brain →
 no output), always exits `0` — a hook can never break a session.
@@ -285,6 +285,31 @@ no output), always exits `0` — a hook can never break a session.
 | `--repo PATH` | workspace path (default: current directory) |
 
 Exit: always `0` (hook contract).
+
+## reverie capture-turn
+
+The Claude Code Stop-hook entry point. Reads the hook JSON on stdin, takes the
+last real user request and final assistant text from the transcript, and hands
+them to the same extraction path as `observe`. Installed automatically as an
+async Stop hook with a 20-second timeout; it prints nothing and always exits
+`0`, so it can never block Claude.
+
+```bash
+reverie capture-turn --transcript ~/.claude/projects/.../session.jsonl
+reverie capture-turn --repo ~/code/app --branch main
+```
+
+| Flag | Effect |
+|---|---|
+| `--transcript PATH` | Claude JSONL transcript (default: `transcript_path` from stdin) |
+| `--repo PATH` | Repository path (default: hook `cwd`) |
+| `--branch NAME` | Branch (default: detected) |
+| `--timeout SECONDS` | Extraction time limit (default: `20`) |
+
+A failed or timed-out capture is left in the pending queue; `reverie retry`
+retries it. Disabled and undecided repos capture nothing. Exit: always `0`.
+
+Hook schemas and per-harness details: [`INTEGRATIONS.md`](INTEGRATIONS.md).
 
 ## reverie uninstall
 

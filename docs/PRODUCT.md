@@ -1,5 +1,9 @@
 # Reverie — Product & Technical Archaeology
 
+> **Internal document.** A point-in-time code-archaeology snapshot — stale by
+> design; trust the code over it. Linked from
+> [CONTRIBUTING.md](../CONTRIBUTING.md) only.
+
 **Date of archaeology:** 2026-10-04
 **Repo:** `EMS-v2` (working package directory `reverie/`)
 **Method:** read-only inspection of every module in `reverie/`, `schema.sql`, the test suite (run live), the EC-Bench harness and its stored run artifacts, plus the docs tree — then writing only what the code actually does. Every claim below cites a file path. Where documentation and code disagree, the discrepancy is flagged.
@@ -272,7 +276,7 @@ Same core fields plus: `session_id` (FK), `review_status` (`pending | accepted |
     "created_at": "2026-08-13T08:52:11.415901+00:00"
   },
   "grounding": {
-    "repo_path": "/Users/me/src/myapp",
+    "repo_path": "/home/me/src/myapp",
     "files": ["auth/token_manager.rs", "auth/cache.rs"],
     "symbols": ["TokenManager::refresh", "TokenManager::clear_cache"],
     "commit_hash": "d64d0e07c1ab"

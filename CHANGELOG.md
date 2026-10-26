@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added — Phase 3 (`feat/reverie`)
+### Added — integration layers (`feat/integration-layers`)
+- **Integration layer.** Each supported harness is now its own package;
+  install and uninstall are plan-first, so `--dry-run` and the real run
+  share one code path, and adding a harness no longer touches the core.
+- **Claude Code: tools load upfront.** The MCP server entry now sets
+  `alwaysLoad: true` (Claude Code 2.1.121+), so Reverie's tools are
+  available immediately instead of being deferred — the agent can call
+  `query` before its first edit.
+- **Codex CLI: skills instead of prompts.** `/reverie-review` and
+  `/reverie-status` are installed as skills under `~/.agents/skills/`
+  (Codex 0.163 no longer loads `~/.codex/prompts/`); install cleans up old
+  prompt files it wrote.
+- **Usage policy, one source.** The agent-facing usage rules (query before
+  editing code, reconsolidate when the code contradicts a retrieved
+  conclusion, review only through you) now live in one place, surfaced
+  through the installed instructions, the MCP server instructions and the
+  tool descriptions so every harness gets the same contract.
+- **Permission setup.** `reverie install` allows Reverie's read tools
+  through each harness's permission config (Claude Code
+  `permissions.allow`, Codex per-tool approvals, Cursor CLI
+  `permissions.allow`); write tools still ask.
+- **Stale instruction blocks are refreshed.** Re-running
+  `reverie install` replaces an inline instruction block written by an
+  older version, so the usage rules stay current after an upgrade.
+
+### Removed — integration layers (`feat/integration-layers`)
+- **Gemini CLI support.** Gemini CLI is not supported and has been removed
+  from the installer and docs; nothing about it was ever verified.
+
+### Changed — Phase 3 (`feat/reverie`)
 - **The rename.** Everything a user sees moved from `ec` to `reverie`: the
   package (`reverie`), the CLI (`reverie` with subcommands `install`,
   `enable`, `disable`, `repos`, `review`, `status`, `export`, `import`,
@@ -21,19 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compatibility aliases. `ec-repair` and `ec-retry` folded into
   `reverie repair` / `reverie retry`; the deprecated `ec-start` / `ec-stop` /
   `ec-status` console scripts removed entirely.
-- **Gemini CLI harness** (fifth): `~/.gemini/settings.json`
-  (`mcpServers.reverie`), `~/.gemini/GEMINI.md` block, and TOML commands in
-  `~/.gemini/commands/`.
 - **User-level slash commands per harness** — `/reverie-review` (list +
   relay review decisions) and `/reverie-status` installed in each harness's
   own location and format: `~/.claude/commands/*.md`,
-  `~/.codex/prompts/*.md` (deprecated upstream, still the user-level
-  mechanism), `~/.cursor/commands/*.md` (beta),
-  `~/.config/opencode/commands/*.md`, `~/.gemini/commands/*.toml`.
+  `~/.config/opencode/commands/*.md`, `~/.cursor/commands/*.md` (beta),
+  and skills under `~/.agents/skills/` for Codex.
 - **MCP `instructions` field** — the initialize response now carries the
   core usage contract (query after reading code; results are past
   understanding to verify; never decide reviews for the user; ask once per
-  repo). Documented as surfaced by Claude Code, Codex and Gemini CLI;
+  repo). Documented as surfaced by Claude Code and Codex;
   captured by recent OpenCode; not documented by Cursor — where no
   instruction file is read, this is the fallback.
 - **Installer honesty summary** — `reverie install` ends with a per-harness

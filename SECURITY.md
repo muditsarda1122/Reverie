@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues **privately** by email to
-**muditsarda23@gmail.com**.
+**mudit@muditsarda.com**.
 
 Do not open a public GitHub issue for anything you believe has security
 impact. Include a description of the issue, the steps to reproduce it, and

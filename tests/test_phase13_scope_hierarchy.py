@@ -54,7 +54,7 @@ def cand(level, path, cognition="cognition text", similarity=0.9,
 # unit — _filter_by_scope_hierarchy
 # ---------------------------------------------------------------------------
 
-ANCHOR = ("repo", "/Users/dev/api-server")
+ANCHOR = ("repo", "/repos/api-server")
 
 
 def test_up_only_keeps_general_filters_specific():
@@ -62,8 +62,9 @@ def test_up_only_keeps_general_filters_specific():
         cand("engineering", "engineering", "universal principle"),
         cand("domain", "domain:web-backend", "domain practice"),
         cand("project", "project:my-saas", "project convention"),
-        cand("module", "repo:api-server > module:auth", "module detail"),
-        cand("subsystem", "repo:api-server > module:auth > subsystem:tokens",
+        cand("module", "repo:other-app > module:auth", "module detail"),
+        cand("subsystem",
+             "repo:other-app > module:auth > subsystem:tokens",
              "subsystem detail"),
     ]
     kept_ids = [c["ecu"]["id"]
@@ -71,9 +72,35 @@ def test_up_only_keeps_general_filters_specific():
     assert kept_ids == ["universal principle", "domain practice"]
 
 
+def test_same_repo_descendants_kept_at_repo_anchor():
+    """A repo-level anchor keeps conclusions captured deeper in the SAME
+    repo — the module/subsystem detail is the context query needs."""
+    candidates = [
+        cand("module", "repo:api-server > module:auth", "module detail"),
+        cand("subsystem",
+             "repo:api-server > module:auth > subsystem:tokens",
+             "subsystem detail"),
+    ]
+    kept_ids = [c["ecu"]["id"]
+                for c in _filter_by_scope_hierarchy(candidates, *ANCHOR)]
+    assert kept_ids == ["module detail", "subsystem detail"]
+
+
 def test_same_level_same_context_kept():
     same_repo_label = cand("repo", "repo:api-server > module:auth")
     assert len(_filter_by_scope_hierarchy([same_repo_label], *ANCHOR)) == 1
+
+
+def test_grounding_repo_identity_beats_label_mismatch():
+    """The checkout directory can differ from the scope label; the
+    grounding repo_path stamped at capture is the identity."""
+    same_repo = cand("repo", "repo:renamed-checkout")
+    same_repo["ecu"]["grounding"] = {"repo_path": ANCHOR[1]}
+    assert len(_filter_by_scope_hierarchy([same_repo], *ANCHOR)) == 1
+
+    other_repo = cand("repo", "repo:renamed-checkout")
+    other_repo["ecu"]["grounding"] = {"repo_path": "/repos/payments"}
+    assert _filter_by_scope_hierarchy([other_repo], *ANCHOR) == []
 
 
 def test_sibling_excluded():
@@ -112,7 +139,7 @@ def test_scope_param_narrows_working_scope():
 
     # anchor narrowed to module: repo is now UP (kept), subsystem is DOWN
     kept = _filter_by_scope_hierarchy(
-        [repo_ecu, subsystem_ecu], "module", "/Users/dev/api-server")
+        [repo_ecu, subsystem_ecu], "module", "/repos/api-server")
     assert [c["ecu"]["id"] for c in kept] == ["repo-level ECU"]
 
 

@@ -9,7 +9,17 @@ description = "Engineering memory for coding agents — conclusions, not logs"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Mudit Sarda", email = "muditsarda23@gmail.com" }]
+authors = [{ name = "Mudit Sarda", email = "mudit@muditsarda.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+]
 dependencies = [
     "torch==2.2.2",
     "numpy<2",
@@ -23,10 +33,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "ruff>=0.4"]
+dev = ["pytest>=7.0", "ruff>=0.4", "mypy>=2.0", "types-PyYAML"]
 
 [project.urls]
-Homepage = "https://ems-gold-seven.vercel.app/"
+Homepage = "https://reverie.muditsarda.com/"
 Repository = "https://github.com/muditsarda1122/Reverie.git"
 Issues = "https://github.com/muditsarda1122/Reverie/issues"
 
@@ -58,3 +68,11 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["reverie"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["reverie"]
+
+[[tool.mypy.overrides]]
+module = ["hdbscan", "scipy.*"]
+ignore_missing_imports = true

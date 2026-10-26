@@ -34,6 +34,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+from typing import Any, cast
 
 from . import repos, review_queue
 from .brain import Brain, BrainError
@@ -69,23 +70,9 @@ def ordered_by_topic(queue: list[dict]) -> list[dict]:
 
 
 def candidate_detail(brain: Brain, candidate: dict) -> dict:
-    """Grounding/evidence for the muted lines (fetched one candidate at a
-    time — queue rows are deliberately lean)."""
-    row = brain.get_session_ecu_row(candidate["id"])
-    if row is None:
-        return {}
-    doc = json.loads(row["document"]) if row.get("document") else {}
-    grounding = doc.get("grounding") or {}
-    return {
-        "grounding_files": grounding.get("files") or [],
-        "evidence": doc.get("evidence_pointers") or [],
-        "grounding_symbols": grounding.get("symbols") or [],
-        "evidence_status": (doc.get("metadata") or {}).get("evidence_status"),
-        "grounding_dropped": (grounding.get("validation") or {}).get(
-            "dropped_files") or [],
-        "symbols_dropped": (grounding.get("validation") or {}).get(
-            "dropped_symbols") or [],
-    }
+    """Grounding/evidence for the shared candidate block (thin alias —
+    the implementation lives in ``review_queue``)."""
+    return review_queue.candidate_detail(brain, candidate)
 
 
 def contradiction_partner(brain: Brain, candidate: dict) -> dict | None:
@@ -114,62 +101,40 @@ def contradiction_partner(brain: Brain, candidate: dict) -> dict | None:
 # rendering (pure — snapshot-tested)
 # ---------------------------------------------------------------------------
 
-def _muted(value) -> str:
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in value) if value else "—"
-    return str(value) if value not in (None, "") else "—"
-
-
 def render_screen(candidate: dict, detail: dict, *, index: int, total: int,
                   progress: dict, partner: dict | None = None,
                   expired: bool = False) -> str:
-    """One calm screen: conclusion prominent, metadata muted, one hint line.
-    No boxes, no panels."""
-    lines: list[str] = []
+    """One calm screen: the shared candidate block plus run progress.
+
+    The block itself comes from ``review_queue.render_candidate_block`` —
+    the same function the MCP ``review_list`` view uses."""
     counts = progress
-    lines.append(
-        f"Reverie Review — candidate {index} of {total} "
-        f"({counts.get('accepted', 0)} accepted · "
+    header = (
+        f"Reverie Review — {counts.get('accepted', 0)} accepted · "
         f"{counts.get('rejected', 0)} rejected · "
-        f"{counts.get('skipped', 0)} skipped so far)"
+        f"{counts.get('skipped', 0)} skipped so far"
     )
-    lines.append("")
-    lines.append(candidate["cognition"])
-    lines.append("")
+    notes: list[str] = []
     if partner is not None:
-        lines.append(
-            f'    contradicts: "{partner["cognition"]}" '
+        notes.append(
+            f'Contradicts: "{partner["cognition"]}" '
             f"({partner['confidence']:.2f})"
         )
-        lines.append("")
-    lines.append(f"    type: {candidate.get('conclusion_type') or '—'}")
-    lines.append(f"    scope: {candidate.get('scope_path') or '—'}")
-    lines.append(f"    confidence: {candidate['confidence']:.2f}")
-    lines.append(f"    grounded: {_muted(detail.get('grounding_files'))}"
-                 f"  symbols: {_muted(detail.get('grounding_symbols'))}")
-    lines.append(f"    evidence: {_muted(detail.get('evidence'))}")
-    if detail.get("evidence_status") == "unsupported":
-        lines.append("    ⚠ evidence unsupported — no file path, test name, "
-                     "or commit reference")
     dropped = (detail.get("grounding_dropped") or []) \
         + (detail.get("symbols_dropped") or [])
     if dropped:
-        lines.append(f"    ⚠ unverifiable references dropped: "
-                     f"{', '.join(str(d) for d in dropped)}")
-    lines.append(
-        f"    repo: {candidate.get('repo_path') or '—'} "
-        f"(branch {candidate.get('branch') or '—'})"
-    )
-    if expired:
-        lines.append("    status: expired")
-        lines.append("")
-        lines.append("v revive (back to pending) · a accept · r reject · "
-                     "q quit")
-    else:
-        lines.append("")
-        lines.append("a accept · r reject · s skip · e edit · g accept group "
-                     "· u undo · q quit")
-    return "\n".join(lines)
+        notes.append(
+            "⚠ unverifiable references dropped: "
+            f"{', '.join(str(d) for d in dropped)}"
+        )
+    return "\n".join([
+        header,
+        "",
+        review_queue.render_candidate_block(
+            candidate, detail, index=index, total=total, expired=expired,
+            notes=notes,
+        ),
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +173,7 @@ def decide_candidate(
         "action": action,
         "diffused": action != "accept" or (
             result is not None and candidate["id"] not in result.undiffused),
-        "warning": diffusion_failure_warning(result)
+        "warning": diffusion_failure_warning(cast(Any, result))
         if action == "accept" else None,
     }
 

@@ -8,6 +8,7 @@ dot product. Stored in SQLite as float32 BLOBs (384 * 4 = 1536 bytes).
 from __future__ import annotations
 
 import logging
+from typing import Any, cast
 
 import numpy as np
 
@@ -29,7 +30,7 @@ def to_blob(vec: np.ndarray) -> bytes:
     return np.asarray(vec, dtype=np.float32).tobytes()
 
 
-def from_blob(blob: bytes) -> np.ndarray:
+def from_blob(blob: bytes | bytearray) -> np.ndarray:
     """Deserialize a float32 BLOB back to an embedding vector."""
     return np.frombuffer(blob, dtype=np.float32)
 
@@ -67,7 +68,8 @@ class EmbeddingModel:
         if not texts:
             return np.zeros((0, self.dimensions), dtype=np.float32)
         self._load()
-        vecs = self._model.encode(
+        model = cast(Any, self._model)
+        vecs = model.encode(
             texts,
             convert_to_numpy=True,
             normalize_embeddings=True,  # cosine similarity == dot product

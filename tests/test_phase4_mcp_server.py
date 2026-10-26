@@ -140,11 +140,16 @@ def test_initialize_handshake(server):
 
     # Phase 3: the core usage contract rides along as server instructions —
     # the fallback where a harness reads no instruction file.
+    from reverie.policy import USAGE_POLICY
     instructions = result["instructions"]
-    assert "AFTER reading the relevant code" in instructions
-    assert "past understanding" in instructions
-    assert "never decide reviews for the user" in instructions
-    assert "ask the user once" in instructions
+    assert instructions.startswith("Reverie is engineering memory.")
+    assert USAGE_POLICY in instructions
+    assert "When to call each command" in instructions
+    assert "past belief, not an authority" in instructions
+    assert "Relay only decisions the user states" in instructions
+    assert "Before editing code in a Reverie-enabled repo, call query " \
+        "for the area you are changing" in instructions
+    assert "Ask once per conversation" in instructions
     assert r["id"] == 1
 
 
@@ -212,11 +217,20 @@ def test_tools_list_includes_flow_tools(server):
 
 def test_observe_auto_creates_session(server, brain):
     """D56: in an enabled repo, observe resolves-or-creates the session —
-    the D15 'no active session' error is gone."""
-    payload, result = call_tool(server, "observe", {
-        "user_prompt": "fix the bug", "reasoning_trace": "..."}, msg_id=77)
-    assert payload["status"] == "error"        # no real LLM in this test —
-    assert payload["session_active"] is True   # but the session exists
+    the D15 'no active session' error is gone.
+
+    Fully offline: the extractor LLM is forced to fail, so this test never
+    makes a live provider call (and never uses a configured API key) even
+    when one is present in the environment. The session assertion is the
+    point; extraction failure is incidental.
+    """
+    with patch("reverie.extractor.call_llm",
+               side_effect=LLMError("offline")):
+        payload, result = call_tool(server, "observe", {
+            "user_prompt": "fix the bug", "reasoning_trace": "..."},
+            msg_id=77)
+    assert payload["status"] == "error"
+    assert payload["session_active"] is True
     assert "Extraction failed" in payload["error"]
     assert brain.list_sessions(REPO, BRANCH, status="active")
 
