@@ -9,7 +9,7 @@ Reverie is engineering memory for coding agents. While you and your agent work, 
 You need Python 3.12 and git. Run these commands from a clean machine:
 
 ```bash
-git clone https://github.com/muditsarda1122/Reverie.git
+git clone --branch v0.2.0 https://github.com/muditsarda1122/Reverie.git
 cd Reverie
 python3.12 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -22,6 +22,8 @@ The first install downloads PyTorch and a sentence-embedding model. Expect sever
 `reverie install` detects which agents you have, wires the MCP server into each one, writes the per-agent instructions and the `/reverie-review` and `/reverie-status` commands, creates `~/.reverie`, and prints a summary of exactly what it wrote. It then starts the server and checks that it answers, and it reports success or failure for each agent. Restart each agent afterwards.
 
 The installer writes absolute paths into each agent's config, so agents can find the server outside your virtualenv. If you move the `Reverie` folder, run `reverie install` again.
+
+The clone command above pins Reverie to the v0.2.0 release. `main` can contain changes that haven't been released yet.
 
 To see what the installer would change without writing anything, run `reverie install --dry-run`. Non-interactive: `reverie install --all` configures every detected agent, and `--only claude_code,codex` configures only the ones you name.
 
@@ -90,6 +92,19 @@ Uninstall removes only what `reverie install` wrote: Reverie's server entries, i
 
 The last step prints `pip uninstall reverie` for you to run yourself. A running package can't remove itself.
 
+## Updating
+
+Reverie is pinned to a release tag. To move to a newer release, use the latest tag from the releases page:
+
+```bash
+cd Reverie
+git fetch --tags
+git checkout <latest-tag>
+source .venv/bin/activate
+pip install -e .
+reverie install
+```
+
 ## Troubleshooting
 
 **The agent doesn't use Reverie.**
@@ -102,7 +117,7 @@ Your agent learns how to use Reverie from its instruction file and from the serv
 `reverie install` allows Reverie's read tools in each agent's permission settings. If a read tool still prompts, run `reverie install` again. If it still prompts, check your agent's version. Older versions ignore per-tool approval settings. Write tools (`observe`, `reconsolidate`, `set_repo_state`, `review_decide`) prompt on purpose.
 
 **Reverie behaves like an older version.**
-Run `git pull` in your checkout, then `pip install -e .` and `reverie install`. `reverie uninstall --dry-run` shows which entries are configured and where, before you change anything.
+Check out the latest release tag, then run `pip install -e .` and `reverie install`. `reverie uninstall --dry-run` shows which entries are configured and where, before you change anything.
 
 ## Documentation
 
