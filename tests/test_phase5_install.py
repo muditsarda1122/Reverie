@@ -298,7 +298,13 @@ def test_server_command_is_absolute_and_repo_rooted(dev_install, ):
     assert args == ["-m", "reverie.mcp_server"]
     assert env == {"PYTHONPATH": str(ROOT)}
     # the venv interpreter lives inside the repo (never a hardcoded path)
-    assert str(p).startswith(str(ROOT))
+    venv_python = ROOT / ".venv" / "bin" / "python"
+    if venv_python.exists():
+        # Dev checkout with a project venv: the interpreter lives in the repo.
+        assert str(p).startswith(str(ROOT))
+    else:
+        # No project venv (CI installs into the system Python): the running interpreter.
+        assert Path(python).resolve() == Path(sys.executable).resolve()
 
 
 def test_written_config_starts_server_from_foreign_cwd(dev_install, home, reverie_home, tmp_path):
