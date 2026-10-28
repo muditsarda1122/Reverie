@@ -1,8 +1,37 @@
 # Reverie
 
-Reverie is engineering memory for coding agents. While you and your agent work, it captures the engineering conclusions you reach (invariants, root causes, design decisions, corrected assumptions) and stores them in one local SQLite file. In a later conversation, after you have reviewed them, those conclusions come back to the agent with their confidence, their grounding in your code, and their current status, framed as past understanding to verify, never as authority.
+## What is Reverie
+
+Reverie is a local memory layer for coding agents (Claude Code, Cursor, Codex, OpenCode). It records the conclusions the agent reaches and stores them in a local SQLite file. The agent retrieves them only when it asks.
+
+## Why it was built
+
+A terminal crash interrupted a long session and the state was lost. Many memory tools load past notes into the prompt at the start of a session. In an informal test, that made the agent trust the notes over the code in front of it. Reverie retrieves on demand instead, and the agent is told to read the code first.
 
 > **Status: early.** Reverie has been used on a small number of projects so far. Some candidate conclusions are wrong, and your agent doesn't always check memory on its own. Review what Reverie keeps, and tell us where it fails.
+
+## How it works
+
+```text
+[ Agent session ] --(candidates)--> [ Review queue ]
+       ^                                  |
+       |                          (reverie review)
+  (query via MCP)                         v
+       |                        [ Long-term memory ]
+[ Read the code ] <--(on demand)-- [ ~/.reverie/reverie.db ]
+```
+
+## Quick start
+
+1. Open your agent in any project.
+2. **The first time, your agent asks once:** "Reverie isn't on for this repo. Turn it on? (yes / not now / never)". Your answer is remembered. `reverie enable` and `reverie disable` change it at any time.
+3. **Just code.** Sessions are automatic per branch. As your agent works, it records a conclusion when it reaches a real engineering insight, not for every edit. A candidate from one branch isn't visible on another branch. Accepted conclusions are visible everywhere.
+4. **Review when you like.** Candidates wait in one review queue across every branch and repo. Run `reverie review` in a terminal, say "show my Reverie candidates" in the chat, or type `/reverie-review`. Nothing reaches long-term memory without your decision.
+5. In a later conversation, after your agent reads the relevant code, it asks Reverie for past conclusions. They come back with their confidence, grounding and status, framed as past understanding to verify, never as authoritative context.
+
+## Supported agents
+
+Reverie connects to Claude Code, Codex CLI, Cursor and OpenCode as an MCP server. The tested versions, what Reverie writes for each, and what was verified are in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md). The file paths, hooks and permission setup for each agent are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). Any other MCP client can be set up by hand, as described in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
 ## Install
 
@@ -28,18 +57,6 @@ The clone command above pins Reverie to the v0.2.0 release. `main` can contain c
 To see what the installer would change without writing anything, run `reverie install --dry-run`. Non-interactive: `reverie install --all` configures every detected agent, and `--only claude_code,codex` configures only the ones you name.
 
 You need an LLM provider key before Reverie can extract anything. Set one before running the installer, or choose "Local via Ollama". See [Model providers](#model-providers).
-
-## Quick start
-
-1. Open your agent in any project.
-2. **The first time, your agent asks once:** "Reverie isn't on for this repo. Turn it on? (yes / not now / never)". Your answer is remembered. `reverie enable` and `reverie disable` change it at any time.
-3. **Just code.** Sessions are automatic per branch. As your agent works, it records a conclusion when it reaches a real engineering insight, not for every edit. A candidate from one branch isn't visible on another branch. Accepted conclusions are visible everywhere.
-4. **Review when you like.** Candidates wait in one review queue across every branch and repo. Run `reverie review` in a terminal, say "show my Reverie candidates" in the chat, or type `/reverie-review`. Nothing reaches long-term memory without your decision.
-5. In a later conversation, after your agent reads the relevant code, it asks Reverie for past conclusions. They come back with their confidence, grounding and status, framed as past understanding to verify, never as authoritative context.
-
-## Supported agents
-
-Reverie connects to Claude Code, Codex CLI, Cursor and OpenCode as an MCP server. The tested versions, what Reverie writes for each, and what was verified are in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md). The file paths, hooks and permission setup for each agent are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). Any other MCP client can be set up by hand, as described in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
 ## Model providers
 
@@ -128,7 +145,7 @@ Check out the latest release tag, then run `pip install -e .` and `reverie insta
 
 ## Contributing
 
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup and ground rules, and read the [code of conduct](CODE_OF_CONDUCT.md). Reverie also includes a benchmark harness (`bench/`) that runs a real agent through sequential sessions on a target repository, with and without memory. It's published as a research tool, not as proof of an advantage.
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup and ground rules, and read the [code of conduct](CODE_OF_CONDUCT.md). Reverie also includes an evaluation harness (`bench/`) that runs a real agent through sequential sessions on a target repository, with and without memory. It's published as a research tool, not as proof of an advantage.
 
 ## License
 
