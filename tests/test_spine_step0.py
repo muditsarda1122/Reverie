@@ -188,3 +188,20 @@ def test_reverie_housekeeping_is_not_captured(brain, user, reply):
         out = core_api.capture_turn(REPO, BRANCH, user, reply, _server=s)
     assert out["status"] == "skipped" and llm.call_count == 0
     assert brain.count_pending_extractions() == 0
+
+
+# ---------------------------------------------------------------------------
+# 0d. query returns each conclusion once
+# ---------------------------------------------------------------------------
+
+def test_query_wire_payload_is_not_duplicated():
+    from reverie.mcp_server import _compact_query_payload
+    group = {"core_ecu": {"id": "abc", "cognition": "X" * 500}}
+    payload = {"status": "ok", "groups": [group], "formatted": "ID: abc ...",
+               "groups_retrieved": 1}
+    out = _compact_query_payload(payload)
+    assert "groups" not in out and out["ids"] == ["abc"]
+    assert out["formatted"] == payload["formatted"]
+    assert len(json.dumps(out)) < len(json.dumps(payload))
+    err = {"status": "error", "error": "x"}
+    assert _compact_query_payload(err) == err

@@ -212,6 +212,23 @@ METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
+def _compact_query_payload(payload: dict) -> dict:
+    """The wire form of a query result.
+
+    ``retrieval.retrieve`` returns every conclusion twice — structured
+    ``groups`` and the human/agent-readable ``formatted`` text — which doubled
+    the tokens of every retrieval (the lab measured 20-47 KB of JSON for 1.3-3k
+    tokens of content). The agent reads ``formatted`` (ids, confidence,
+    grounding and framing are all in it); the wire carries only a compact
+    ``ids`` list beside it, for callers that need to act on the ids.
+    """
+    if not isinstance(payload, dict) or "groups" not in payload:
+        return payload
+    out = {k: v for k, v in payload.items() if k != "groups"}
+    out["ids"] = [g["core_ecu"]["id"] for g in payload["groups"]]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Tool definitions — descriptions verbatim from §28.3 (§28.12: they are the
 # primary way the agent learns how to use Reverie).
@@ -704,6 +721,8 @@ class ReverieServer:
             )
         try:
             payload = handler(arguments)
+            if name == "query":
+                payload = _compact_query_payload(payload)
         except (BrainError, SessionError) as exc:
             payload = {"status": "error", "session_active": False,
                        "error": str(exc)}

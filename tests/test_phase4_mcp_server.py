@@ -431,12 +431,14 @@ def test_query_returns_groups_and_writes_metadata(server, brain, manager,
     assert payload["status"] == "ok"
     assert payload["session_active"] is True
     assert payload["groups_retrieved"] >= 1
-    ids = {g["core_ecu"]["id"] for g in payload["groups"]}
+    ids = set(payload["ids"])
     assert c1 in ids or c2 in ids
-    # §16.3 shape keys
-    for key in ("mode", "budget_used", "groups", "warnings", "brain_source",
-                "message"):
+    # §16.3 shape keys (the structured `groups` twin of `formatted` is not
+    # on the wire — it doubled every retrieval; `ids` replaces it)
+    for key in ("mode", "budget_used", "ids", "formatted", "warnings",
+                "brain_source", "message"):
         assert key in payload
+    assert "groups" not in payload
 
     # D17: retrieval metadata written on the query path (canonical only)
     stamped = 0
