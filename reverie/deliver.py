@@ -214,16 +214,29 @@ def freshness(it: dict, rel: str, root: str) -> str:
             f"{'yes' if diff.strip() else 'no'}")
 
 
+_STANDING = ("rule", "decision", "rejected_approach")
+
+
+def _is_standing(it: dict) -> bool:
+    """A decision the user stated, or any rule / rejected approach, is a
+    standing constraint, not a hint."""
+    return it["kind"] in _STANDING and (
+        it.get("source") == "user_said" or it["kind"] != "decision")
+
+
 def render_point(hits: list[tuple[dict, str]], rel: str, root: str) -> str:
-    lines = [f"Reverie memory relevant to {rel} (past belief; verify against "
-             "the code, and tell the user if you are about to contradict a "
-             "decision):"]
-    for it, why in hits[:MAX_POINT_ITEMS]:
-        lines.append(f"- [{it['id'][:8]}] {it['kind']} ({why}): "
+    shown = hits[:MAX_POINT_ITEMS]
+    lines = [f"Reverie memory anchored to this edit of {rel}. Items marked "
+             "STANDING are decisions the team already made: do NOT write code "
+             "that contradicts one. If the task seems to require it, stop and "
+             "ask the user first (name the item and offer alternatives). "
+             "Everything else is past belief: verify against the code."]
+    for it, why in shown:
+        tag = "STANDING " if _is_standing(it) else ""
+        lines.append(f"- [{it['id'][:8]}] {tag}{it['kind']} ({why}): "
                      f"{it['text'].strip()}")
         lines.append(f"  {freshness(it, rel, root)}")
-    text = "\n".join(lines)
-    return text[:MAX_CONTEXT_CHARS]
+    return "\n".join(lines)[:MAX_CONTEXT_CHARS]
 
 
 # ---------------------------------------------------------------------------
