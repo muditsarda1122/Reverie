@@ -259,3 +259,19 @@ def test_digest_watermark_is_per_repo(env):
     digest.digest(c, "A")
     assert "repo B fact" in digest.digest(c, "B", mark=False)
     assert "Nothing new" in digest.digest(c, "A", mark=False)
+
+
+@pytest.mark.parametrize("raw", [
+    '```json\n[{"kind": "decision", "text": "x" }]\n```',
+    'Here you go:\n[{"kind": "decision", "text": "x"}]\nHope that helps [1].',
+    '[{"kind": "decision", "text": "braces } and ] inside strings"}]',
+])
+def test_parse_items_tolerates_fences_prose_and_brackets(raw):
+    out = typed_extractor.parse_items(raw)
+    assert out and out[0]["kind"] == "decision"
+
+
+@pytest.mark.parametrize("raw", ["no array here", "[not json", '{"a": 1}'])
+def test_parse_items_rejects_non_arrays(raw):
+    with pytest.raises(typed_extractor.TypedExtractionError):
+        typed_extractor.parse_items(raw)

@@ -21,7 +21,7 @@ from importlib import resources
 from pathlib import Path
 
 from . import dedupe, deliver, items
-from .llm import LLMError, call_llm, extract_json, model_for
+from .llm import LLMError, call_llm, model_for
 
 log = logging.getLogger("reverie.typed_extractor")
 
@@ -86,15 +86,15 @@ def quote_in(quote: str, haystack: str) -> bool:
 
 
 def parse_items(raw: str) -> list[dict]:
-    try:
-        text = extract_json(raw)
-    except Exception:
-        text = raw
-    start, end = text.find("["), text.rfind("]")
-    if start < 0 or end < start:
+    """The model's reply -> list of dicts. Tolerates code fences and prose
+    around the array. (llm.extract_json is object-oriented: it slices from
+    the first '{' to the last '}', which mangles a top-level array.)"""
+    text = re.sub(r"```(?:json)?", "", raw or "")
+    start = text.find("[")
+    if start < 0:
         raise TypedExtractionError(f"no JSON array in reply: {raw[:120]!r}")
     try:
-        data = json.loads(text[start:end + 1])
+        data, _end = json.JSONDecoder().raw_decode(text[start:])
     except json.JSONDecodeError as exc:
         raise TypedExtractionError(f"unparseable JSON array: {exc}") from exc
     if not isinstance(data, list):

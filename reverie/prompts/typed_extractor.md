@@ -23,4 +23,7 @@ Each item:
  "evidence": a short exact quote from the exchange that supports it (REQUIRED when source is "agent"; copy it character for character),
  "durability": "permanent" | "until_changed" | "short_term"}
 
+Keep one fact in ONE item: a rule together with its reason or incident, a command together with its ports and caveats, a negative result together with what worked instead. Do not split a fact into a rule item plus a separate "why" item.
+Store a preference only when the user states it. Never infer a preference or intent from how a request was phrased.
+
 Prefer few, high-quality items. An exchange with nothing worth keeping returns [].
