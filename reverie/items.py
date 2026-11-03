@@ -78,7 +78,9 @@ def add(conn: sqlite3.Connection, *, text: str, kind: str, source: str,
         (item_id, repo_key, text if source == "user_said" else text.strip(), kind,
          json.dumps(anchor_ or anchor()), source, author, level, grounding_commit,
          _now() if grounding_commit else None, "active", evidence, supersedes,
-         _now(), embedding, json.dumps(meta or {})))
+         _now(), embedding,
+         json.dumps({"seen": 1, "seen_repos": [repo_key] if repo_key else [],
+                     **(meta or {})})))
     if supersedes:
         conn.execute("UPDATE items SET status='superseded' WHERE id=? "
                      "AND status='active'", (supersedes,))
@@ -100,7 +102,8 @@ def get(conn: sqlite3.Connection, id_or_prefix: str) -> dict | None:
     return _row(rows[0]) if len(rows) == 1 else None
 
 
-def active(conn: sqlite3.Connection, repo_key: str | None) -> list[dict]:
+def active(conn: sqlite3.Connection, repo_key: str | None,
+           with_embedding: bool = False) -> list[dict]:
     """Active items for this repo plus user-wide ones (repo_key NULL)."""
     try:
         rows = conn.execute(
@@ -109,12 +112,53 @@ def active(conn: sqlite3.Connection, repo_key: str | None) -> list[dict]:
             (repo_key,)).fetchall()
     except sqlite3.OperationalError:       # table missing: brain pre-dates it
         return []
-    return [_row(r) for r in rows]
+    return [_row(r, with_embedding) for r in rows]
 
 
-def _row(r: sqlite3.Row) -> dict:
+def _row(r: sqlite3.Row, with_embedding: bool = False) -> dict:
     d = dict(r)
     d["anchor"] = json.loads(d.pop("anchor_json") or "{}")
     d["meta"] = json.loads(d.pop("meta_json") or "{}")
-    d.pop("embedding", None)
+    if not with_embedding:
+        d.pop("embedding", None)
     return d
+
+
+def bump_seen(conn: sqlite3.Connection, item_id: str,
+              repo_key: str | None) -> dict:
+    """A duplicate of this item was seen again: corroboration. Records the
+    repos it was seen in (used to promote user-wide items). Returns meta."""
+    row = conn.execute("SELECT meta_json FROM items WHERE id=?",
+                       (item_id,)).fetchone()
+    if row is None:
+        return {}
+    meta = json.loads(row["meta_json"] or "{}")
+    meta["seen"] = int(meta.get("seen", 1)) + 1
+    repos_seen = list(meta.get("seen_repos") or [])
+    if repo_key and repo_key not in repos_seen:
+        repos_seen.append(repo_key)
+    meta["seen_repos"] = repos_seen
+    conn.execute("UPDATE items SET meta_json=? WHERE id=?",
+                 (json.dumps(meta), item_id))
+    conn.commit()
+    return meta
+
+
+def max_rowid(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT MAX(rowid) AS m FROM items").fetchone()
+    return int(row["m"] or 0)
+
+
+def recent(conn: sqlite3.Connection, after_rowid: int = 0,
+           repo_key: str | None = None,
+           statuses: tuple[str, ...] = ("active",)) -> list[dict]:
+    """Items added after the watermark ``after_rowid`` (rowid is monotonic for
+    an append-only table, so there is no same-second ambiguity)."""
+    marks = ",".join("?" * len(statuses))
+    sql = (f"SELECT *, rowid AS rid FROM items WHERE rowid > ? "
+           f"AND status IN ({marks})")
+    args: list = [after_rowid, *statuses]
+    if repo_key is not None:
+        sql += " AND (repo_key = ? OR repo_key IS NULL)"
+        args.append(repo_key)
+    return [_row(r) for r in conn.execute(sql + " ORDER BY rowid", args)]

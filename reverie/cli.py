@@ -273,6 +273,18 @@ def _build_parser() -> argparse.ArgumentParser:
                    "(default: the most recent one)")
     p.add_argument("--all", action="store_true", dest="all_sessions",
                    help="every recorded prompt, all sessions")
+    p = sub.add_parser("undo", help="undo a remembered item (reversible)")
+    p.add_argument("id")
+    p.add_argument("--restore", action="store_true",
+                   help="bring an undone item back")
+    p = sub.add_parser("digest", help="what Reverie remembered since you "
+                       "last looked")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p.add_argument("--all", action="store_true", dest="all_repos",
+                   help="every repo, not just this one")
+    p.add_argument("--no-mark", action="store_true",
+                   help="do not mark everything as seen")
     p = sub.add_parser("show", help="print one memory item by id (prefix ok)")
     p.add_argument("id")
     p.add_argument("--repo", default=None,
@@ -294,7 +306,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install", "resume", "rules", "show")
+               "capture-turn", "install", "resume", "rules", "show", "undo", "digest")
 
 
 def _unknown_command(word: str) -> int:
@@ -377,16 +389,33 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "rules":
         return _cmd_rules(args)
+    if args.command in ("undo", "digest"):
+        from . import deliver, items, spool
+        from . import digest as digest_mod
+        if not deliver.db_path().exists():
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        conn = items.connect(deliver.db_path())
+        try:
+            if args.command == "undo":
+                print(digest_mod.undo(conn, args.id, args.restore))
+            else:
+                key = None if args.all_repos else deliver.repo_key(
+                    spool.repo_root(args.repo or "."))
+                print(digest_mod.digest(conn, key, mark=not args.no_mark))
+        finally:
+            conn.close()
+        return 0
     if args.command == "show":
         from . import deliver, spool
-        conn = deliver.open_db()
-        if conn is None:
+        ro = deliver.open_db()
+        if ro is None:
             print("No Reverie memory yet.", file=sys.stderr)
             return 1
         try:
-            print(deliver.show(conn, args.id, spool.repo_root(args.repo or ".")))
+            print(deliver.show(ro, args.id, spool.repo_root(args.repo or ".")))
         finally:
-            conn.close()
+            ro.close()
         return 0
     if args.command == "enable":
         return _cmd_enable(args)

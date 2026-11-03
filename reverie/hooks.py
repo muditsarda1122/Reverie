@@ -67,23 +67,34 @@ def _db_ready(db: Path) -> bool:
 
 
 def _memory_blocks(info, print_fn) -> None:
-    """Rules lane + headline index (read-only, stdlib; never raises)."""
+    """Rules lane, headline index, digest nudge (read-only; never raises)."""
     try:
-        from . import deliver, rules
+        from . import deliver, digest, rules
+        from .config import get_config
         block = rules.render(info.repo_path)
         if block:
             print_fn("Reverie rules (the user's own words; always apply):\n"
                      + block)
         conn = deliver.open_db()
-        if conn is not None:
-            try:
-                index = deliver.headline_index(
-                    deliver.memory(conn, deliver.repo_key(info.repo_path),
-                                   info.repo_path))
-            finally:
-                conn.close()
+        if conn is None:
+            return
+        try:
+            key = deliver.repo_key(info.repo_path)
+            mem = deliver.memory(conn, key, info.repo_path)
+            said = [m for m in mem if m["kind"] == "rule"]
+            if said:
+                print_fn("Rules you stated in earlier sessions:\n" + "\n".join(
+                    f"- {m['text'].strip()}" for m in said))
+            index = deliver.headline_index(mem)
             if index:
                 print_fn(index)
+            d = get_config().digest
+            line = digest.nudge(conn, key, int(d.min_new_items),
+                                float(d.min_days))
+            if line:
+                print_fn(line)
+        finally:
+            conn.close()
     except Exception:
         pass
 

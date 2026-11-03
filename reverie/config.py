@@ -294,6 +294,30 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "page_size": 10,
     },
 
+    # -- Continuity spine: typed memory items ---------------------------------
+    "capture": {
+        # "items": typed extractor -> two-stage dedupe -> auto-accepted items
+        # (undoable). "legacy": the old conclusion/candidate/review flow.
+        "mode": "items",
+    },
+    "dedupe": {
+        # Two-stage dedupe. Max cosine similarity of a candidate to existing
+        # items: below `low` keep with no judge; at/above `high` drop; in
+        # between ask the binary NEW_INFO judge. Starting points tuned on ONE
+        # repo's 49 items (lab X11); re-validate with `reverie dedupe-eval`.
+        "low": 0.55,
+        "high": 0.85,
+        "neighbors": 3,           # nearest items shown to the judge
+        "judge": True,            # False: bands only, middle band keeps
+        # Also ask "is this only sandbox/tool trivia?" (lab judge). Off by
+        # default: it can drop legitimate environment quirks (H7).
+        "sandbox_trivia_check": False,
+    },
+    "digest": {
+        "min_new_items": 5,       # nudge at session start once this many are new
+        "min_days": 3,            # ...or when the last digest is this old
+    },
+
     # -- Pending extraction queue --------------------------------------------
     "pending": {
         # A queued extraction that has failed this many times is dropped.
@@ -342,6 +366,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": True,    # spec §15 default; set False to disable for debugging
     },
 }
+
+
+def capture_mode(cfg: Any) -> str:
+    """``items`` (typed, auto-accepted) or ``legacy`` (candidates + review).
+    ``REVERIE_CAPTURE_MODE`` overrides the config (tests, emergencies)."""
+    env = os.environ.get("REVERIE_CAPTURE_MODE")
+    if env in ("items", "legacy"):
+        return env
+    capture = getattr(cfg, "capture", None)
+    return getattr(capture, "mode", "items")
 
 
 # ---------------------------------------------------------------------------

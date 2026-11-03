@@ -23,8 +23,9 @@ import argparse
 import sys
 from typing import Any
 
+from . import typed_extractor
 from .brain import Brain, BrainError
-from .config import get_config
+from .config import capture_mode, get_config
 from .diffuser import DiffuserError, diffuse_ecu
 from .extractor import ExtractionError, ExtractorError, extract_and_store_session
 
@@ -94,13 +95,20 @@ def retry_pending(
             })
             continue
         try:
-            _result, ids = extract_and_store_session(
-                brain, active["id"], item["interaction"],
-                embedding_model=embedding_model, config=cfg,
-                origin_agent=item.get("origin_agent"),
-                commit_hash=item.get("commit_hash"),
-                repo_path=item.get("repo_path") or active["repo_path"],
-            )
+            if capture_mode(cfg) == "items":
+                ids = typed_extractor.extract_and_store_items(
+                    brain, item["interaction"],
+                    repo_path=item.get("repo_path") or active["repo_path"],
+                    embedding_model=embedding_model, config=cfg,
+                    commit_hash=item.get("commit_hash")).stored
+            else:
+                _result, ids = extract_and_store_session(
+                    brain, active["id"], item["interaction"],
+                    embedding_model=embedding_model, config=cfg,
+                    origin_agent=item.get("origin_agent"),
+                    commit_hash=item.get("commit_hash"),
+                    repo_path=item.get("repo_path") or active["repo_path"],
+                )
         except ExtractionError as exc:
             # The model answered in prose / malformed JSON: asking again with
             # the same input will not help. Terminal.

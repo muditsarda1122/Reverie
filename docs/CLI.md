@@ -95,6 +95,65 @@ Output per repo: path, enablement state, active sessions, review
 candidates, conclusions grounded there, and the origin remote (when known).
 Exit: `0` always.
 
+## reverie resume
+
+Prints what a fresh agent needs to continue a cut-off session, in any
+harness: your rules, every prompt you sent in the session (verbatim, in
+order; the last may be unhandled), and the git state. The prompt log is
+written by the harness hooks (Claude Code: UserPromptSubmit/Stop) to
+`~/.reverie/spool/`, crash-safe and append-only.
+
+```bash
+reverie resume                  # latest session in this repo
+reverie resume --session <id>   # a specific session
+reverie resume --all            # every recorded prompt
+```
+
+Exit: `0` always.
+
+## reverie rules
+
+Your always-on rules, stored verbatim as markdown bullets: `~/.reverie/rules.md`
+(personal, every repo) and `<repo>/.reverie/rules.md` (shared through git).
+Agents read them at session start and never edit them.
+
+```bash
+reverie rules add "Never use print() for diagnostics"          # this repo
+reverie rules add --user "Prefer minimal diffs"                # everywhere
+reverie rules list
+```
+
+## reverie show
+
+Prints one memory item in full (id prefix is enough), with its anchor,
+source, author and whether its file changed since it was verified.
+
+```bash
+reverie show a1b2c3d4
+```
+
+## reverie undo
+
+Reverses an automatically accepted item. Nothing Reverie remembers is
+permanent: `--restore` brings it back.
+
+```bash
+reverie undo a1b2c3d4
+reverie undo --restore a1b2c3d4
+```
+
+## reverie digest
+
+What Reverie remembered since you last looked, with who said it (you, or the
+agent's inference) and the undo command for each. There is no review gate;
+this is the occasional look. Session start nudges once enough has piled up.
+
+```bash
+reverie digest            # this repo, marks everything seen
+reverie digest --all      # every repo
+reverie digest --no-mark  # look without marking
+```
+
 ## reverie review
 
 The terminal review UI: one candidate at a time, single keypresses

@@ -18,6 +18,7 @@ from reverie.mcp_server import ReverieServer
 from reverie.session import SessionManager
 
 REPO, BRANCH = "/repos/spine-repo", "main"
+PROSE = "I can't produce the extraction you asked for."
 
 
 @pytest.fixture(autouse=True)
@@ -134,8 +135,8 @@ def test_prose_reply_is_terminal_not_queued(brain):
     """A model answer that is not JSON must not sit in the retry queue."""
     s = _enabled_server(brain)
     row = s._enabled_session(__import__("reverie.repos", fromlist=["x"]).resolve_repo())
-    with patch("reverie.extractor.call_llm",
-               return_value="I can't produce the extraction you asked for."):
+    with patch("reverie.extractor.call_llm", return_value=PROSE), \
+            patch("reverie.typed_extractor.call_llm", return_value=PROSE):
         out = s._extract_interaction(
             row, {"prompt": "p", "output": "o"}, prequeue=True)
     assert out["status"] == "skipped" and out["unextractable"] is True
@@ -145,7 +146,8 @@ def test_prose_reply_is_terminal_not_queued(brain):
 def test_provider_failure_still_queues_for_retry(brain):
     s = _enabled_server(brain)
     row = s._enabled_session(__import__("reverie.repos", fromlist=["x"]).resolve_repo())
-    with patch("reverie.extractor.call_llm", side_effect=LLMError("503")):
+    with patch("reverie.extractor.call_llm", side_effect=LLMError("503")), \
+            patch("reverie.typed_extractor.call_llm", side_effect=LLMError("503")):
         out = s._extract_interaction(
             row, {"prompt": "p", "output": "o"}, prequeue=True)
     assert out["status"] == "error"
@@ -160,9 +162,10 @@ def test_retry_cap_drops_exhausted_items(brain):
         brain, row, {"prompt": "p", "output": "o"}, "boom")
     for _ in range(5):
         brain.mark_pending_extraction_attempt(item, "boom")
-    with patch("reverie.extractor.call_llm", side_effect=LLMError("503")) as llm:
+    with patch("reverie.extractor.call_llm", side_effect=LLMError("503")) as llm, \
+            patch("reverie.typed_extractor.call_llm", side_effect=LLMError("503")) as llm2:
         summary = pending.retry_pending(brain, config=s.config)
-    assert summary["dropped"] == 1 and llm.call_count == 0
+    assert summary["dropped"] == 1 and llm.call_count + llm2.call_count == 0
     assert brain.count_pending_extractions() == 0
 
 
@@ -171,7 +174,8 @@ def test_retry_drops_unparseable_replies(brain):
     s = _enabled_server(brain)
     row = s._enabled_session(repos.resolve_repo())
     pending.save_pending_extraction(brain, row, {"prompt": "p", "output": "o"}, "x")
-    with patch("reverie.extractor.call_llm", return_value="Sorry, no."):
+    with patch("reverie.extractor.call_llm", return_value="Sorry, no."), \
+            patch("reverie.typed_extractor.call_llm", return_value="Sorry, no."):
         summary = pending.retry_pending(brain, config=s.config)
     assert summary["dropped"] == 1 and brain.count_pending_extractions() == 0
 

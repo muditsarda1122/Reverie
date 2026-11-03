@@ -80,7 +80,7 @@ import subprocess
 import sys
 import threading
 from contextlib import contextmanager
-from typing import cast
+from typing import Any, cast
 
 from . import (
     __version__,
@@ -93,11 +93,12 @@ from . import (
     repos,
     retrieval,
     review_queue,
+    typed_extractor,
 )
 from .brain import Brain, BrainError, _now_iso
 from .client import get_client, set_client
 from .confidence import FROZEN_STATUSES, reinforce_stored_confidence
-from .config import MODES, SCOPE_LEVELS, get_config
+from .config import MODES, SCOPE_LEVELS, capture_mode, get_config
 from .diffuser import DiffuserError
 from .extractor import ExtractorError
 from .policy import RECONSOLIDATE_TRIGGER, USAGE_POLICY
@@ -799,6 +800,10 @@ class ReverieServer:
         return self._ensure_manager().ensure_session(info.repo_path,
                                                      info.branch)
 
+    def _items_mode(self) -> bool:
+        """Typed items pipeline (default) vs the legacy candidate flow."""
+        return capture_mode(self.config) == "items"
+
     def _extract_interaction(self, row: dict, interaction: dict, *,
                              prequeue: bool = False,
                              timeout: float | None = None) -> dict:
@@ -821,11 +826,19 @@ class ReverieServer:
             )
         try:
             with _time_limit(timeout):
-                result, ids = extractor.extract_and_store_session(
-                    brain, row["id"], interaction,
-                    embedding_model=self.embedding_model, config=self.config,
-                    commit_hash=commit_hash, repo_path=row["repo_path"],
-                )
+                if self._items_mode():
+                    result: Any = typed_extractor.extract_and_store_items(
+                        brain, interaction, repo_path=row["repo_path"],
+                        embedding_model=self.embedding_model,
+                        config=self.config, commit_hash=commit_hash)
+                    ids = result.stored
+                else:
+                    result, ids = extractor.extract_and_store_session(
+                        brain, row["id"], interaction,
+                        embedding_model=self.embedding_model,
+                        config=self.config, commit_hash=commit_hash,
+                        repo_path=row["repo_path"],
+                    )
         except _ExtractionTimeout:
             if pending_id is not None:
                 brain.mark_pending_extraction_attempt(
@@ -884,7 +897,7 @@ class ReverieServer:
             brain.delete_pending_extraction(pending_id)
 
         diffusion_failures = 0
-        for ecu_id in ids:
+        for ecu_id in ([] if self._items_mode() else ids):
             try:
                 diffuser.diffuse_session_ecu(
                     brain, row["id"], ecu_id,
@@ -904,7 +917,13 @@ class ReverieServer:
 
         count = brain.count_session_ecus(row["id"])
         plural = "s" if result.rejected_count != 1 else ""
-        if ids:
+        if self._items_mode():
+            message = (
+                f"Remembered {len(ids)} item{'s' if len(ids) != 1 else ''} "
+                f"({result.deduped} duplicate{'s' if result.deduped != 1 else ''} "
+                f"dropped, {result.rejected_count} rejected). Undo any with "
+                "`reverie undo <id>`; `reverie digest` lists what was added.")
+        elif ids:
             message = (
                 f"Extracted {len(ids)} conclusion{'s' if len(ids) != 1 else ''} into "
                 f"session memory ({result.rejected_count} rejected by the "
