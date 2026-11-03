@@ -10,7 +10,7 @@ pinned venv): ``initialize``, ``notifications/initialized`` (ignored), ``ping``,
 payload as JSON text; ``isError`` mirrors the payload's ``status == "error"``.
 
 Tools (feat/flow surface — the §28.3 four plus review/enablement, D55-D57):
-  - ``observe``       — extract + lightweight-diffuse reasoning into the
+  - ``observe``       — extract + lightweight-diffuse the work summary into the
                            Session Brain (§28.13)
   - ``query``         — demand-driven retrieval over both brains (§11.3)
   - ``summary``   — brain statistics at session start (§11.3 awareness
@@ -164,7 +164,7 @@ NO_REPO_ERROR = (
     "are working in) and try again."
 )
 EXTRACTION_FAILED = (
-    "Extraction failed: {reason}. The reasoning trace may be too short or "
+    "Extraction failed: {reason}. The work summary may be too short or "
     "contain no engineering conclusions. This is not an error — not every "
     "response produces conclusions."
 )
@@ -218,7 +218,7 @@ INTERNAL_ERROR = -32603
 # ---------------------------------------------------------------------------
 
 _OBSERVE_DESCRIPTION = """\
-Extract engineering conclusions from your reasoning trace and store them
+Record engineering conclusions from your work summary and store them
 in the Session Brain for immediate use. Call this AFTER you:
 - Discover a non-obvious invariant or dependency
 - Debug a tricky issue and find the root cause
@@ -234,7 +234,7 @@ Call observe AT MOST ONCE per task — batch everything worth saving into a
 single call after you have the insight, not after every response — unless a
 separate new insight appears.
 
-observe runs the Extractor on your reasoning, produces candidate
+observe runs the Extractor on your work summary, produces candidate
 conclusions, and stores them in the Session Brain. They are immediately
 available for retrieval via query. The USER reviews these candidates
 (via `reverie review` or by asking you to show them) — never promote or judge
@@ -366,15 +366,15 @@ def _observe_schema() -> dict:
             "description": (
                 "The user's prompt that triggered this response. The "
                 "Extractor processes the full interaction — prompt, "
-                "reasoning, and output — not just the reasoning alone."
+                "work summary, and output — not just the summary alone."
             ),
         },
-        "reasoning_trace": {
+        "work_summary": {
             "type": "string",
             "description": (
-                "Your reasoning trace since the last observe call. "
-                "Include your thinking, decisions, and rationale — not "
-                "just the final code output."
+                "A short summary of your work since the last observe call: "
+                "what you investigated, what you found, the decisions "
+                "made and why."
             ),
         },
         "final_output": {
@@ -386,7 +386,7 @@ def _observe_schema() -> dict:
             ),
         },
         "repo_path": dict(_REPO_PATH_PROP),
-    }, ["user_prompt", "reasoning_trace"])
+    }, ["user_prompt", "work_summary"])
 
 
 def _query_schema() -> dict:
@@ -438,7 +438,7 @@ def _reconsolidate_schema() -> dict:
             "type": "string",
             "description": (
                 "The new evidence you discovered. This should be "
-                "your reasoning trace explaining what you found and "
+                "your notes explaining what you found and "
                 "why it affects the conclusion. The Diffuser will use this "
                 "to re-evaluate its confidence and edges."
             ),
@@ -996,16 +996,19 @@ class ReverieServer:
         info = ctx["info"]
         row = self._enabled_session(info)
         user_prompt = args.get("user_prompt")
-        trace = args.get("reasoning_trace")
+        # ``reasoning_trace`` is the pre-0.3 name, still accepted.
+        trace = args.get("work_summary")
+        if not (isinstance(trace, str) and trace.strip()):
+            trace = args.get("reasoning_trace")
         if not isinstance(user_prompt, str) or not user_prompt.strip() \
                 or not isinstance(trace, str) or not trace.strip():
             return {
                 "status": "error",
                 "session_active": True,
                 "error": "observe requires 'user_prompt' and "
-                         "'reasoning_trace' (non-empty strings). Pass the "
-                         "user's prompt and your reasoning since the last "
-                         "observe call.",
+                         "'work_summary' (non-empty strings). Pass the "
+                         "user's prompt and a summary of your work since "
+                         "the last observe call.",
             }
         interaction = {
             "prompt": user_prompt,
@@ -1156,7 +1159,7 @@ class ReverieServer:
                 "session_active": True,
                 "ecu_id": ecu_id,
                 "reason": "missing_evidence",
-                "error": "reconsolidate requires 'evidence' — your reasoning "
+                "error": "reconsolidate requires 'evidence' — your notes "
                          "about what changed and why it affects the "
                          "conclusion.",
             }

@@ -109,13 +109,13 @@ def summary(repo_path: str | None = None, branch: str | None = None, *,
                             wanted_branch)
 
 
-def observe(user_prompt: str, reasoning_trace: str,
+def observe(user_prompt: str, work_summary: str,
             final_output: str | None = None, repo_path: str | None = None,
             *, _server=None) -> dict:
-    """Extract conclusions from agent reasoning into the Session Brain."""
+    """Record conclusions from the agent's work summary into the Session Brain."""
     args: dict[str, Any] = {
         "user_prompt": user_prompt,
-        "reasoning_trace": reasoning_trace,
+        "work_summary": work_summary,
     }
     if final_output is not None:
         args["final_output"] = final_output

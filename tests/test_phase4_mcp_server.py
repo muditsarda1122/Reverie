@@ -165,7 +165,7 @@ def test_tools_list(server):
     assert [t["name"] for t in tools][:4] == [
         "observe", "query", "summary", "reconsolidate"]
     observe = tools[0]
-    assert observe["inputSchema"]["required"] == ["user_prompt", "reasoning_trace"]
+    assert observe["inputSchema"]["required"] == ["user_prompt", "work_summary"]
     assert "Do NOT call observe" in observe["description"]  # §28.12 verbatim
     query = tools[1]
     assert query["inputSchema"]["required"] == ["query"]
@@ -356,7 +356,7 @@ def test_observe_missing_params(server, active_session):
     payload, _ = call_tool(server, "observe", {"user_prompt": "x"})
     assert payload["status"] == "error"
     assert payload["session_active"] is True
-    assert "reasoning_trace" in payload["error"]
+    assert "work_summary" in payload["error"]
 
 
 def test_query_invalid_params(server, active_session):

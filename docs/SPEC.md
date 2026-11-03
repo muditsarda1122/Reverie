@@ -2677,7 +2677,7 @@ It stores engineering conclusions, not facts, and retrieves them when
 you need them.
 
 Reverie provides seven MCP tools:
-- observe: Extract engineering conclusions from your reasoning
+- observe: Record engineering conclusions from your work summary
 - query: Retrieve relevant engineering conclusions
 - summary: Get brain statistics at session start
 - reconsolidate: Update a retrieved conclusion with new evidence
