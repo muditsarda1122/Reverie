@@ -313,6 +313,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # default: it can drop legitimate environment quirks (H7).
         "sandbox_trivia_check": False,
     },
+    "promotion": {
+        # Cross-repo learning. An AGENT-INFERRED item of one of these kinds
+        # that is seen in `min_repos` repos becomes user-wide. Repo facts and
+        # decisions never promote (their kinds are not listed here).
+        "kinds": ["preference"],
+        "min_repos": 2,
+    },
     "stale": {
         # Staleness worker (`reverie stale check`): per commit, only memories
         # whose anchors the commit touched are rechecked.

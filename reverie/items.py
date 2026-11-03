@@ -149,6 +149,45 @@ def bump_seen(conn: sqlite3.Connection, item_id: str,
     return meta
 
 
+def promote(conn: sqlite3.Connection, item_id: str,
+            seen_in: str | None = None) -> bool:
+    """Make an item user-wide: delivered in every repo. Reversible (demote)."""
+    row = conn.execute("SELECT repo_key, meta_json FROM items WHERE id=?",
+                       (item_id,)).fetchone()
+    if row is None or row["repo_key"] is None:
+        return False
+    meta = json.loads(row["meta_json"] or "{}")
+    meta["origin_repo"] = row["repo_key"]
+    seen = list(meta.get("seen_repos") or [])
+    if seen_in and seen_in not in seen:
+        seen.append(seen_in)
+    meta["seen_repos"] = seen
+    meta["promoted_at"] = _now()
+    conn.execute("UPDATE items SET repo_key=NULL, level='user', anchor_json=?, "
+                 "meta_json=? WHERE id=?",
+                 (json.dumps(anchor(type_="user")), json.dumps(meta), item_id))
+    conn.commit()
+    return True
+
+
+def demote(conn: sqlite3.Connection, item_id: str) -> bool:
+    """Undo a promotion: back to the repo it came from."""
+    row = conn.execute("SELECT repo_key, meta_json FROM items WHERE id=?",
+                       (item_id,)).fetchone()
+    if row is None or row["repo_key"] is not None:
+        return False
+    meta = json.loads(row["meta_json"] or "{}")
+    origin = meta.get("origin_repo")
+    if not origin:
+        return False
+    meta.pop("promoted_at", None)
+    conn.execute("UPDATE items SET repo_key=?, level='repo', anchor_json=?, "
+                 "meta_json=? WHERE id=?",
+                 (origin, json.dumps(anchor()), json.dumps(meta), item_id))
+    conn.commit()
+    return True
+
+
 def set_meta(conn: sqlite3.Connection, item_id: str, patch: dict) -> None:
     """Merge ``patch`` into an item's meta (None values delete keys)."""
     row = conn.execute("SELECT meta_json FROM items WHERE id=?", (item_id,)).fetchone()

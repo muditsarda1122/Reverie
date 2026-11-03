@@ -18,12 +18,13 @@ Each item:
  "text": a self-contained sentence or two understandable without the conversation (preserve exact commands, names, numbers, and the user's verbatim wording for directives),
  "anchor": the file or directory it applies to, or "repo" if it applies to the project as a whole,
  "symbols": [code identifiers (class, function, module names) the item is about; [] if none],
+ "scope": "repo" (default: about this project) or "user" ONLY when the user states it applies to ALL their work or projects, in their own words ("I always...", "never ... in any project", "by default, everywhere"). A rule about "this codebase" is "repo",
  "source": "user" if the USER said it in this exchange, "agent" if you are inferring it,
  "quote": the user's exact words that state it (REQUIRED when source is "user"; copy them character for character from the user message),
  "evidence": a short exact quote from the exchange that supports it (REQUIRED when source is "agent"; copy it character for character),
  "durability": "permanent" | "until_changed" | "short_term"}
 
 Keep one fact in ONE item: a rule together with its reason or incident, a command together with its ports and caveats, a negative result together with what worked instead. Do not split a fact into a rule item plus a separate "why" item.
-Store a preference only when the user states it. Never infer a preference or intent from how a request was phrased.
+Store a preference only when the user states it, or when the exchange itself shows it (for example the user rejecting or rewriting the same kind of output) and you can quote that. Never infer a preference or intent from how a single request was phrased.
 
 Prefer few, high-quality items. An exchange with nothing worth keeping returns [].

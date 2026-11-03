@@ -35,6 +35,12 @@ KIND_MAP = {
 _SYMBOL = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:]{1,79}$")
 _PATHLIKE = re.compile(r"[/\\]|\.[A-Za-z0-9]{1,6}$")
 MIN_QUOTE = 12
+#: the user's own words must say it covers all their work, not one codebase
+_GLOBAL_MARK = re.compile(
+    r"\b(always|never|every (?:project|repo|codebase)|all (?:my )?(?:projects|repos)|"
+    r"any (?:project|repo)|everywhere|in general|by default)\b", re.I)
+_REPO_BOUND = re.compile(r"\b(this|the) (codebase|repo|repository|project|sdk|service)\b", re.I)
+_USER_WIDE_KINDS = ("preference", "rule")
 
 
 class TypedExtractionError(RuntimeError):
@@ -48,6 +54,7 @@ class ItemResult:
     rejection_summary: str = ""
     skipped_invalid: int = 0
     deduped: int = 0
+    promoted: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
 
 
@@ -127,6 +134,11 @@ def validate(raw_item: dict, interaction: dict,
         if not quote_in(evidence, everything):
             return None, "agent-inferred without verifiable evidence"
         meta["evidence_quote"] = evidence
+    user_wide = False
+    if str(raw_item.get("scope")) == "user" and source == "user_said" \
+            and kind in _USER_WIDE_KINDS:
+        said = meta.get("quote") or ""
+        user_wide = bool(_GLOBAL_MARK.search(said)) and not _REPO_BOUND.search(said)
     anchor_raw = str(raw_item.get("anchor") or "repo").strip()
     files: list[str] = []
     if anchor_raw.lower() not in ("repo", "global", "project", "") and \
@@ -136,6 +148,7 @@ def validate(raw_item: dict, interaction: dict,
                if isinstance(s, str) and _SYMBOL.match(s.strip())]
     return {"text": text, "kind": kind, "source": source,
             "evidence": meta.get("evidence_quote") or meta.get("quote"),
+            "user_wide": user_wide,
             "anchor": items.anchor(files, [s.strip() for s in symbols]),
             "meta": meta}, "ok"
 
@@ -162,6 +175,34 @@ def extract_candidates(interaction: dict, config) -> tuple[list[dict], int, list
         else:
             good.append(cand)
     return good, len(reasons), reasons
+
+
+def _seen_in_other_repo(conn, cand: dict, vec, key: str, cfg, judge,
+                        result: ItemResult) -> bool:
+    """Cross-repo learning. If this agent-inferred, promotable-kind candidate
+    restates an item another repo already holds, that item becomes user-wide
+    (once seen in ``promotion.min_repos`` repos) and the candidate is not
+    stored again. Repo facts and decisions never reach here: only the kinds in
+    ``promotion.kinds`` and only when the agent inferred them."""
+    from .embeddings import from_blob
+    p = cfg.promotion
+    if cand["source"] != "agent_inferred" or cand["kind"] not in p.kinds:
+        return False
+    marks = ",".join("?" * len(p.kinds))
+    rows = conn.execute(
+        f"SELECT * FROM items WHERE status='active' AND source='agent_inferred' "
+        f"AND repo_key IS NOT NULL AND repo_key != ? AND kind IN ({marks}) "
+        f"AND embedding IS NOT NULL", (key, *p.kinds)).fetchall()
+    others = [(r["id"], r["text"], from_blob(r["embedding"])) for r in rows]
+    verdict = dedupe.screen(cand["text"], vec, others, cfg, judge)
+    if verdict.keep or not verdict.nearest_id:
+        return False
+    meta = items.bump_seen(conn, verdict.nearest_id, key)
+    if len(set(meta.get("seen_repos") or [])) >= int(p.min_repos):
+        if items.promote(conn, verdict.nearest_id, key):
+            result.promoted.append(verdict.nearest_id)
+    result.deduped += 1
+    return True
 
 
 def extract_and_store_items(
@@ -198,11 +239,17 @@ def extract_and_store_items(
             if verdict.nearest_id:
                 items.bump_seen(conn, verdict.nearest_id, key)
             continue
+        if not cand["user_wide"] and _seen_in_other_repo(
+                conn, cand, vec, key, cfg, judge, result):
+            continue
         item_id = items.add(
             conn, text=cand["text"], kind=cand["kind"], source=cand["source"],
-            repo_key=key, anchor_=cand["anchor"],
+            repo_key=None if cand["user_wide"] else key,
+            anchor_=items.anchor(type_="user") if cand["user_wide"]
+            else cand["anchor"],
             author="user" if cand["source"] == "user_said" else agent_id,
-            level="repo", grounding_commit=commit_hash,
+            level="user" if cand["user_wide"] else "repo",
+            grounding_commit=commit_hash,
             evidence=cand["evidence"], embedding=to_blob(vec),
             meta={**cand["meta"], "dedupe_stage": verdict.stage,
                   "dedupe_sim": round(verdict.sim, 3)})

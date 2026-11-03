@@ -1,29 +1,17 @@
 """Step 3: typed extraction, two-stage dedupe, auto-accept, undo, digest."""
 
 import copy
-import hashlib
 import json
-import re
 import subprocess
 from unittest.mock import patch
 
-import numpy as np
 import pytest
+from fake_embed import FakeEmbed
 
 from reverie import dedupe, deliver, digest, items, typed_extractor
 from reverie.brain import Brain
 from reverie.config import DEFAULT_CONFIG, _to_attrdict
 from reverie.extractor import ExtractionError
-
-
-class FakeEmbed:
-    """Deterministic bag-of-words embedder (no torch)."""
-    def encode_one(self, text):
-        v = np.zeros(256, dtype=np.float32)
-        for w in re.findall(r"[a-z0-9_]+", text.lower()):
-            v[int(hashlib.md5(w.encode()).hexdigest(), 16) % 256] += 1
-        n = np.linalg.norm(v)
-        return v / n if n else v
 
 
 def cfg(**dedupe_over):

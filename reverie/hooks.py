@@ -81,7 +81,13 @@ def _memory_blocks(info, print_fn) -> None:
         try:
             key = deliver.repo_key(info.repo_path)
             mem = deliver.memory(conn, key, info.repo_path)
-            said = [m for m in mem if m["kind"] == "rule"]
+            wide = [m for m in mem if m.get("repo_key") is None
+                    and m.get("origin") == "item"
+                    and m["kind"] in ("rule", "preference")]
+            if wide:
+                print_fn("Your preferences and rules across all repos:\n"
+                         + "\n".join(f"- {m['text'].strip()}" for m in wide))
+            said = [m for m in mem if m["kind"] == "rule" and m not in wide]
             if said:
                 print_fn("Rules you stated in earlier sessions:\n" + "\n".join(
                     f"- {m['text'].strip()}" for m in said))
@@ -105,10 +111,9 @@ def _spawn_stale_check(conn, key: str, root: str) -> None:
     """If commits landed since the last check, recheck memory in a detached
     background process (the hook itself stays fast and read-only). A lock file
     stops a burst of sessions from piling up workers."""
+    import os
     import subprocess
     import time
-
-    import os
 
     from . import launch, spool, staleness
     if os.environ.get("REVERIE_NO_BACKGROUND"):

@@ -176,6 +176,19 @@ reverie stale keep <memory>       # the old memory was fine; clear the flag
 
 The first check in a repo only records HEAD as the baseline.
 
+## reverie promote
+
+Makes a memory item user-wide so it is delivered in every repo (the way to
+mark something "always" or "never"), or takes it back. Reverie also promotes
+by itself, but only agent-inferred preferences seen in two repos; repo facts
+and decisions never promote. Things you say that cover all your work ("I
+always ...") are user-wide from the start.
+
+```bash
+reverie promote a1b2c3d4
+reverie promote --demote a1b2c3d4   # back to the repo it came from
+```
+
 ## reverie review
 
 The terminal review UI: one candidate at a time, single keypresses

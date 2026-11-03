@@ -339,6 +339,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         "last checked commit")
     p.add_argument("--no-tests", action="store_true",
                    help="check: do not run the test suite first")
+    p = sub.add_parser("promote", help="make a memory item apply in every "
+                       "repo (always/never), or take it back")
+    p.add_argument("id")
+    p.add_argument("--demote", action="store_true",
+                   help="return a promoted item to the repo it came from")
     p = sub.add_parser("show", help="print one memory item by id (prefix ok)")
     p.add_argument("id")
     p.add_argument("--repo", default=None,
@@ -360,7 +365,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install", "resume", "rules", "show", "undo", "digest", "stale")
+               "capture-turn", "install", "resume", "rules", "show", "undo", "digest", "stale", "promote")
 
 
 def _unknown_command(word: str) -> int:
@@ -445,6 +450,25 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_rules(args)
     if args.command == "stale":
         return _cmd_stale(args)
+    if args.command == "promote":
+        from . import deliver, items
+        if not deliver.db_path().exists():
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        conn = items.connect(deliver.db_path())
+        try:
+            it = items.get(conn, args.id)
+            if it is None:
+                print(f"No single item matches {args.id!r}.", file=sys.stderr)
+                return 1
+            fn = items.demote if args.demote else items.promote
+            ok = fn(conn, it["id"])
+            word = "back to its repo" if args.demote else "user-wide"
+            print(f"[{it['id'][:8]}] is now {word}." if ok else
+                  f"[{it['id'][:8]}] was not changed (already {word}).")
+            return 0
+        finally:
+            conn.close()
     if args.command in ("undo", "digest"):
         from . import deliver, items, spool
         from . import digest as digest_mod
