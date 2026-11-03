@@ -120,8 +120,8 @@ def test_cli_rules_add_and_list(env):
 def test_hook_shim_is_stdlib_only_and_never_fails(env):
     """The prompt hook must not import the brain / numpy / torch, must exit 0
     on garbage, and must log the prompt."""
-    code = ("import sys; import reverie.spool as s; s.main(['prompt']);"
-            "bad=[m for m in ('numpy','torch','sqlite3','reverie.brain') if m in sys.modules];"
+    code = ("import sys; import reverie.integrations.claude.shim as s; s.main(['prompt']);"
+            "bad=[m for m in ('numpy','torch','reverie.brain') if m in sys.modules];"
             "print('HEAVY', bad)")
     payload = json.dumps({"prompt": "hello from a hook", "session_id": "S",
                           "cwd": str(env)})
@@ -132,7 +132,7 @@ def test_hook_shim_is_stdlib_only_and_never_fails(env):
     assert r.returncode == 0, r.stderr
     assert "HEAVY []" in r.stdout
     assert spool.read(env)[-1]["text"] == "hello from a hook"
-    r = subprocess.run([sys.executable, "-m", "reverie.spool", "prompt"],
+    r = subprocess.run([sys.executable, "-m", "reverie.integrations.claude.shim", "prompt"],
                        input="not json", capture_output=True, text=True,
                        env={**os.environ, "PYTHONPATH": str(root)})
     assert r.returncode == 0
@@ -156,11 +156,14 @@ def test_install_registers_prompt_and_answer_spool_hooks(tmp_path):
     home.mkdir()
     settings = _install_claude(home)
     ups = [h for g in settings["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
-    assert len(ups) == 1 and "spool" in json.dumps(ups[0]) and \
+    assert len(ups) == 1 and "shim" in json.dumps(ups[0]) and \
         ups[0].get("async") is not True
     stop = [h for g in settings["hooks"]["Stop"] for h in g["hooks"]]
     assert any("capture-turn" in json.dumps(h) for h in stop)
-    assert any("spool" in json.dumps(h) for h in stop)
+    assert any("shim" in json.dumps(h) for h in stop)
+    pre = settings["hooks"]["PreToolUse"]
+    assert pre[0]["matcher"] == "Edit|Write|MultiEdit|NotebookEdit"
+    assert "pretool" in json.dumps(pre[0]["hooks"][0])
     # idempotent
     again = _install_claude(home)
     assert again == settings

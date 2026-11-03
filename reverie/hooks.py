@@ -66,6 +66,28 @@ def _db_ready(db: Path) -> bool:
     return int(version) == SCHEMA_VERSION
 
 
+def _memory_blocks(info, print_fn) -> None:
+    """Rules lane + headline index (read-only, stdlib; never raises)."""
+    try:
+        from . import deliver, rules
+        block = rules.render(info.repo_path)
+        if block:
+            print_fn("Reverie rules (the user's own words; always apply):\n"
+                     + block)
+        conn = deliver.open_db()
+        if conn is not None:
+            try:
+                index = deliver.headline_index(
+                    deliver.memory(conn, deliver.repo_key(info.repo_path),
+                                   info.repo_path))
+            finally:
+                conn.close()
+            if index:
+                print_fn(index)
+    except Exception:
+        pass
+
+
 def session_start(cwd: str | Path | None = None, *, print_fn=print) -> int:
     """Print the session-start block for the repo at ``cwd`` (default: the
     current directory). Always returns 0 and never raises.
@@ -77,7 +99,8 @@ def session_start(cwd: str | Path | None = None, *, print_fn=print) -> int:
         info = repos.resolve_repo(cwd=cwd)
         db = default_db_path()
         if not db.exists():
-            return 0                  # nothing stored yet — nothing to say
+            _memory_blocks(info, print_fn)   # rules are plain files: no brain needed
+            return 0
         if not _db_ready(db):
             return 0                  # broken or outdated brain — stay quiet
         brain = Brain(db)
@@ -92,6 +115,7 @@ def session_start(cwd: str | Path | None = None, *, print_fn=print) -> int:
         return 0                      # never break a session — print nothing
     if payload.get("status") == "ok":
         print_fn(enabled_block(payload))
+        _memory_blocks(info, print_fn)
     elif payload.get("status") == "disabled":
         print_fn(DISABLED_TEXT)
     return 0

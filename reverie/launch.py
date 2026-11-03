@@ -14,8 +14,6 @@ from pathlib import Path
 
 REVERIE_CONSOLE_SCRIPT = "reverie"
 REVERIE_CLI_MODULE = "reverie.cli"
-SPOOL_CONSOLE_SCRIPT = "reverie-spool"
-SPOOL_MODULE = "reverie.spool"
 
 #: argv tail for the session-start hook (recognised by idempotent install and
 #: surgical uninstall). The list keeps the words separate — no harness here.
@@ -105,12 +103,3 @@ def reverie_command(tail: list[str] | None = None,
 #: Descriptive alias for callers that just want "how do I launch it".
 launch_command = reverie_command
 
-
-def spool_command(tail: list[str],
-                  executable: str | None = None,
-                  which=shutil.which) -> tuple[str, list[str]]:
-    """Like ``reverie_command`` but for the stdlib-only prompt-log shim
-    (``reverie-spool`` / ``python -m reverie.spool``), which starts in tens of
-    milliseconds because it never imports the brain."""
-    return reverie_command(tail, executable, which,
-                           script_name=SPOOL_CONSOLE_SCRIPT, module=SPOOL_MODULE)

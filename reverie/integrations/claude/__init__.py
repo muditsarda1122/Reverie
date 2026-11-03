@@ -168,16 +168,21 @@ def _stop_handler(reverie_bin: str | None = None) -> dict:
     return handler
 
 
+_SHIM_SCRIPT = "reverie-claude-hook"
+_SHIM_MODULE = "reverie.integrations.claude.shim"
+
+
 def _spool_handler(tail: str, reverie_bin: str | None = None) -> dict:
     """UserPromptSubmit / Stop handler for the stdlib-only prompt-log shim.
     Synchronous and fast (it only appends a line); not async, so it is not
     killed when a headless run exits."""
     if reverie_bin:
         # a pinned `reverie` binary sits beside its `reverie-spool` script
-        sibling = str(Path(reverie_bin).with_name("reverie-spool"))
+        sibling = str(Path(reverie_bin).with_name(_SHIM_SCRIPT))
         return {"type": "command", "command": f"{sibling} {tail}",
                 "timeout": 5}
-    command, args = launch.spool_command([tail])
+    command, args = launch.reverie_command(
+        [tail], script_name=_SHIM_SCRIPT, module=_SHIM_MODULE)
     handler: dict = {"type": "command", "command": command, "timeout": 5}
     if args:
         handler["args"] = args
@@ -186,7 +191,10 @@ def _spool_handler(tail: str, reverie_bin: str | None = None) -> dict:
 
 #: Spool hooks installed beside the capture hooks: (kind, hook event, tail).
 _SPOOL_HOOKS = (("SpoolPrompt", "UserPromptSubmit", "prompt"),
-                ("SpoolAnswer", "Stop", "answer"))
+                ("SpoolAnswer", "Stop", "answer"),
+                ("SpoolPretool", "PreToolUse", "pretool"))
+#: PreToolUse fires on edits only: matches file anchors and symbols in the file.
+_PRETOOL_MATCHER = "Edit|Write|MultiEdit|NotebookEdit"
 
 
 def _is_reverie_hook(hook: object, event: str) -> bool:
@@ -201,9 +209,10 @@ def _is_reverie_hook(hook: object, event: str) -> bool:
     if event == "Stop":
         return (isinstance(args, list) and args[-1:] == ["capture-turn"]) or \
             command.endswith(" capture-turn")
-    if event in ("SpoolPrompt", "SpoolAnswer"):
-        tail = "prompt" if event == "SpoolPrompt" else "answer"
-        spool_cmd = ("reverie-spool", "reverie.spool")
+    if event in ("SpoolPrompt", "SpoolAnswer", "SpoolPretool"):
+        tail = {"SpoolPrompt": "prompt", "SpoolAnswer": "answer",
+                "SpoolPretool": "pretool"}[event]
+        spool_cmd = (_SHIM_SCRIPT, _SHIM_MODULE)
         return (isinstance(args, list) and args[-1:] == [tail]
                 and any(c in command or any(c in str(a) for a in args)
                         for c in spool_cmd)) or \
@@ -281,7 +290,8 @@ def _settings_plan(home: Path, session_handler: dict, stop_handler: dict,
                 raise InstallError(
                     f"{disp}: `hooks.{event}` must be a list. Fix or remove "
                     "it, then re-run `reverie install`.")
-            _upsert_handler(groups, spool_handlers[kind], kind, None)
+            _upsert_handler(groups, spool_handlers[kind], kind,
+                            _PRETOOL_MATCHER if kind == "SpoolPretool" else None)
     added_permission = _add_permission_entry(data, _CLAUDE_PERMISSION, disp)
     if original and json.dumps(data, sort_keys=True) == original:
         return PlannedWrite(
@@ -320,9 +330,10 @@ def _uninstall_settings(home: Path,
     removed_labels = []
     hooks = data.get("hooks")
     if isinstance(hooks, dict):
-        for kind in ("SessionStart", "Stop", "SpoolPrompt", "SpoolAnswer"):
-            event = {"SpoolPrompt": "UserPromptSubmit",
-                     "SpoolAnswer": "Stop"}.get(kind, kind)
+        for kind in ("SessionStart", "Stop", "SpoolPrompt", "SpoolAnswer",
+                     "SpoolPretool"):
+            event = {"SpoolPrompt": "UserPromptSubmit", "SpoolAnswer": "Stop",
+                     "SpoolPretool": "PreToolUse"}.get(kind, kind)
             groups = hooks.get(event)
             if not isinstance(groups, list):
                 continue

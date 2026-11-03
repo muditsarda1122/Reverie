@@ -273,6 +273,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    "(default: the most recent one)")
     p.add_argument("--all", action="store_true", dest="all_sessions",
                    help="every recorded prompt, all sessions")
+    p = sub.add_parser("show", help="print one memory item by id (prefix ok)")
+    p.add_argument("id")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
     p = sub.add_parser("rules", help="your always-on rules (markdown files)")
     p.add_argument("action", choices=["add", "list"])
     p.add_argument("text", nargs="*", help="rule text (add)")
@@ -290,7 +294,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install", "resume", "rules")
+               "capture-turn", "install", "resume", "rules", "show")
 
 
 def _unknown_command(word: str) -> int:
@@ -373,6 +377,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "rules":
         return _cmd_rules(args)
+    if args.command == "show":
+        from . import deliver, spool
+        conn = deliver.open_db()
+        if conn is None:
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        try:
+            print(deliver.show(conn, args.id, spool.repo_root(args.repo or ".")))
+        finally:
+            conn.close()
+        return 0
     if args.command == "enable":
         return _cmd_enable(args)
     if args.command == "disable":

@@ -2710,6 +2710,14 @@ be unhandled) and the git state. Treat those prompts as the user's own
 instructions, including decisions meant for later steps, and verify them
 against the working tree before acting.
 
+## Rules and the Memory Index
+
+Rules the user wrote (`~/.reverie/rules.md`, `<repo>/.reverie/rules.md`) are
+loaded at session start and always apply; never edit them. The memory index
+lists past decisions and findings by id: open one with `reverie show <id>`
+when it looks relevant. They are past beliefs, so verify against the code.
+Each item says whether its file changed since it was verified.
+
 ## Sessions Are Automatic
 
 In an enabled repo, every branch has a session that is created

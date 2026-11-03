@@ -276,7 +276,8 @@ def test_install_preserves_other_settings_and_hooks(home, reverie_home):
     assert do_install(home, reverie_home) == 0
     data = json.loads(settings.read_text())
     assert data["theme"] == "dark"
-    assert data["hooks"]["PreToolUse"] == json.loads(original)["hooks"]["PreToolUse"]
+    # the user's own PreToolUse group is untouched (ours is a separate group)
+    assert data["hooks"]["PreToolUse"][0] == json.loads(original)["hooks"]["PreToolUse"][0]
     groups = data["hooks"]["SessionStart"]
     assert [g["matcher"] for g in groups] == ["resume", "startup"]
     assert do_uninstall(home, reverie_home)[0] == 0

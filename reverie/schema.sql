@@ -255,3 +255,38 @@ CREATE TABLE IF NOT EXISTS review_decisions (
 );
 CREATE INDEX IF NOT EXISTS idx_review_decisions_candidate
     ON review_decisions(candidate_id);
+
+-- ---------------------------------------------------------------------------
+-- Continuity spine: typed memory items (additive; no schema-version bump).
+-- One row = one thing worth telling an agent that cannot be read from the
+-- code. Rules typed by the user live in markdown files, not here.
+--   kind:    decision | rejected_approach | work_state | preference |
+--            environment | external_context | open_question | rule
+--   source:  user_said (stored as said) | agent_inferred (needs evidence)
+--   author:  'user' or an agent id        level: user | repo | team
+--   anchor:  {"type": file|symbol|repo|user, "files": [...], "symbols": [...]}
+--   status:  active | stale | superseded | undone
+-- repo_key is NULL for user-wide items. author/level exist so a future team
+-- layer (review a junior's agent's memories; team rules for all agents)
+-- needs no migration.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS items (
+    id               TEXT PRIMARY KEY,
+    repo_key         TEXT,
+    text             TEXT NOT NULL,
+    kind             TEXT NOT NULL,
+    anchor_json      TEXT NOT NULL DEFAULT '{}',
+    source           TEXT NOT NULL,
+    author           TEXT NOT NULL DEFAULT 'agent',
+    level            TEXT NOT NULL DEFAULT 'user',
+    grounding_commit TEXT,
+    last_verified    TEXT,
+    status           TEXT NOT NULL DEFAULT 'active',
+    evidence         TEXT,
+    supersedes       TEXT,
+    created_at       TEXT NOT NULL,
+    embedding        BLOB,
+    meta_json        TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_items_repo   ON items(repo_key);
+CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);

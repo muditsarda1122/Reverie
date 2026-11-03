@@ -771,7 +771,7 @@ def test_stop_hook_is_installed_and_uninstalled(home, reverie_home):
                 check_fn=lambda *a, **k: (True, "stub"))
     settings = json.loads((home / ".claude" / "settings.json").read_text())
     assert set(settings["hooks"]) == {"SessionStart", "Stop",
-                                      "UserPromptSubmit"}
+                                      "UserPromptSubmit", "PreToolUse"}
     stop = settings["hooks"]["Stop"][0]["hooks"][0]    # capture-turn first
     assert stop["type"] == "command"
     assert stop["timeout"] == 20

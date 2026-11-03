@@ -202,50 +202,16 @@ def render_resume(cwd: str | Path, *, session: str | None = None,
     return text
 
 
-# ---------------------------------------------------------------------------
-# hook entry points (stdin = the harness hook JSON)
-# ---------------------------------------------------------------------------
-
-def _stdin_json() -> dict:
-    try:
-        if sys.stdin is None or sys.stdin.isatty():
-            return {}
-        data = json.loads(sys.stdin.read() or "{}")
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def hook_prompt(payload: dict, harness: str = "claude") -> int:
-    text = payload.get("prompt")
-    if isinstance(text, str):
-        append(payload.get("cwd") or os.getcwd(), "prompt", text,
-               session=str(payload.get("session_id") or ""), harness=harness)
-    return 0
-
-
-def hook_answer(payload: dict, harness: str = "claude") -> int:
-    text = payload.get("last_assistant_message")
-    if isinstance(text, str):
-        append(payload.get("cwd") or os.getcwd(), "answer", text,
-               session=str(payload.get("session_id") or ""), harness=harness)
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
-    """``reverie-spool prompt|answer`` (hooks) and ``log`` (manual append)."""
+    """``python -m reverie.spool log prompt|answer TEXT`` — manual append, for
+    harnesses with no hooks. Harness hooks use their own package's shim."""
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
-        cmd = argv[0] if argv else ""
-        if cmd == "prompt":
-            return hook_prompt(_stdin_json())
-        if cmd == "answer":
-            return hook_answer(_stdin_json())
-        if cmd == "log" and len(argv) >= 3 and argv[1] in ("prompt", "answer"):
+        if len(argv) >= 3 and argv[0] == "log" and argv[1] in ("prompt", "answer"):
             append(os.getcwd(), argv[1], " ".join(argv[2:]), harness="manual")
     except Exception:
         pass
-    return 0            # a hook must never break the session
+    return 0            # never fail the caller
 
 
 if __name__ == "__main__":
