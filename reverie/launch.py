@@ -14,6 +14,8 @@ from pathlib import Path
 
 REVERIE_CONSOLE_SCRIPT = "reverie"
 REVERIE_CLI_MODULE = "reverie.cli"
+SPOOL_CONSOLE_SCRIPT = "reverie-spool"
+SPOOL_MODULE = "reverie.spool"
 
 #: argv tail for the session-start hook (recognised by idempotent install and
 #: surgical uninstall). The list keeps the words separate — no harness here.
@@ -65,7 +67,9 @@ def _reverie_script_path(executable: str | None = None,
 
 def reverie_command(tail: list[str] | None = None,
                     executable: str | None = None,
-                    which=shutil.which) -> tuple[str, list[str]]:
+                    which=shutil.which, *,
+                    script_name: str = REVERIE_CONSOLE_SCRIPT,
+                    module: str = REVERIE_CLI_MODULE) -> tuple[str, list[str]]:
     """``(command, args)`` that launch ``reverie <tail>`` from any cwd.
 
     pip install → the ABSOLUTE ``reverie`` console script beside the running
@@ -78,10 +82,12 @@ def reverie_command(tail: list[str] | None = None,
     """
     tail = list(tail or [])
     if _is_pip_installed():
-        script = _reverie_script_path(executable, which)
+        script = (_reverie_script_path(executable, which)
+                  if script_name == REVERIE_CONSOLE_SCRIPT
+                  else _script_path(script_name, executable, which))
         if script is not None:
             return script, tail
-        return executable or sys.executable, ["-m", REVERIE_CLI_MODULE, *tail]
+        return executable or sys.executable, ["-m", module, *tail]
     root = Path(__file__).resolve().parent.parent
     python: str | None = None
     for candidate in (root / ".venv" / "bin" / "python",          # POSIX venv
@@ -92,9 +98,19 @@ def reverie_command(tail: list[str] | None = None,
     if python is None:   # no project venv — the running interpreter has reverie
         python = sys.executable
     argv = " ".join(shlex.quote(part)
-                    for part in (python, "-m", REVERIE_CLI_MODULE, *tail))
+                    for part in (python, "-m", module, *tail))
     return f"PYTHONPATH={shlex.quote(str(root))} {argv}", []
 
 
 #: Descriptive alias for callers that just want "how do I launch it".
 launch_command = reverie_command
+
+
+def spool_command(tail: list[str],
+                  executable: str | None = None,
+                  which=shutil.which) -> tuple[str, list[str]]:
+    """Like ``reverie_command`` but for the stdlib-only prompt-log shim
+    (``reverie-spool`` / ``python -m reverie.spool``), which starts in tens of
+    milliseconds because it never imports the brain."""
+    return reverie_command(tail, executable, which,
+                           script_name=SPOOL_CONSOLE_SCRIPT, module=SPOOL_MODULE)

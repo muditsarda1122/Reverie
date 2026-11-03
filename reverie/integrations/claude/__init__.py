@@ -168,6 +168,27 @@ def _stop_handler(reverie_bin: str | None = None) -> dict:
     return handler
 
 
+def _spool_handler(tail: str, reverie_bin: str | None = None) -> dict:
+    """UserPromptSubmit / Stop handler for the stdlib-only prompt-log shim.
+    Synchronous and fast (it only appends a line); not async, so it is not
+    killed when a headless run exits."""
+    if reverie_bin:
+        # a pinned `reverie` binary sits beside its `reverie-spool` script
+        sibling = str(Path(reverie_bin).with_name("reverie-spool"))
+        return {"type": "command", "command": f"{sibling} {tail}",
+                "timeout": 5}
+    command, args = launch.spool_command([tail])
+    handler: dict = {"type": "command", "command": command, "timeout": 5}
+    if args:
+        handler["args"] = args
+    return handler
+
+
+#: Spool hooks installed beside the capture hooks: (kind, hook event, tail).
+_SPOOL_HOOKS = (("SpoolPrompt", "UserPromptSubmit", "prompt"),
+                ("SpoolAnswer", "Stop", "answer"))
+
+
 def _is_reverie_hook(hook: object, event: str) -> bool:
     if not isinstance(hook, dict) or hook.get("type") != "command":
         return False
@@ -180,6 +201,14 @@ def _is_reverie_hook(hook: object, event: str) -> bool:
     if event == "Stop":
         return (isinstance(args, list) and args[-1:] == ["capture-turn"]) or \
             command.endswith(" capture-turn")
+    if event in ("SpoolPrompt", "SpoolAnswer"):
+        tail = "prompt" if event == "SpoolPrompt" else "answer"
+        spool_cmd = ("reverie-spool", "reverie.spool")
+        return (isinstance(args, list) and args[-1:] == [tail]
+                and any(c in command or any(c in str(a) for a in args)
+                        for c in spool_cmd)) or \
+            (command.endswith(f" {tail}")
+             and any(c in command for c in spool_cmd))
     return False
 
 
@@ -208,8 +237,8 @@ def _upsert_handler(groups: list, handler: dict, event: str,
     groups.append(new_group)
 
 
-def _settings_plan(home: Path, session_handler: dict, stop_handler: dict
-                   ) -> PlannedWrite:
+def _settings_plan(home: Path, session_handler: dict, stop_handler: dict,
+                   spool_handlers: dict | None = None) -> PlannedWrite:
     path = _settings_path(home)
     disp = _display(path, home)
     existed = path.exists()
@@ -245,6 +274,14 @@ def _settings_plan(home: Path, session_handler: dict, stop_handler: dict
         )
     _upsert_handler(session_groups, session_handler, "SessionStart", "startup")
     _upsert_handler(stop_groups, stop_handler, "Stop", None)
+    for kind, event, _tail in _SPOOL_HOOKS:
+        if spool_handlers and kind in spool_handlers:
+            groups = hooks.setdefault(event, [])
+            if not isinstance(groups, list):
+                raise InstallError(
+                    f"{disp}: `hooks.{event}` must be a list. Fix or remove "
+                    "it, then re-run `reverie install`.")
+            _upsert_handler(groups, spool_handlers[kind], kind, None)
     added_permission = _add_permission_entry(data, _CLAUDE_PERMISSION, disp)
     if original and json.dumps(data, sort_keys=True) == original:
         return PlannedWrite(
@@ -283,7 +320,9 @@ def _uninstall_settings(home: Path,
     removed_labels = []
     hooks = data.get("hooks")
     if isinstance(hooks, dict):
-        for event in ("SessionStart", "Stop"):
+        for kind in ("SessionStart", "Stop", "SpoolPrompt", "SpoolAnswer"):
+            event = {"SpoolPrompt": "UserPromptSubmit",
+                     "SpoolAnswer": "Stop"}.get(kind, kind)
             groups = hooks.get(event)
             if not isinstance(groups, list):
                 continue
@@ -297,10 +336,10 @@ def _uninstall_settings(home: Path,
                     kept_groups.append(group)
                     continue
                 kept = [hook for hook in entries
-                        if not _is_reverie_hook(hook, event)]
+                        if not _is_reverie_hook(hook, kind)]
                 if len(kept) != len(entries):
                     changed = True
-                    removed_labels.append(event)
+                    removed_labels.append(kind)
                 if kept:
                     group = dict(group)
                     group["hooks"] = kept
@@ -369,7 +408,9 @@ class ClaudeIntegration(Integration):
                 f"Wrote {_display(path, home)} (/{path.stem})"))
         writes.append(_settings_plan(
             home, _session_start_handler(reverie_bin),
-            _stop_handler(reverie_bin)))
+            _stop_handler(reverie_bin),
+            {kind: _spool_handler(tail, reverie_bin)
+             for kind, _event, tail in _SPOOL_HOOKS}))
         return writes
 
     def uninstall(self, home: Path, dry_run: bool = False, *,

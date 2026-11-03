@@ -102,6 +102,15 @@ memory is kept) or back on (state="enabled").
 If a tool response reports the repo is disabled, do nothing with
 Reverie in that repo and do not ask about it.
 
+## Continuing a Cut-Off Session
+
+If the user says a previous session was cut off, or asks you to continue or
+pick up earlier work, run `reverie resume` in the repo first. It prints the
+user's rules, every prompt they sent (verbatim, in order; the last one may
+be unhandled) and the git state. Treat those prompts as the user's own
+instructions, including decisions meant for later steps, and verify them
+against the working tree before acting.
+
 ## Sessions Are Automatic
 
 In an enabled repo, every branch has a session that is created

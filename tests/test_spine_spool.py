@@ -136,3 +136,48 @@ def test_hook_shim_is_stdlib_only_and_never_fails(env):
                        input="not json", capture_output=True, text=True,
                        env={**os.environ, "PYTHONPATH": str(root)})
     assert r.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# Claude Code installs the spool hooks
+# ---------------------------------------------------------------------------
+
+def _install_claude(home):
+    from reverie.integrations.claude import INTEGRATION
+    for w in INTEGRATION.install(home, None):
+        if w.path.name == "settings.json" and w.content:
+            w.path.parent.mkdir(parents=True, exist_ok=True)
+            w.path.write_text(w.content)
+    return json.loads((home / ".claude" / "settings.json").read_text())
+
+
+def test_install_registers_prompt_and_answer_spool_hooks(tmp_path):
+    home = tmp_path / "h"
+    home.mkdir()
+    settings = _install_claude(home)
+    ups = [h for g in settings["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
+    assert len(ups) == 1 and "spool" in json.dumps(ups[0]) and \
+        ups[0].get("async") is not True
+    stop = [h for g in settings["hooks"]["Stop"] for h in g["hooks"]]
+    assert any("capture-turn" in json.dumps(h) for h in stop)
+    assert any("spool" in json.dumps(h) for h in stop)
+    # idempotent
+    again = _install_claude(home)
+    assert again == settings
+
+
+def test_uninstall_removes_only_reverie_hooks(tmp_path):
+    from reverie.integrations.claude import INTEGRATION
+    home = tmp_path / "h"
+    home.mkdir()
+    (home / ".claude").mkdir()
+    (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {
+        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "mine.sh"}]}]}}))
+    _install_claude(home)
+    for r in INTEGRATION.uninstall(home):
+        if r.path.name == "settings.json" and r.after is not None:
+            r.path.write_text(r.after)
+    left = json.loads((home / ".claude" / "settings.json").read_text())
+    left.pop("permissions", None)      # owned-entry bookkeeping is not under test
+    assert left == {"hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command", "command": "mine.sh"}]}]}}
