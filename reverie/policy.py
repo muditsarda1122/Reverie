@@ -30,6 +30,6 @@ not for simple changes.
 on conclusion contents.
 - `review_list` and `review_decide`: show every candidate in full. Relay only \
 decisions the user states.
-- `set_repo_state`: only from the user's answer to the first-time question. \
-Ask once per conversation.
+- `set_repo_state`: only when the user explicitly asks to turn Reverie off or \
+back on for a repo. Reverie is on by default; never ask.
 """

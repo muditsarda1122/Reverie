@@ -2681,7 +2681,7 @@ Reverie provides seven MCP tools:
 - query: Retrieve relevant engineering conclusions
 - summary: Get brain statistics at session start
 - reconsolidate: Update a retrieved conclusion with new evidence
-- set_repo_state: Record the user's enablement answer for a repo
+- set_repo_state: Turn Reverie off (or back on) for a repo when the user asks
 - review_list: Show the user's pending review candidates
 - review_decide: Apply review decisions the user stated
 
@@ -2691,23 +2691,15 @@ Global MCP servers may be started in the home folder, where the repo
 cannot be detected. Pass the workspace path as the `repo_path` argument
 on every tool call.
 
-## Enablement — The First-Time Question
+## Enablement — On By Default
 
-Reverie is enabled per repo, and the answer is remembered. The first time
-a tool call reports that a repo is undecided, ask the user exactly:
-
-Reverie isn't on for this repo. Turn it on? (yes / not now / never)
-
-Ask this question AT MOST ONCE per conversation. Record the answer with
-set_repo_state:
-- "yes" -> state="enabled"
-- "not now" -> state="not_now" (stays off for now; do not ask again in
-  this conversation)
-- "never" -> state="disabled" (fully off for this repo: nothing is
-  captured, retrieved, or injected; existing memory is kept)
+Reverie is on in every repo. Never ask the user whether to turn it on.
+Call set_repo_state only when the user explicitly asks to turn Reverie off
+(state="disabled": nothing is captured, retrieved, or injected; existing
+memory is kept) or back on (state="enabled").
 
 If a tool response reports the repo is disabled, do nothing with
-Reverie in that repo and do not ask again.
+Reverie in that repo and do not ask about it.
 
 ## Sessions Are Automatic
 
@@ -2725,7 +2717,7 @@ session — there is nothing to start or stop.
 - `reconsolidate`: call when the code you are reading contradicts a conclusion you retrieved. Name the file and symbol that show the contradiction. Do not call it for conclusions you did not retrieve in this task.
 - `summary`: once at session start, for counts and topics only. Never anchor on conclusion contents.
 - `review_list` and `review_decide`: show every candidate in full. Relay only decisions the user states.
-- `set_repo_state`: only from the user's answer to the first-time question. Ask once per conversation.
+- `set_repo_state`: only when the user explicitly asks to turn Reverie off or back on for a repo. Reverie is on by default; never ask.
 
 
 ## When to Call reconsolidate

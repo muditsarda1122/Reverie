@@ -149,7 +149,8 @@ def test_initialize_handshake(server):
     assert "Relay only decisions the user states" in instructions
     assert "Before editing code in a Reverie-enabled repo, call query " \
         "for the area you are changing" in instructions
-    assert "Ask once per conversation" in instructions
+    assert "never ask" in instructions.lower()
+    assert "first-time question" not in instructions
     assert r["id"] == 1
 
 
@@ -244,36 +245,30 @@ def test_query_auto_creates_session(server, brain, model):
     assert len(sessions) == 1
 
 
-def test_undecided_repo_returns_ask_user(brain, manager):
-    """D55: an undecided repo gets the structured first-time question
-    instead of action."""
+def test_unknown_repo_is_on_by_default_no_question(brain, manager):
+    """Reverie is on by default: a repo with no state is enabled on first use
+    (no first-time question) and recorded as such."""
     s = ReverieServer(brain=brain, manager=manager)
-    payload, result = call_tool(s, "observe", {
-        "user_prompt": "fix the bug", "reasoning_trace": "..."})
-    assert result["isError"] is True
-    assert payload["status"] == "needs_consent"
-    assert payload["state"] == "undecided"
-    assert payload["question"] == (
-        "Reverie isn't on for this repo. Turn it on? (yes / not now / never)")
-    assert "set_repo_state" in payload["instructions"]
-    # the ask is recorded (undecided-but-asked)
-    row = brain.get_repo(REPO)
-    assert row is not None and row["asked_at"] is not None
-    assert row["state"] == "undecided"
+    payload, result = call_tool(s, "query", {"query": "anything"})
+    assert result["isError"] is False
+    assert payload["status"] == "ok"
+    assert brain.get_repo(REPO)["state"] == "enabled"
 
 
-def test_not_now_records_asked_and_stays_off(brain, manager):
+def test_legacy_undecided_state_behaves_as_enabled(brain, manager):
+    brain.upsert_repo(REPO, path=REPO, state="undecided")
+    s = ReverieServer(brain=brain, manager=manager)
+    payload, _ = call_tool(s, "query", {"query": "anything"})
+    assert payload["status"] == "ok"
+    assert brain.get_repo(REPO)["state"] == "enabled"
+
+
+def test_set_repo_state_only_knows_opt_out_and_in(brain, manager):
     s = ReverieServer(brain=brain, manager=manager)
     payload, _ = call_tool(s, "set_repo_state", {"state": "not_now"})
-    assert payload["status"] == "ok"
-    assert payload["state"] == "undecided"
-    assert brain.get_repo(REPO)["asked_at"] is not None
-    # every tool still refuses to act
-    for name, args in (("observe", {"user_prompt": "x",
-                                       "reasoning_trace": "y"}),
-                       ("query", {"query": "q"})):
-        payload, _ = call_tool(s, name, args)
-        assert payload["status"] == "needs_consent"
+    assert payload["status"] == "error"
+    payload, _ = call_tool(s, "set_repo_state", {"state": "undecided"})
+    assert payload["status"] == "ok" and payload["state"] == "enabled"
 
 
 def test_never_maps_to_disabled(brain, manager):
@@ -491,7 +486,7 @@ def test_stdio_server_subprocess(tmp_path):
                     "clientInfo": {"name": "test"}}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-        # feat/flow: an undecided repo asks instead of acting
+        # default on: the very first call acts, no question
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
          "params": {"name": "observe",
                     "arguments": {"user_prompt": "x", "reasoning_trace": "y"}}},
@@ -523,8 +518,8 @@ def test_stdio_server_subprocess(tmp_path):
         assert len(responses[2]["result"]["tools"]) == 7  # +reconsolidate, flow
         first_observe = json.loads(
             responses[3]["result"]["content"][0]["text"])
-        assert first_observe["status"] == "needs_consent"
-        assert first_observe["question"].startswith("Reverie isn't on")
+        assert first_observe["status"] != "needs_consent"
+        assert first_observe["session_active"] is True
         enabled = json.loads(responses[4]["result"]["content"][0]["text"])
         assert enabled["status"] == "ok"
         second_observe = json.loads(

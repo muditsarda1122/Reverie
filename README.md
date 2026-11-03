@@ -32,7 +32,7 @@ You need an LLM provider key before Reverie can extract anything. Set one before
 ## Quick start
 
 1. Open your agent in any project.
-2. **The first time, your agent asks once:** "Reverie isn't on for this repo. Turn it on? (yes / not now / never)". Your answer is remembered. `reverie enable` and `reverie disable` change it at any time.
+2. **Reverie is on in every repo by default.** There is no question to answer. Opt a repo out with `reverie disable` (and back in with `reverie enable`); existing memory is kept. `reverie install` tells you once what is sent to your LLM provider.
 3. **Just code.** Sessions are automatic per branch. As your agent works, it records a conclusion when it reaches a real engineering insight, not for every edit. A candidate from one branch isn't visible on another branch. Accepted conclusions are visible everywhere.
 4. **Review when you like.** Candidates wait in one review queue across every branch and repo. Run `reverie review` in a terminal, say "show my Reverie candidates" in the chat, or type `/reverie-review`. Nothing reaches long-term memory without your decision.
 5. In a later conversation, after your agent reads the relevant code, it asks Reverie for past conclusions. They come back with their confidence, grounding and status, framed as past understanding to verify, never as authoritative context.

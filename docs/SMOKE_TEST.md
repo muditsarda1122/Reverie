@@ -28,8 +28,8 @@ Run the same checklist per harness. Time: ~15 minutes each.
 
 | Step | Action | Expected |
 |---|---|---|
-| 2.1 | Open a scratch repo with your agent; ask it anything | The first Reverie tool call returns the enablement question instead of acting; the agent asks you exactly once: **"Reverie isn't on for this repo. Turn it on? (yes / not now / never)"** |
-| 2.2 | Answer **yes** | The agent records it (`set_repo_state`); no further asking this conversation |
+| 2.1 | Open a scratch repo with your agent; ask it anything | The first Reverie tool call acts at once — no question is asked; Reverie is on by default |
+| 2.2 | `reverie disable`, then ask the agent anything | Reverie tools answer "disabled" and capture nothing; `reverie enable` turns it back on |
 | 2.3 | `reverie repos` | The repo is listed with `state: enabled` |
 
 ## 3. A conclusion gets captured

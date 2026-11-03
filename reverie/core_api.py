@@ -14,11 +14,9 @@ harness package.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from . import repos
-from .config import default_db_path
 from .session import brain_summary
 
 #: One lazily-created server per process. Reusing it keeps the review-token
@@ -79,13 +77,6 @@ def summary(repo_path: str | None = None, branch: str | None = None, *,
                 "repo": info.repo_path,
                 "error": "Reverie is disabled for this repo. Nothing was "
                          "captured or retrieved.",
-            }
-        if state != "enabled":
-            return {
-                "status": "needs_consent", "state": "undecided",
-                "repo": info.repo_path,
-                "question": repos.FIRST_TIME_QUESTION,
-                "error": repos.FIRST_TIME_QUESTION,
             }
         row = server._ensure_manager().current_session(
             info.repo_path, wanted_branch)
@@ -169,7 +160,7 @@ def review_decide(review_token: str, decisions: list[dict], *,
 
 def _no_capture(state: str, repo_path: str | None, **extra) -> dict:
     payload = {
-        "status": "disabled" if state == "disabled" else "needs_consent",
+        "status": "disabled",
         "state": state,
         "repo": repo_path,
         "captured": False,
@@ -223,18 +214,11 @@ def capture_turn(repo_path: str | None, branch: str | None,
         info, error = _repo_and_error(server, repo_path)
         if error is not None:
             return {**error, "captured": False, "ecus_extracted": 0}
-        if server._brain is None and not Path(default_db_path()).exists():
-            return _no_capture("undecided", info.repo_path,
-                               question=repos.FIRST_TIME_QUESTION)
         brain = server._ensure_brain()
-        state = repos.state_readonly(brain, info)
-        if state == "disabled":
+        if repos.state_of(brain, info) == "disabled":   # default on
             return _no_capture(
                 "disabled", info.repo_path,
                 message="Reverie is disabled for this repo; nothing captured.")
-        if state != "enabled":
-            return _no_capture("undecided", info.repo_path,
-                               question=repos.FIRST_TIME_QUESTION)
         row = server._ensure_manager().ensure_session(
             info.repo_path, branch or info.branch)
         interaction = {

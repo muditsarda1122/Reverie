@@ -1,9 +1,11 @@
 """Repo enablement (feat/flow, D55) — three states per repo, stored in the
 global brain, never inside the repo.
 
-States (``repos.state``): ``undecided`` (default) | ``enabled`` | ``disabled``.
-A repo can also be *asked* (``asked_at`` set) while still undecided — the
-record of a "not now" answer, so the first-time question is not repeated.
+States (``repos.state``): ``enabled`` | ``disabled``, plus the legacy value
+``undecided``. Reverie is **on by default**: a repo with no row, or an
+``undecided`` one, behaves as ``enabled`` (the first-time "turn it on?"
+question is gone — it blocked non-interactive and autonomous agents). The
+only user decision is the opt-out: ``reverie disable`` / ``set_repo_state``.
 
 Repo identity (D58): the repo's **git common directory** — the absolute,
 resolved path of ``git rev-parse --path-format=absolute --git-common-dir``.
@@ -41,12 +43,6 @@ from pathlib import Path
 
 from .brain import Brain
 from .session import _git
-
-#: The exact first-time question (feat/flow). Shown to the user once per
-#: conversation; the agent records the answer via ``set_repo_state``.
-FIRST_TIME_QUESTION = (
-    "Reverie isn't on for this repo. Turn it on? (yes / not now / never)"
-)
 
 _GIT_TIMEOUT = 10
 
@@ -133,14 +129,23 @@ def resolve_repo_state(brain: Brain, info: RepoInfo) -> dict | None:
 
 
 def state_of(brain: Brain, info: RepoInfo) -> str:
-    """``enabled`` | ``disabled`` | ``undecided`` for this repo."""
+    """``enabled`` | ``disabled`` for this repo (default on).
+
+    A repo seen for the first time (or carrying the legacy ``undecided``
+    state) is recorded as ``enabled`` — only an explicit opt-out turns
+    Reverie off."""
     row = resolve_repo_state(brain, info)
-    return row["state"] if row else "undecided"
+    if row is not None and row["state"] == "disabled":
+        return "disabled"
+    if row is None or row["state"] != "enabled":
+        brain.upsert_repo(info.repo_key, path=info.repo_path, url=info.url,
+                          state="enabled")
+    return "enabled"
 
 
 def state_readonly(brain: Brain, info: RepoInfo) -> str:
-    """Read-only state lookup for side-effect-free, latency-sensitive callers
-    (the session-start hook).
+    """Read-only ``enabled`` | ``disabled`` lookup for side-effect-free,
+    latency-sensitive callers (the session-start hook). Default on.
 
     Unlike ``state_of`` this NEVER writes: no origin-URL refresh, no D58
     rematch re-key, no ``asked_at`` stamp. The D58 rematch is still *read*:
@@ -149,30 +154,18 @@ def state_readonly(brain: Brain, info: RepoInfo) -> str:
     re-cloned repo therefore reads as undecided until the next tool call
     (which performs the real rematch)."""
     row = brain.get_repo(info.repo_key)
-    if row is not None:
-        return row["state"]
-    if info.url:
+    if row is None and info.url:
         matches = [r for r in brain.list_repos() if r["url"] == info.url]
         if len(matches) == 1:
-            return matches[0]["state"]
-    return "undecided"
+            row = matches[0]
+    return "disabled" if row is not None and row["state"] == "disabled" \
+        else "enabled"
 
 
 def set_repo_state(brain: Brain, info: RepoInfo, state: str) -> dict:
     """Switch a repo's state at any time, as often as the user likes."""
     return brain.upsert_repo(info.repo_key, path=info.repo_path,
                              url=info.url, state=state)
-
-
-def mark_asked(brain: Brain, info: RepoInfo) -> None:
-    """Record that the first-time question was surfaced ("not now", or any
-    needs_consent response) — undecided-but-asked."""
-    from .brain import _now_iso
-    row = brain.get_repo(info.repo_key)
-    if row is not None and row["asked_at"]:
-        return                          # already asked — keep the first stamp
-    brain.upsert_repo(info.repo_key, path=info.repo_path, url=info.url,
-                      asked_at=_now_iso())
 
 
 # ---------------------------------------------------------------------------

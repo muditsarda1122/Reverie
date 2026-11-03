@@ -93,7 +93,6 @@ reverie repos
 
 Output per repo: path, enablement state, active sessions, review
 candidates, conclusions grounded there, and the origin remote (when known).
-Undecided repos that were asked show `(asked once — still undecided)`.
 Exit: `0` always.
 
 ## reverie review
@@ -273,9 +272,9 @@ reverie hook session-start --repo ~/code/app
 plain-text stdout is injected into the conversation at startup, so a fresh
 session sees Reverie's state and usage rules without a first tool call. The
 matching Stop hook (`reverie capture-turn`) captures the completed exchange.
-Three outputs, one per repo state: **enabled** — brain counts (conclusions
-in memory, candidates awaiting review) plus the usage rules; **undecided** —
-the first-time question for Claude to relay; **disabled** — a one-line
+Two outputs: **enabled** (the default for every repo) — brain counts
+(conclusions in memory, candidates awaiting review) plus the usage rules;
+**disabled** — a one-line
 "do not capture or retrieve here". Contract: read-only (no LLM, no writes,
 never creates a brain), quiet on error (not a git repo, unreadable brain →
 no output), always exits `0` — a hook can never break a session.
@@ -307,7 +306,7 @@ reverie capture-turn --repo ~/code/app --branch main
 | `--timeout SECONDS` | Extraction time limit (default: `20`) |
 
 A failed or timed-out capture is left in the pending queue; `reverie retry`
-retries it. Disabled and undecided repos capture nothing. Exit: always `0`.
+retries it. Disabled repos capture nothing. Exit: always `0`.
 
 Hook schemas and per-harness details: [`INTEGRATIONS.md`](INTEGRATIONS.md).
 

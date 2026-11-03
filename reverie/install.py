@@ -82,7 +82,7 @@ Reverie provides seven MCP tools:
 - query: Retrieve relevant engineering conclusions
 - summary: Get brain statistics at session start
 - reconsolidate: Update a retrieved conclusion with new evidence
-- set_repo_state: Record the user's enablement answer for a repo
+- set_repo_state: Turn Reverie off (or back on) for a repo when the user asks
 - review_list: Show the user's pending review candidates
 - review_decide: Apply review decisions the user stated
 
@@ -92,23 +92,15 @@ Global MCP servers may be started in the home folder, where the repo
 cannot be detected. Pass the workspace path as the `repo_path` argument
 on every tool call.
 
-## Enablement — The First-Time Question
+## Enablement — On By Default
 
-Reverie is enabled per repo, and the answer is remembered. The first time
-a tool call reports that a repo is undecided, ask the user exactly:
-
-Reverie isn't on for this repo. Turn it on? (yes / not now / never)
-
-Ask this question AT MOST ONCE per conversation. Record the answer with
-set_repo_state:
-- "yes" -> state="enabled"
-- "not now" -> state="not_now" (stays off for now; do not ask again in
-  this conversation)
-- "never" -> state="disabled" (fully off for this repo: nothing is
-  captured, retrieved, or injected; existing memory is kept)
+Reverie is on in every repo. Never ask the user whether to turn it on.
+Call set_repo_state only when the user explicitly asks to turn Reverie off
+(state="disabled": nothing is captured, retrieved, or injected; existing
+memory is kept) or back on (state="enabled").
 
 If a tool response reports the repo is disabled, do nothing with
-Reverie in that repo and do not ask again.
+Reverie in that repo and do not ask about it.
 
 ## Sessions Are Automatic
 
@@ -1034,6 +1026,9 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     if import_file is not None and not dry_run:
         _import_during_install(reverie_home, import_file, print_fn)
 
+    # -- one-time data disclosure ---------------------------------------------
+    _show_disclosure(reverie_home, dry_run, print_fn)
+
     # -- LLM provider (§28.8 + feat/providers) -----------------------------
     print_fn("\nChecking LLM provider...")
     ollama_path = which(OLLAMA_BINARY)
@@ -1183,11 +1178,40 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
              "loads")
     print_fn("  2. Work normally — in an enabled repo, sessions are "
              "automatic per branch and never need closing")
-    print_fn("  3. The agent asks once whether to turn Reverie on for a new "
-             "repo (your answer is remembered)")
+    print_fn("  3. Reverie is on in every repo; opt a repo out with "
+             "`reverie disable` inside it")
     print_fn("  4. Review candidates with `reverie review`, or say \"show my "
              "Reverie candidates\" in the agent")
     return 0
+
+
+#: Shown once at install (a marker file records it). Reverie is on by default
+#: in every repo, so the user must be told what leaves the machine up front.
+DISCLOSURE = """\
+Data disclosure
+  Reverie turns your coding sessions into memory by sending content to an
+  LLM: your prompts, the agent's final answers and its work summaries go to
+  the provider you configure below (nothing is sent anywhere else). Choose
+  a local provider to keep it all on this machine.
+  Reverie is ON by default in every repo. Opt a repo out at any time with
+  `reverie disable` inside it; existing memory is kept."""
+
+_DISCLOSURE_MARKER = ".disclosure-shown"
+
+
+def _show_disclosure(reverie_home: Path, dry_run: bool, print_fn) -> bool:
+    """Print the one-time disclosure. Returns True when it was shown."""
+    marker = reverie_home / _DISCLOSURE_MARKER
+    if marker.exists():
+        return False
+    print_fn("\n" + DISCLOSURE)
+    if not dry_run:
+        try:
+            reverie_home.mkdir(parents=True, exist_ok=True)
+            marker.write_text("shown\n", encoding="utf-8")
+        except OSError:
+            pass
+    return True
 
 
 def _import_during_install(reverie_home: Path, import_file: str, print_fn) -> None:

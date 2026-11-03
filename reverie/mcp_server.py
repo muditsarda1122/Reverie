@@ -21,8 +21,7 @@ Tools (feat/flow surface — the §28.3 four plus review/enablement, D55-D57):
                             entered). Only ECUs retrieved in this session are
                             labile (D39): the server marks surfaced canonical
                             ids during query and refuses others.
-  - ``set_repo_state``— record the user's answer to the first-time
-                           enablement question (or turn Reverie off/on here)
+  - ``set_repo_state``— turn Reverie off (opt-out) or back on for a repo
   - ``review_list``   — the review queue page, for the agent to relay
   - ``review_decide`` — apply decisions the USER stated, through the
                            review gate (channel "agent", D57)
@@ -33,7 +32,7 @@ falls back to the server's working directory; some harnesses start global
 MCP servers in the home folder). An ``undecided`` repo gets a short,
 structured ask-the-user response instead of action; a ``disabled`` repo
 gets a structured "off" response and NOTHING happens (no capture, no
-retrieval); an ``enabled`` repo proceeds.
+retrieval); every other repo proceeds (Reverie is on by default).
 
 Automatic sessions (feat/flow, D56 — replaces D15 for the MCP surface):
 in an enabled repo every tool call resolves or creates the session for
@@ -258,10 +257,8 @@ available for retrieval via query. The USER reviews these candidates
 them yourself.
 
 Sessions are automatic: in an enabled repo the session for the current
-branch resolves or is created by this call. If the response asks you to
-turn Reverie on for this repo, ask the user the question it contains
-exactly once per conversation, and record their answer with
-set_repo_state. Pass the workspace path as 'repo_path' on every call."""
+branch resolves or is created by this call. Pass the workspace path as
+'repo_path' on every call."""
 
 _QUERY_DESCRIPTION = """\
 Retrieve engineering conclusions relevant to your current task. Call this
@@ -293,17 +290,13 @@ If the response contains a pending-review nudge, mention it to the user at
 most once per conversation (counts only, never contents)."""
 
 _REPO_STATE_DESCRIPTION = """\
-Record the user's answer about enabling Reverie for the current repo, or
-turn Reverie on/off for it. Use this only from the user's answer to the
-first-time question, and ask that question once per conversation. Call this
-with:
-- state="enabled"   — the user said yes (or wants it on)
-- state="not_now"   — the user said "not now": stays off for now; do not
-                      ask again in this conversation
-- state="disabled"  — the user said never (or wants it off): fully off for
-                      this repo, existing memory is kept
-- state="undecided" — reset to the not-configured state
-Pass the workspace path as 'repo_path'. The answer is remembered globally —
+Turn Reverie off for the current repo, or back on. Reverie is on by default
+in every repo; call this ONLY when the user explicitly asks to turn it off
+(or on) here:
+- state="disabled" — the user wants it off: fully off for this repo, nothing
+                     captured or retrieved, existing memory is kept
+- state="enabled"  — the user wants it back on
+Pass the workspace path as 'repo_path'. The choice is remembered globally —
 never stored inside the repo."""
 
 _REVIEW_LIST_DESCRIPTION = """\
@@ -476,7 +469,7 @@ def _set_repo_state_schema() -> dict:
     return _schema({
         "state": {
             "type": "string",
-            "enum": ["enabled", "disabled", "not_now", "undecided"],
+            "enum": ["enabled", "disabled"],
             "description": (
                 "The user's answer: yes -> enabled; not now -> not_now; "
                 "never -> disabled."
@@ -769,11 +762,9 @@ class ReverieServer:
         Returns ``(gate_payload, context)``: exactly one is None.
 
         - repo unresolvable and required → error payload (no context)
-        - ``undecided`` repo → short structured ask-the-user response; the
-          ask is recorded (``asked_at``) so the agent's once-per-
-          conversation rule has a timestamp to anchor on
         - ``disabled`` repo → structured off-response; NOTHING happens
-        - ``enabled`` repo → context with the RepoInfo; missing-branch
+        - any other repo → enabled by default (a first-seen repo is recorded
+          as enabled); context with the RepoInfo; missing-branch
           sessions are archived here (D56) so the queue never shows
           zombie branches as active
         """
@@ -783,24 +774,7 @@ class ReverieServer:
                 return None, None          # e.g. summary works repo-less
             return error, None
         brain = self._ensure_brain()
-        state_row = repos.resolve_repo_state(brain, info)
-        state = state_row["state"] if state_row else "undecided"
-        if state == "undecided":
-            repos.mark_asked(brain, info)
-            return {
-                "status": "needs_consent",
-                "state": "undecided",
-                "repo": info.repo_path,
-                "question": repos.FIRST_TIME_QUESTION,
-                "error": repos.FIRST_TIME_QUESTION,
-                "instructions": (
-                    "Ask the user this exact question once per conversation. "
-                    "Record their answer with set_repo_state: 'yes' -> "
-                    "enabled, 'not now' -> not_now, 'never' -> disabled. If "
-                    "they say 'not now', do not ask again in this "
-                    "conversation and continue without Reverie."
-                ),
-            }, None
+        state = repos.state_of(brain, info)     # default on; opt-out only
         if state == "disabled":
             return {
                 "status": "disabled",
@@ -1246,41 +1220,32 @@ class ReverieServer:
     # -- enablement + agent review (feat/flow, D55/D57) ----------------------
 
     def _tool_set_repo_state(self, args: dict) -> dict:
-        """Record the user's enablement answer (D55): enabled | disabled |
-        not_now (asked, stays off) | undecided (reset). Not gated — this is
-        the tool that RECORDS the gate answer."""
+        """Opt a repo out (``disabled``) or back in (``enabled``). Reverie is
+        on by default, so this is only for an explicit user request. Not
+        gated — it is the tool that records the gate choice."""
         info, error = self._resolve_repo(args)
         if error is not None:
             return error
         state = args.get("state")
-        if state not in ("enabled", "disabled", "not_now", "undecided"):
+        if state == "undecided":                # legacy: reset == default on
+            state = "enabled"
+        if state not in ("enabled", "disabled"):
             return {
                 "status": "error",
-                "error": "state must be one of enabled | disabled | "
-                         "not_now | undecided",
+                "error": "state must be one of enabled | disabled",
             }
         brain = self._ensure_brain()
-        if state == "not_now":
-            repos.mark_asked(brain, info)           # undecided-but-asked
-            row = brain.get_repo(info.repo_key)
-            effective = "undecided"
-            message = ("Recorded: not now. Reverie stays off for this repo; "
-                       "do not ask again in this conversation.")
-        else:
-            row = repos.set_repo_state(brain, info, state)
-            effective = state
-            message = {
-                "enabled": "Reverie is on for this repo. Sessions are "
-                           "automatic per branch; memory is shared across "
-                           "branches.",
-                "disabled": "Reverie is off for this repo. Nothing will be "
-                            "captured or retrieved; existing memory is kept.",
-                "undecided": "Reset: Reverie will ask about this repo again "
-                             "on its next use.",
-            }[state]
+        repos.set_repo_state(brain, info, state)
+        message = {
+            "enabled": "Reverie is on for this repo. Sessions are "
+                       "automatic per branch; memory is shared across "
+                       "branches.",
+            "disabled": "Reverie is off for this repo. Nothing will be "
+                        "captured or retrieved; existing memory is kept.",
+        }[state]
         return {"status": "ok", "repo": info.repo_path,
-                "repo_key": info.repo_key, "state": effective,
-                "asked_at": cast(dict, row)["asked_at"], "message": message}
+                "repo_key": info.repo_key, "state": state,
+                "message": message}
 
     def _duplicate_notes(self, rows: list[dict]) -> dict[str, list[str]]:
         """Item 22: rows sharing a conclusion_type AND grounding signature

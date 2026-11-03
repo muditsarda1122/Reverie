@@ -117,8 +117,6 @@ def _cmd_repos(_args) -> int:
                   f"here: {conclusions}")
             if row["url"]:
                 print(f"    remote: {row['url']}")
-            if row["state"] == "undecided" and row["asked_at"]:
-                print("    (asked once — still undecided)")
         return 0
     finally:
         brain.close()

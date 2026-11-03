@@ -205,3 +205,66 @@ def test_query_wire_payload_is_not_duplicated():
     assert len(json.dumps(out)) < len(json.dumps(payload))
     err = {"status": "error", "error": "x"}
     assert _compact_query_payload(err) == err
+
+
+# ---------------------------------------------------------------------------
+# 0e. default on, per-repo opt-out, one-time disclosure
+# ---------------------------------------------------------------------------
+
+def test_every_tool_works_on_a_brand_new_repo_without_a_question(server):
+    for name, args in (("summary", {}), ("query", {"query": "anything"}),
+                       ("review_list", {})):
+        payload, result = call_tool(server, name, args)
+        assert payload["status"] == "ok", (name, payload)
+        assert "question" not in payload and not result["isError"]
+
+
+def test_opt_out_is_per_repo_and_reversible(brain):
+    from reverie import repos
+    s = ReverieServer(brain=brain, manager=SessionManager(brain))
+    call_tool(s, "set_repo_state", {"state": "disabled"})
+    for name, args in (("query", {"query": "q"}), ("review_list", {}),
+                       ("observe", {"user_prompt": "p", "work_summary": "w"})):
+        payload, _ = call_tool(s, name, args)
+        assert payload["status"] == "disabled", name
+    # another repo is unaffected
+    other = repos.RepoInfo(repo_path="/other", branch="main",
+                           repo_key="/other/.git")
+    assert repos.state_of(brain, other) == "enabled"
+    call_tool(s, "set_repo_state", {"state": "enabled"})
+    assert call_tool(s, "query", {"query": "q"})[0]["status"] == "ok"
+
+
+def test_disabled_repo_is_not_captured(brain):
+    from reverie import core_api
+    s = ReverieServer(brain=brain, manager=SessionManager(brain))
+    call_tool(s, "set_repo_state", {"state": "disabled"})
+    with patch("reverie.extractor.call_llm") as llm:
+        out = core_api.capture_turn(REPO, BRANCH, "a real prompt",
+                                    "a real answer", _server=s)
+    assert out["status"] == "disabled" and llm.call_count == 0
+
+
+def test_capture_turn_on_unknown_repo_is_enabled_by_default(brain):
+    from reverie import core_api
+    s = ReverieServer(brain=brain, manager=SessionManager(brain))
+    with patch("reverie.extractor.call_llm", side_effect=LLMError("down")):
+        out = core_api.capture_turn(REPO, BRANCH, "a real prompt",
+                                    "a real answer", _server=s)
+    assert out["status"] != "disabled"
+    assert brain.get_repo(REPO)["state"] == "enabled"
+
+
+def test_install_disclosure_is_shown_once(tmp_path):
+    from reverie import install
+    home = tmp_path / ".reverie"
+    lines = []
+    assert install._show_disclosure(home, False, lines.append) is True
+    text = "\n".join(lines).lower()
+    assert "llm" in text and "on by default" in text
+    assert "reverie disable" in text
+    assert install._show_disclosure(home, False, lines.append) is False
+    # a dry run neither shows-and-records nor leaves a marker
+    fresh = tmp_path / "fresh"
+    assert install._show_disclosure(fresh, True, lambda *_: None) is True
+    assert not (fresh / install._DISCLOSURE_MARKER).exists()

@@ -19,7 +19,6 @@ Output states:
 
 - enabled  — the canonical summary message: counts and the pending-review
   count (never conclusion text);
-- undecided — the first-time question (verbatim) and how to record it;
 - disabled — one line: off means off.
 
 Harness hook schemas live in the integration packages; this module only
@@ -37,10 +36,6 @@ from . import core_api, repos
 from .brain import Brain
 from .config import SCHEMA_VERSION, default_db_path
 
-#: Exact first-time question (shared with the MCP gate — repos.FIRST_TIME_QUESTION
-#: is the same string; imported here so the hook and the gate can never drift).
-UNDECIDED_TEXT = repos.FIRST_TIME_QUESTION
-
 #: Disabled repos are fully off: nothing captured, retrieved or injected.
 DISABLED_TEXT = "Reverie is off for this repo. Do not capture or retrieve here."
 
@@ -51,17 +46,6 @@ def enabled_block(summary: dict) -> str:
     not grow a parallel formatting path that can drift from the MCP tool.
     Counts only — never conclusion text (anti-anchoring, §11.3)."""
     return summary["message"]
-
-
-def undecided_block(repo_path: str) -> str:
-    """The undecided-repo block: the first-time question (verbatim) plus the
-    instruction to ask once and record the answer."""
-    return (
-        f"{UNDECIDED_TEXT}\n"
-        "Ask the user this once — at most once per conversation — then "
-        "record the answer with reverie_set_repo_state "
-        f"(repo_path: {repo_path})."
-    )
 
 
 def _db_ready(db: Path) -> bool:
@@ -88,13 +72,12 @@ def session_start(cwd: str | Path | None = None, *, print_fn=print) -> int:
 
     The brain is read only when its database already exists at the current
     schema version — the hook never creates or migrates one. A missing brain
-    reads as undecided (Reverie has no state for this repo yet)."""
+    stays silent (Reverie has nothing stored for this repo yet)."""
     try:
         info = repos.resolve_repo(cwd=cwd)
         db = default_db_path()
         if not db.exists():
-            print_fn(undecided_block(info.repo_path))
-            return 0
+            return 0                  # nothing stored yet — nothing to say
         if not _db_ready(db):
             return 0                  # broken or outdated brain — stay quiet
         brain = Brain(db)
@@ -111,8 +94,6 @@ def session_start(cwd: str | Path | None = None, *, print_fn=print) -> int:
         print_fn(enabled_block(payload))
     elif payload.get("status") == "disabled":
         print_fn(DISABLED_TEXT)
-    elif payload.get("status") == "needs_consent":
-        print_fn(undecided_block(info.repo_path))
     return 0
 
 

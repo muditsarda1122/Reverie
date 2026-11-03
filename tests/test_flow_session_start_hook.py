@@ -94,11 +94,10 @@ def enable_repo(reverie_home: Path) -> Brain:
 # hook output — the three states, exact texts
 # ---------------------------------------------------------------------------
 
-def test_missing_brain_is_undecided_and_creates_nothing(home, repo_env):
+def test_missing_brain_is_silent_and_creates_nothing(home, repo_env):
     code, text = run_hook()
     assert code == 0
-    assert repos.FIRST_TIME_QUESTION in text
-    assert "reverie_set_repo_state" in text
+    assert text == ""            # default on, but nothing stored to report
     assert not (home / ".reverie").exists()      # the hook never bootstraps
 
 
@@ -136,13 +135,13 @@ def test_enabled_prints_counts_and_rules_never_conclusion_text(
     assert "When to call each command" not in text
 
 
-def test_undecided_with_existing_brain_writes_no_repo_row(home,
-                                                          reverie_home,
-                                                          repo_env):
+def test_unknown_repo_is_on_by_default_and_writes_no_repo_row(
+        home, reverie_home, repo_env):
     brain = Brain(reverie_home / "reverie.db")
     brain.close()
     _, text = run_hook()
-    assert repos.FIRST_TIME_QUESTION in text
+    assert "turn it on" not in text.lower()
+    assert "brain holds" in text.lower()          # the normal summary line
     brain = Brain(reverie_home / "reverie.db")
     assert brain.list_repos() == []              # nothing was upserted
     brain.close()
@@ -194,9 +193,11 @@ def test_state_readonly_reports_url_match_without_rekeying(reverie_home):
 # CLI wiring
 # ---------------------------------------------------------------------------
 
-def test_cli_hook_session_start_routes_to_hooks(home, repo_env, capsys):
+def test_cli_hook_session_start_routes_to_hooks(home, reverie_home, repo_env,
+                                                capsys):
+    Brain(reverie_home / "reverie.db").close()
     assert cli.main(["hook", "session-start"]) == 0
-    assert repos.FIRST_TIME_QUESTION in capsys.readouterr().out
+    assert "brain holds" in capsys.readouterr().out.lower()
 
 
 def test_hook_parser_knows_the_session_start_flags():
