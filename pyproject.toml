@@ -43,6 +43,7 @@ Issues = "https://github.com/muditsarda1122/Reverie/issues"
 [project.scripts]
 reverie = "reverie.cli:main"
 reverie-mcp = "reverie.mcp_server:main"
+reverie-spool = "reverie.spool:main"
 
 [tool.setuptools.packages.find]
 include = ["reverie*"]

@@ -88,6 +88,29 @@ def _cmd_disable(args) -> int:
         brain.close()
 
 
+def _cmd_rules(args) -> int:
+    from . import rules
+    cwd = args.repo or "."
+    if args.action == "add":
+        text = " ".join(args.text)
+        try:
+            path = rules.add(text, level="user" if args.user else "repo",
+                             cwd=cwd)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(f"Added to {path}")
+        return 0
+    loaded = rules.load(cwd)
+    for label, key, path in (("personal", "user", rules.personal_path()),
+                             ("repo", "repo", rules.repo_path(cwd))):
+        items = rules.bullets(loaded[key])
+        print(f"{label} ({path}): {len(items)} rule(s)")
+        for item in items:
+            print(f"  - {item}")
+    return 0
+
+
 def _strip_git(repo_key: str) -> str:
     return repo_key[: -len("/.git")] if repo_key.endswith("/.git") \
         else repo_key
@@ -241,6 +264,23 @@ def _build_parser() -> argparse.ArgumentParser:
                              "(read-only; quiet on error; always exit 0)")
     hs.add_argument("--repo", default=None,
                     help="workspace path (default: current directory)")
+    p = sub.add_parser("resume", help="print rules + the verbatim prompt log "
+                       "+ git state, to continue a cut-off session in any "
+                       "harness")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p.add_argument("--session", default=None, help="a specific session id "
+                   "(default: the most recent one)")
+    p.add_argument("--all", action="store_true", dest="all_sessions",
+                   help="every recorded prompt, all sessions")
+    p = sub.add_parser("rules", help="your always-on rules (markdown files)")
+    p.add_argument("action", choices=["add", "list"])
+    p.add_argument("text", nargs="*", help="rule text (add)")
+    p.add_argument("--user", action="store_true",
+                   help="personal rule (~/.reverie/rules.md, every repo); "
+                        "default is this repo's .reverie/rules.md")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
     sub.add_parser("capture-turn", help="capture the completed exchange "
                    "(invoked by the installed hook; reads hook JSON on "
                    "stdin)")
@@ -250,7 +290,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install")
+               "capture-turn", "install", "resume", "rules")
 
 
 def _unknown_command(word: str) -> int:
@@ -324,6 +364,15 @@ def main(argv: list[str] | None = None) -> int:
         return integrations.capture_turn_main(argv[1:])
     args = _build_parser().parse_args(argv)
 
+    if args.command == "resume":
+        from . import rules, spool
+        cwd = args.repo or "."
+        print(spool.render_resume(cwd, session=args.session,
+                                  all_sessions=args.all_sessions,
+                                  rules_text=rules.render(cwd)))
+        return 0
+    if args.command == "rules":
+        return _cmd_rules(args)
     if args.command == "enable":
         return _cmd_enable(args)
     if args.command == "disable":
