@@ -82,7 +82,8 @@ def _legacy_conclusions(conn: sqlite3.Connection, root: str) -> list[dict]:
     out: list[dict] = []
     try:
         rows = conn.execute(
-            "SELECT id, cognition, conclusion_type, grounding_json, created_at "
+            "SELECT id, cognition, conclusion_type, grounding_json, created_at, "
+            "metadata_json "
             "FROM ecus WHERE status IN ('active','challenged')").fetchall()
     except sqlite3.Error:
         return out
@@ -100,7 +101,8 @@ def _legacy_conclusions(conn: sqlite3.Connection, root: str) -> list[dict]:
             "anchor": {"type": "file", "files": g.get("files") or [],
                        "symbols": g.get("symbols") or []},
             "source": "agent_inferred", "grounding_commit": g.get("commit_hash"),
-            "level": "repo", "status": "active"})
+            "level": "repo", "status": "active",
+            "meta": json.loads(r["metadata_json"] or "{}")})
     return out
 
 
@@ -149,8 +151,9 @@ def headline_index(mem: list[dict], limit: int = INDEX_MAX_LINES) -> str:
         "facts: verify against the code. Open one with `reverie show <id>`.",
     ]
     for it in ordered[:limit]:
+        flag = " [MAY BE STALE]" if (it.get("meta") or {}).get("stale") else ""
         lines.append(f"- [{it['id'][:8]}] {it['kind']}: {title(it['text'])} "
-                     f"(anchor: {_anchor_label(it)})")
+                     f"(anchor: {_anchor_label(it)}){flag}")
     if len(ordered) > limit:
         lines.append(f"(+{len(ordered) - limit} more; `reverie show` opens any "
                      "id, and the edit hook surfaces matching ones)")
@@ -224,6 +227,14 @@ def _is_standing(it: dict) -> bool:
         it.get("source") == "user_said" or it["kind"] != "decision")
 
 
+def stale_note(it: dict) -> str:
+    st = (it.get("meta") or {}).get("stale")
+    if not st:
+        return ""
+    return (f"  WARNING: may be stale: commit {st.get('commit')} "
+            f"({st.get('message', '')}) contradicts it: {st.get('reason', '')}")
+
+
 def render_point(hits: list[tuple[dict, str]], rel: str, root: str) -> str:
     shown = hits[:MAX_POINT_ITEMS]
     lines = [f"Reverie memory anchored to this edit of {rel}. Items marked "
@@ -236,6 +247,8 @@ def render_point(hits: list[tuple[dict, str]], rel: str, root: str) -> str:
         lines.append(f"- [{it['id'][:8]}] {tag}{it['kind']} ({why}): "
                      f"{it['text'].strip()}")
         lines.append(f"  {freshness(it, rel, root)}")
+        if stale_note(it):
+            lines.append(stale_note(it))
     return "\n".join(lines)[:MAX_CONTEXT_CHARS]
 
 
@@ -333,4 +346,6 @@ def show(conn: sqlite3.Connection, id_prefix: str, root: str) -> str:
     if it.get("evidence"):
         lines.append("evidence: " + it["evidence"])
     lines.append(freshness(it, (a.get("files") or ["."])[0], root))
+    if stale_note(it):
+        lines.append(stale_note(it).strip())
     return "\n".join(lines)

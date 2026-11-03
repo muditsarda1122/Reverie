@@ -109,11 +109,11 @@ def screen(text: str, vec, existing: Sequence[tuple[str, str, object]], cfg,
     return mk(parse_verdict(raw, trivia), "judge", raw[:120])
 
 
-def llm_judge(config) -> JudgeFn:
+def llm_judge(config, max_tokens: int = 60) -> JudgeFn:
     """The product judge: the configured LLM, classification model, temp 0."""
     from .llm import call_llm, model_for
 
     def judge(prompt: str) -> str:
         return call_llm(prompt, model=model_for(config, "classification"),
-                        temperature=0.0, max_tokens=60, config=config)
+                        temperature=0.0, max_tokens=max_tokens, config=config)
     return judge

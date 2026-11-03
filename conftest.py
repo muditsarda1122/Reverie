@@ -16,3 +16,8 @@ import pytest  # noqa: E402
 def _legacy_capture_for_legacy_modules(request, monkeypatch):
     if request.module.__name__.split(".")[-1] in _LEGACY_CAPTURE_MODULES:
         monkeypatch.setenv("REVERIE_CAPTURE_MODE", "legacy")
+
+
+@pytest.fixture(autouse=True)
+def _no_background_workers(monkeypatch):
+    monkeypatch.setenv("REVERIE_NO_BACKGROUND", "1")

@@ -111,6 +111,49 @@ def _cmd_rules(args) -> int:
     return 0
 
 
+def _cmd_stale(args) -> int:
+    from . import deliver, items, spool, staleness
+    from .config import get_config
+    root = spool.repo_root(args.repo or ".")
+    if not deliver.db_path().exists():
+        print("No Reverie memory yet.", file=sys.stderr)
+        return 1
+    conn = items.connect(deliver.db_path())
+    try:
+        key = deliver.repo_key(root)
+        if args.action == "check":
+            cfg = get_config()
+            if args.no_tests:
+                cfg.stale["run_tests"] = False
+            rep = staleness.check(conn, root, cfg, staleness.default_judge(cfg),
+                                  since=args.since)
+            print(f"Checked {rep.commits} commit(s); {rep.triggered} memory "
+                  f"recheck(s) of {rep.possible} possible; tests: {rep.tests}.")
+            for f in rep.flags:
+                print(f"  STALE [{f.memory_id[:8]}] after {f.commit[:8]} "
+                      f"({f.message}): {f.reason}")
+                print(f"    candidate [{(f.candidate_id or '')[:8]}]: "
+                      f"reverie stale accept {(f.candidate_id or '')[:8]}  |  "
+                      f"reverie stale keep {f.memory_id[:8]}")
+            return 0
+        if args.action == "list":
+            cands = staleness.pending(conn, key)
+            for c in cands:
+                print(f"[{c['id'][:8]}] replaces [{c['meta'].get('candidate_for','')[:8]}]: "
+                      f"{c['text']}\n    why: {c['meta'].get('reason', '')}")
+            if not cands:
+                print("No pending staleness candidates.")
+            return 0
+        if not args.id:
+            print("an id is required", file=sys.stderr)
+            return 2
+        fn = staleness.accept if args.action == "accept" else staleness.keep
+        print(fn(conn, args.id))
+        return 0
+    finally:
+        conn.close()
+
+
 def _strip_git(repo_key: str) -> str:
     return repo_key[: -len("/.git")] if repo_key.endswith("/.git") \
         else repo_key
@@ -285,6 +328,17 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="every repo, not just this one")
     p.add_argument("--no-mark", action="store_true",
                    help="do not mark everything as seen")
+    p = sub.add_parser("stale", help="keep memory true as the code changes")
+    p.add_argument("action", choices=["check", "list", "accept", "keep"])
+    p.add_argument("id", nargs="?", default=None,
+                   help="accept: candidate id; keep: memory id")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p.add_argument("--since", default=None, metavar="REV",
+                   help="check: recheck commits after REV instead of the "
+                        "last checked commit")
+    p.add_argument("--no-tests", action="store_true",
+                   help="check: do not run the test suite first")
     p = sub.add_parser("show", help="print one memory item by id (prefix ok)")
     p.add_argument("id")
     p.add_argument("--repo", default=None,
@@ -306,7 +360,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install", "resume", "rules", "show", "undo", "digest")
+               "capture-turn", "install", "resume", "rules", "show", "undo", "digest", "stale")
 
 
 def _unknown_command(word: str) -> int:
@@ -389,6 +443,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "rules":
         return _cmd_rules(args)
+    if args.command == "stale":
+        return _cmd_stale(args)
     if args.command in ("undo", "digest"):
         from . import deliver, items, spool
         from . import digest as digest_mod

@@ -85,10 +85,28 @@ def render(its: list[dict], since: str | None) -> str:
     return "\n".join(lines)
 
 
+def _pending_stale(conn: sqlite3.Connection, repo_key: str | None) -> str:
+    q = "SELECT * FROM items WHERE status='candidate'"
+    args: list = []
+    if repo_key is not None:
+        q += " AND repo_key = ?"
+        args.append(repo_key)
+    rows = [items._row(r) for r in conn.execute(q, args)]
+    if not rows:
+        return ""
+    lines = ["", f"{len(rows)} memory(ies) may have gone stale after code changes:"]
+    for c in rows:
+        lines.append(f"  [{c['id'][:8]}] proposed update: {c['text'][:160]}")
+        lines.append(f"      reverie stale accept {c['id'][:8]}  |  "
+                     f"reverie stale keep {c['meta'].get('candidate_for', '')[:8]}")
+    return "\n".join(lines)
+
+
 def digest(conn: sqlite3.Connection, repo_key: str | None,
            mark: bool = True) -> str:
     its = items.recent(conn, watermark(repo_key), repo_key)
     out = render(its, last_digest())
+    out += _pending_stale(conn, repo_key)
     if mark:
         mark_digest(conn, repo_key)
     return out

@@ -313,6 +313,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # default: it can drop legitimate environment quirks (H7).
         "sandbox_trivia_check": False,
     },
+    "stale": {
+        # Staleness worker (`reverie stale check`): per commit, only memories
+        # whose anchors the commit touched are rechecked.
+        "judge_workers": 4,
+        "diff_chars": 6000,       # diff shown to the judge per commit
+        "run_tests": True,        # run the suite at HEAD first; failures are evidence
+        "test_command": "",       # "" = `python -m pytest -q -x` when tests/ exists
+        "test_timeout": 300,
+    },
     "digest": {
         "min_new_items": 5,       # nudge at session start once this many are new
         "min_days": 3,            # ...or when the last digest is this old

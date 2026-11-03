@@ -17,7 +17,7 @@ KINDS = ("rule", "decision", "rejected_approach", "work_state", "preference",
          "environment", "external_context", "open_question")
 SOURCES = ("user_said", "agent_inferred")
 LEVELS = ("user", "repo", "team")
-STATUSES = ("active", "stale", "superseded", "undone")
+STATUSES = ("active", "stale", "superseded", "undone", "candidate")
 
 DDL = """
 CREATE TABLE IF NOT EXISTS items (
@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS items (
     meta_json TEXT NOT NULL DEFAULT '{}');
 CREATE INDEX IF NOT EXISTS idx_items_repo ON items(repo_key);
 CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
+CREATE TABLE IF NOT EXISTS stale_state (
+    repo_key TEXT PRIMARY KEY, last_commit TEXT, checked_at TEXT);
 """
 
 
@@ -58,9 +60,12 @@ def add(conn: sqlite3.Connection, *, text: str, kind: str, source: str,
         repo_key: str | None, anchor_: dict | None = None, author: str = "agent",
         level: str = "user", grounding_commit: str | None = None,
         evidence: str | None = None, supersedes: str | None = None,
-        embedding: bytes | None = None, meta: dict | None = None) -> str:
+        embedding: bytes | None = None, meta: dict | None = None,
+        status: str = "active") -> str:
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind!r}")
+    if status not in STATUSES:
+        raise ValueError(f"unknown status {status!r}")
     if source not in SOURCES:
         raise ValueError(f"unknown source {source!r}")
     if level not in LEVELS:
@@ -77,11 +82,11 @@ def add(conn: sqlite3.Connection, *, text: str, kind: str, source: str,
         " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (item_id, repo_key, text if source == "user_said" else text.strip(), kind,
          json.dumps(anchor_ or anchor()), source, author, level, grounding_commit,
-         _now() if grounding_commit else None, "active", evidence, supersedes,
+         _now() if grounding_commit else None, status, evidence, supersedes,
          _now(), embedding,
          json.dumps({"seen": 1, "seen_repos": [repo_key] if repo_key else [],
                      **(meta or {})})))
-    if supersedes:
+    if supersedes and status == "active":
         conn.execute("UPDATE items SET status='superseded' WHERE id=? "
                      "AND status='active'", (supersedes,))
     conn.commit()
@@ -142,6 +147,21 @@ def bump_seen(conn: sqlite3.Connection, item_id: str,
                  (json.dumps(meta), item_id))
     conn.commit()
     return meta
+
+
+def set_meta(conn: sqlite3.Connection, item_id: str, patch: dict) -> None:
+    """Merge ``patch`` into an item's meta (None values delete keys)."""
+    row = conn.execute("SELECT meta_json FROM items WHERE id=?", (item_id,)).fetchone()
+    if row is None:
+        return
+    meta = json.loads(row["meta_json"] or "{}")
+    for k, v in patch.items():
+        if v is None:
+            meta.pop(k, None)
+        else:
+            meta[k] = v
+    conn.execute("UPDATE items SET meta_json=? WHERE id=?", (json.dumps(meta), item_id))
+    conn.commit()
 
 
 def max_rowid(conn: sqlite3.Connection) -> int:

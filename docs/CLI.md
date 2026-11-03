@@ -154,6 +154,28 @@ reverie digest --all      # every repo
 reverie digest --no-mark  # look without marking
 ```
 
+## reverie stale
+
+Keeps memory true as the code moves. Git is only a trigger: for each commit
+since the last check, only memories whose anchors (files, or symbols in the
+diff) the commit touched are rechecked. The test suite runs first (at HEAD,
+clean tree only) and a failure is passed to the judge as evidence. A memory
+the judge finds CONTRADICTED is never silently rewritten: it is flagged
+(shown as stale wherever it is delivered) and a superseding **candidate** is
+stored for you to accept or reject. Session start launches a background check
+when new commits exist.
+
+```bash
+reverie stale check               # recheck since the last checked commit
+reverie stale check --since v1.2  # or since a revision
+reverie stale check --no-tests    # skip the test-suite evidence
+reverie stale list                # pending superseding candidates
+reverie stale accept <candidate>  # the candidate replaces the old memory
+reverie stale keep <memory>       # the old memory was fine; clear the flag
+```
+
+The first check in a repo only records HEAD as the baseline.
+
 ## reverie review
 
 The terminal review UI: one candidate at a time, single keypresses

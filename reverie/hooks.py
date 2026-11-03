@@ -93,9 +93,40 @@ def _memory_blocks(info, print_fn) -> None:
                                 float(d.min_days))
             if line:
                 print_fn(line)
+            if mem:
+                _spawn_stale_check(conn, key, info.repo_path)
         finally:
             conn.close()
     except Exception:
+        pass
+
+
+def _spawn_stale_check(conn, key: str, root: str) -> None:
+    """If commits landed since the last check, recheck memory in a detached
+    background process (the hook itself stays fast and read-only). A lock file
+    stops a burst of sessions from piling up workers."""
+    import subprocess
+    import time
+
+    import os
+
+    from . import launch, spool, staleness
+    if os.environ.get("REVERIE_NO_BACKGROUND"):
+        return                                   # tests / locked-down setups
+    if staleness.get_state(conn, key) == staleness.head(root):
+        return
+    lock = spool.repo_dir(root) / "stale.lock"
+    try:
+        if lock.exists() and time.time() - lock.stat().st_mtime < 600:
+            return
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(str(time.time()))
+        command, args = launch.reverie_command(["stale", "check", "--repo", root])
+        subprocess.Popen(f"{command} {' '.join(args)}" if not args else [command, *args],
+                         shell=not args, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
         pass
 
 

@@ -290,3 +290,10 @@ CREATE TABLE IF NOT EXISTS items (
 );
 CREATE INDEX IF NOT EXISTS idx_items_repo   ON items(repo_key);
 CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
+
+-- Staleness worker: the last commit already checked, per repo.
+CREATE TABLE IF NOT EXISTS stale_state (
+    repo_key     TEXT PRIMARY KEY,
+    last_commit  TEXT,
+    checked_at   TEXT
+);
