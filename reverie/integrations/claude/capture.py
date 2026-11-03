@@ -70,6 +70,12 @@ def read_exchange(path: str | Path,
         if not isinstance(record, dict) or record.get("isMeta") or \
                 record.get("isSidechain"):
             continue
+        # Newer Claude Code versions also write records such as
+        # 'api-request-blob' that carry a role:user message (e.g. "Tool
+        # loaded."). Only real conversation turns count.
+        rtype = record.get("type")
+        if rtype is not None and rtype not in ("user", "assistant"):
+            continue
         message = record.get("message")
         if not isinstance(message, dict):
             message = record

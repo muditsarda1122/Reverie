@@ -96,3 +96,24 @@ def test_observe_accepts_work_summary_and_legacy_alias(server):
     assert seen == ["new name", "old name"]
     p, _ = call_tool(server, "observe", {"user_prompt": "p"})
     assert p["status"] == "error" and "work_summary" in p["error"]
+
+
+# ---------------------------------------------------------------------------
+# 0b. capture: only real conversation turns are exchanges
+# ---------------------------------------------------------------------------
+
+def test_read_exchange_ignores_non_turn_records(tmp_path):
+    from reverie.integrations.claude.capture import read_exchange
+    log = tmp_path / "t.jsonl"
+    rows = [
+        {"type": "user", "message": {"role": "user", "content": "fix the cache"}},
+        {"type": "assistant", "message": {"role": "assistant",
+                                          "content": [{"type": "text", "text": "done"}]}},
+        # written by newer Claude Code after ToolSearch; looks like a user turn
+        {"type": "api-request-blob",
+         "message": {"role": "user", "content": [{"type": "text", "text": "Tool loaded."}]}},
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows))
+    ex = read_exchange(log)
+    assert ex.user_request == "fix the cache"
+    assert ex.assistant_reply == "done"
