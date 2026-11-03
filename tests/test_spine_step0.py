@@ -117,3 +117,74 @@ def test_read_exchange_ignores_non_turn_records(tmp_path):
     ex = read_exchange(log)
     assert ex.user_request == "fix the cache"
     assert ex.assistant_reply == "done"
+
+
+# ---------------------------------------------------------------------------
+# 0c. the stuck pending queue
+# ---------------------------------------------------------------------------
+
+def _enabled_server(brain):
+    from reverie import repos
+    s = ReverieServer(brain=brain, manager=SessionManager(brain))
+    repos.set_repo_state(brain, repos.resolve_repo(), "enabled")
+    return s
+
+
+def test_prose_reply_is_terminal_not_queued(brain):
+    """A model answer that is not JSON must not sit in the retry queue."""
+    s = _enabled_server(brain)
+    row = s._enabled_session(__import__("reverie.repos", fromlist=["x"]).resolve_repo())
+    with patch("reverie.extractor.call_llm",
+               return_value="I can't produce the extraction you asked for."):
+        out = s._extract_interaction(
+            row, {"prompt": "p", "output": "o"}, prequeue=True)
+    assert out["status"] == "skipped" and out["unextractable"] is True
+    assert brain.count_pending_extractions() == 0
+
+
+def test_provider_failure_still_queues_for_retry(brain):
+    s = _enabled_server(brain)
+    row = s._enabled_session(__import__("reverie.repos", fromlist=["x"]).resolve_repo())
+    with patch("reverie.extractor.call_llm", side_effect=LLMError("503")):
+        out = s._extract_interaction(
+            row, {"prompt": "p", "output": "o"}, prequeue=True)
+    assert out["status"] == "error"
+    assert brain.count_pending_extractions() == 1
+
+
+def test_retry_cap_drops_exhausted_items(brain):
+    from reverie import pending, repos
+    s = _enabled_server(brain)
+    row = s._enabled_session(repos.resolve_repo())
+    item = pending.save_pending_extraction(
+        brain, row, {"prompt": "p", "output": "o"}, "boom")
+    for _ in range(5):
+        brain.mark_pending_extraction_attempt(item, "boom")
+    with patch("reverie.extractor.call_llm", side_effect=LLMError("503")) as llm:
+        summary = pending.retry_pending(brain, config=s.config)
+    assert summary["dropped"] == 1 and llm.call_count == 0
+    assert brain.count_pending_extractions() == 0
+
+
+def test_retry_drops_unparseable_replies(brain):
+    from reverie import pending, repos
+    s = _enabled_server(brain)
+    row = s._enabled_session(repos.resolve_repo())
+    pending.save_pending_extraction(brain, row, {"prompt": "p", "output": "o"}, "x")
+    with patch("reverie.extractor.call_llm", return_value="Sorry, no."):
+        summary = pending.retry_pending(brain, config=s.config)
+    assert summary["dropped"] == 1 and brain.count_pending_extractions() == 0
+
+
+@pytest.mark.parametrize("user,reply", [
+    ("/reverie-review", "Here are your candidates"),
+    ("show me my candidates", "Calling review_list ... token abc"),
+    ("<command-name>/reverie-review</command-name>", "ok"),
+])
+def test_reverie_housekeeping_is_not_captured(brain, user, reply):
+    from reverie import core_api
+    s = _enabled_server(brain)
+    with patch("reverie.extractor.call_llm") as llm:
+        out = core_api.capture_turn(REPO, BRANCH, user, reply, _server=s)
+    assert out["status"] == "skipped" and llm.call_count == 0
+    assert brain.count_pending_extractions() == 0

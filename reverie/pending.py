@@ -26,7 +26,7 @@ from typing import Any
 from .brain import Brain, BrainError
 from .config import get_config
 from .diffuser import DiffuserError, diffuse_ecu
-from .extractor import ExtractorError, extract_and_store_session
+from .extractor import ExtractionError, ExtractorError, extract_and_store_session
 
 # ---------------------------------------------------------------------------
 # pending extractions
@@ -71,8 +71,18 @@ def retry_pending(
     if item_id:
         items = [i for i in items if i["id"] == item_id]
     summary: dict[str, Any] = {"pending": len(items), "recovered": 0,
-                               "failed": 0, "skipped": 0, "details": []}
+                               "failed": 0, "skipped": 0, "dropped": 0,
+                               "details": []}
+    max_retries = int(getattr(getattr(cfg, "pending", None), "max_retries", 5))
     for item in items:
+        if item["retry_count"] >= max_retries:
+            brain.delete_pending_extraction(item["id"])
+            summary["dropped"] += 1
+            summary["details"].append({
+                "id": item["id"], "outcome": "dropped",
+                "reason": f"failed {item['retry_count']} times "
+                          f"(limit {max_retries}); giving up"})
+            continue
         active = brain.get_active_session(item["repo_path"], item["branch"])
         if active is None:
             summary["skipped"] += 1
@@ -91,6 +101,15 @@ def retry_pending(
                 commit_hash=item.get("commit_hash"),
                 repo_path=item.get("repo_path") or active["repo_path"],
             )
+        except ExtractionError as exc:
+            # The model answered in prose / malformed JSON: asking again with
+            # the same input will not help. Terminal.
+            brain.delete_pending_extraction(item["id"])
+            summary["dropped"] += 1
+            summary["details"].append({
+                "id": item["id"], "outcome": "dropped",
+                "reason": f"unextractable ({str(exc)[:80]})"})
+            continue
         except ExtractorError as exc:
             brain.mark_pending_extraction_attempt(item["id"], str(exc))
             summary["failed"] += 1
@@ -155,11 +174,11 @@ def _print_retry_summary(summary: dict, print_fn) -> None:
     print_fn(
         f"Pending extractions: {summary['pending']} "
         f"({summary['recovered']} recovered, {summary['failed']} failed, "
-        f"{summary['skipped']} skipped)."
+        f"{summary['skipped']} skipped, {summary.get('dropped', 0)} dropped)."
     )
     for d in summary["details"]:
         mark = {"recovered": "✓", "failed": "✗", "skipped": "·",
-                "missing": "·"}.get(d["outcome"], "·")
+                "dropped": "✗", "missing": "·"}.get(d["outcome"], "·")
         print_fn(f"  {mark} {d['id'][:8]} {d['outcome']}: {d.get('reason', '')}")
 
 

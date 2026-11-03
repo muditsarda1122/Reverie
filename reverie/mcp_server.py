@@ -847,6 +847,16 @@ class ReverieServer:
                     "Capture did not finish within the time limit; the "
                     "exchange is queued for retry (`reverie retry`)."),
             }
+        except extractor.ExtractionError as exc:
+            # The model replied in prose or malformed JSON; the same input
+            # will fail the same way. Terminal: never queue it for retry.
+            if pending_id is not None:
+                brain.delete_pending_extraction(pending_id)
+            return {"status": "skipped", "session_active": True,
+                    "ecus_extracted": 0, "unextractable": True,
+                    "message": "The exchange could not be turned into "
+                               f"conclusions ({str(exc)[:120]}); dropped, "
+                               "not retried."}
         except ExtractorError as exc:
             if pending_id is not None:
                 brain.mark_pending_extraction_attempt(pending_id, str(exc))

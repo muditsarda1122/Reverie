@@ -179,6 +179,24 @@ def _no_capture(state: str, repo_path: str | None, **extra) -> dict:
     return payload
 
 
+#: Markers of Reverie's own housekeeping conversations (reviewing candidates,
+#: the review/brag skills, the install flow). They are not engineering work;
+#: feeding them to the extractor produced prose answers that stuck in the
+#: pending queue forever.
+_HOUSEKEEPING_MARKERS = (
+    "review_token", "review_decide", "review_list", "reverie review",
+    "reverie_review", "/reverie", "<command-name>/reverie",
+    "reverie-review", "pending review candidates",
+)
+
+
+def is_housekeeping_exchange(user_request: str, assistant_reply: str) -> bool:
+    """True when the exchange is about operating Reverie itself."""
+    head = (user_request or "")[:4000].lower()
+    reply = (assistant_reply or "")[:4000].lower()
+    return any(m in head or m in reply for m in _HOUSEKEEPING_MARKERS)
+
+
 def capture_turn(repo_path: str | None, branch: str | None,
                  user_request: str, assistant_reply: str, *,
                  timeout: float = 20.0, _server=None) -> dict:
@@ -197,6 +215,10 @@ def capture_turn(repo_path: str | None, branch: str | None,
             return {"status": "skipped", "captured": False,
                     "ecus_extracted": 0,
                     "message": "No completed user/assistant exchange."}
+        if is_housekeeping_exchange(user_request, assistant_reply):
+            return {"status": "skipped", "captured": False,
+                    "ecus_extracted": 0,
+                    "message": "Reverie housekeeping exchange; not captured."}
         server = _server_for(_server)
         info, error = _repo_and_error(server, repo_path)
         if error is not None:

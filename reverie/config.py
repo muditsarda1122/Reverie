@@ -294,6 +294,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "page_size": 10,
     },
 
+    # -- Pending extraction queue --------------------------------------------
+    "pending": {
+        # A queued extraction that has failed this many times is dropped.
+        # Unparseable (prose) model replies are never retried at all.
+        "max_retries": 5,
+    },
+
     # -- Contradiction handling (§12) ----------------------------------------
     "contradiction": {
         # Redundant with confidence.theta_contradiction_flag — that is what
