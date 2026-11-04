@@ -263,3 +263,23 @@ def test_parse_items_tolerates_fences_prose_and_brackets(raw):
 def test_parse_items_rejects_non_arrays(raw):
     with pytest.raises(typed_extractor.TypedExtractionError):
         typed_extractor.parse_items(raw)
+
+
+@pytest.mark.parametrize("text", [
+    "The saved Reverie rules say not to retry 429 and not to handle Retry-After.",
+    "RetryTransport conflicts with the user's stored rules about 429.",
+    "The memory says ReadTimeout is never retried."])
+def test_agent_inferred_items_about_the_memory_itself_are_dropped(text):
+    ex = {"prompt": "what does it retry", "output": text}
+    cand, why = typed_extractor.validate(
+        {"kind": "open_question", "text": text, "source": "agent", "evidence": text,
+         "anchor": "repo"}, ex, None)
+    assert cand is None and "own memory" in why
+
+
+def test_a_user_can_still_state_a_rule_that_mentions_reverie():
+    msg = "From now on in this repo, run `reverie resume` before continuing a cut-off session."
+    cand, _ = typed_extractor.validate(
+        {"kind": "directive", "text": msg, "source": "user", "quote": msg, "anchor": "repo"},
+        {"prompt": msg, "output": "ok"}, None)
+    assert cand is not None and cand["source"] == "user_said"

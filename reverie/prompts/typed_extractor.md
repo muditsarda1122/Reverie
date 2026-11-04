@@ -27,4 +27,6 @@ Each item:
 Keep one fact in ONE item: a rule together with its reason or incident, a command together with its ports and caveats, a negative result together with what worked instead. Do not split a fact into a rule item plus a separate "why" item.
 Store a preference only when the user states it, or when the exchange itself shows it (for example the user rejecting or rewriting the same kind of output) and you can quote that. Never infer a preference or intent from how a single request was phrased.
 
+Never store what the agent says about Reverie or its stored memory or rules ("the saved rules say X", "this conflicts with a stored rule"): that restates memory that already exists, and storing it makes memory about memory. If the agent found that code contradicts a stored rule, store nothing about it.
+
 Prefer few, high-quality items. An exchange with nothing worth keeping returns [].

@@ -112,6 +112,14 @@ def parse_items(raw: str) -> list[dict]:
     return [d for d in data if isinstance(d, dict)]
 
 
+#: an agent-inferred item that talks about Reverie's own memory is a loop
+#: (measured: "The saved Reverie rules say not to retry 429..." stored as an
+#: open question after agents reported a rule/code conflict)
+_ABOUT_MEMORY = re.compile(
+    r"\bReverie\b|\b(?:saved|stored|recorded)\s+(?:rules?|memory|memories|items?)\b"
+    r"|\bmemory\s+(?:says|rules?|item)\b", re.I)
+
+
 def validate(raw_item: dict, interaction: dict,
              repo_path: str | None) -> tuple[dict | None, str]:
     """-> (candidate | None, reason). A candidate has the final item fields."""
@@ -124,6 +132,8 @@ def validate(raw_item: dict, interaction: dict,
     user_msg = str(interaction.get("prompt") or "")
     everything = exchange_text(interaction)
     source = "user_said" if str(raw_item.get("source")) == "user" else "agent_inferred"
+    if source == "agent_inferred" and _ABOUT_MEMORY.search(text):
+        return None, "about Reverie's own memory"
     quote = str(raw_item.get("quote") or "").strip()
     evidence = str(raw_item.get("evidence") or "").strip()
     meta: dict = {"durability": raw_item.get("durability") or "until_changed"}
