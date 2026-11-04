@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
-from . import dedupe, deliver, items, provenance
+from . import anchors, dedupe, deliver, items, provenance
 from .llm import LLMError, call_llm, model_for
 
 log = logging.getLogger("reverie.typed_extractor")
@@ -155,10 +155,16 @@ def validate(raw_item: dict, interaction: dict,
         files = [anchor_raw]
     symbols = [s for s in (raw_item.get("symbols") or [])
                if isinstance(s, str) and _SYMBOL.match(s.strip())]
+    syms = [s.strip() for s in symbols]
+    if not user_wide:       # user-wide rules are not about one codebase
+        g = anchors.ground(text, repo_path, files, syms)
+        if g["grounded"]:
+            files, syms = g["files"], g["symbols"]
+            meta["anchor_grounded"] = True
     return {"text": text, "kind": kind, "source": source,
             "evidence": meta.get("evidence_quote") or meta.get("quote"),
             "user_wide": user_wide,
-            "anchor": items.anchor(files, [s.strip() for s in symbols]),
+            "anchor": items.anchor(files, syms),
             "meta": meta}, "ok"
 
 
