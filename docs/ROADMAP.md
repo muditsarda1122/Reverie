@@ -90,9 +90,11 @@ Learned from the P0 runs, now on the list:
   copies it. Say so in the install text.
 
 ### P1: make what is stored trustworthy
-5. **Provenance-based capture**: every item records its source (user said /
-   diff / tool result / agent inference). Agent narration is never a source.
-   Replaces the regex guard.
+5. **Provenance-based capture** DONE. Items record `meta.provenance`
+   (`user` | `diff`); an agent-inferred item needs a quote from the user's words
+   or the working-tree diff; the agent's own answer is never evidence. The
+   regex guard is gone. Still to add: tool results as a third source (they
+   live in the transcripts), and diff-at-capture-time for imported exchanges.
 6. **Ground at capture**: attach file/symbol anchors by searching the code
    for the statement's identifiers. Fixes the stale-worker misses that had no
    anchor.
