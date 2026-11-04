@@ -107,6 +107,7 @@ written by the harness hooks (Claude Code: UserPromptSubmit/Stop) to
 reverie resume                  # latest session in this repo
 reverie resume --session <id>   # a specific session
 reverie resume --all            # every recorded prompt
+reverie resume --latest         # skip the picker, take the most recent session
 ```
 
 Exit: `0` always.

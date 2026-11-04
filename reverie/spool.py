@@ -29,6 +29,8 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable
 
+from .redact import PLACEHOLDER, redact
+
 ANSWER_CAP = 8000          # chars of a final answer kept in the log
 PROMPT_CAP = 200_000       # sanity cap only; prompts are otherwise verbatim
 RESUME_BUDGET_CHARS = 40_000
@@ -78,6 +80,7 @@ def append(cwd: str | Path, kind: str, text: str, *, session: str = "",
         if kind not in ("prompt", "answer") or not (text or "").strip():
             return False
         cap = ANSWER_CAP if kind == "answer" else PROMPT_CAP
+        text = redact(text)        # before the cap, so a secret is never cut in half
         directory = repo_dir(cwd)
         directory.mkdir(parents=True, exist_ok=True)
         record = {
@@ -242,6 +245,7 @@ def render_resume(cwd: str | Path, *, session: str | None = None,
                 allsess, _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd))
         session = chosen
     records = select(everything, session=session, all_sessions=all_sessions)
+    records = [{**r, "text": redact(r.get("text", ""))} for r in records]  # render pass
     prompts = [r for r in records if r["kind"] == "prompt"]
     if compactor is not None:
         prompts = compactor(prompts)
@@ -262,6 +266,11 @@ def render_resume(cwd: str | Path, *, session: str | None = None,
     else:
         out += ["## What the user asked", "No prompt log exists for this repo "
                 "yet (nothing was recorded).", ""]
+    n_red = sum(r["text"].count(PLACEHOLDER) for r in prompts)
+    if n_red:
+        out += [f"Note: {n_red} secret value(s) were removed from the log "
+                "([REDACTED...]). If the task needs one, prefer an environment "
+                "variable that already exists; ask the user only if it does not.", ""]
     answers = [r for r in records if r["kind"] == "answer"]
     if answers:
         out += ["## The assistant's last reply (for context)",

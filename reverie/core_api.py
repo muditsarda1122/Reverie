@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import repos
+from .redact import redact
 from .session import brain_summary
 
 #: One lazily-created server per process. Reusing it keeps the review-token
@@ -128,11 +129,11 @@ def observe(user_prompt: str, work_summary: str,
             *, _server=None) -> dict:
     """Record conclusions from the agent's work summary into the Session Brain."""
     args: dict[str, Any] = {
-        "user_prompt": user_prompt,
-        "work_summary": work_summary,
+        "user_prompt": redact(user_prompt),
+        "work_summary": redact(work_summary),
     }
     if final_output is not None:
-        args["final_output"] = final_output
+        args["final_output"] = redact(final_output)
     if repo_path:
         args["repo_path"] = repo_path
     return _server_for(_server)._tool_observe(args)
@@ -233,6 +234,7 @@ def capture_turn(repo_path: str | None, branch: str | None,
             return {"status": "skipped", "captured": False,
                     "ecus_extracted": 0,
                     "message": "Reverie housekeeping exchange; not captured."}
+        user_request, assistant_reply = redact(user_request), redact(assistant_reply)
         server = _server_for(_server)
         info, error = _repo_and_error(server, repo_path)
         if error is not None:

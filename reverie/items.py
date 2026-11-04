@@ -13,6 +13,8 @@ import time
 import uuid
 from pathlib import Path
 
+from .redact import redact
+
 KINDS = ("rule", "decision", "rejected_approach", "work_state", "preference",
          "environment", "external_context", "open_question")
 SOURCES = ("user_said", "agent_inferred")
@@ -70,6 +72,8 @@ def add(conn: sqlite3.Connection, *, text: str, kind: str, source: str,
         raise ValueError(f"unknown source {source!r}")
     if level not in LEVELS:
         raise ValueError(f"unknown level {level!r}")
+    text = redact(text)                  # secrets never reach the store
+    evidence = redact(evidence) if evidence else evidence
     if not text.strip():
         raise ValueError("empty text")
     if source == "agent_inferred" and not (evidence or "").strip():

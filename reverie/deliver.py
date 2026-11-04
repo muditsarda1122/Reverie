@@ -34,6 +34,7 @@ from pathlib import Path
 
 from . import items as items_mod
 from . import spool
+from .redact import redact
 
 MAX_POINT_ITEMS = 3
 MAX_CONTEXT_CHARS = 6000          # harnesses cap hook context (10k chars)
@@ -164,7 +165,7 @@ def is_live(it: dict, root: str) -> bool:
 
 
 def _clip(text: str, limit: int = MAX_LINE_CHARS) -> str:
-    one = " ".join((text or "").split())
+    one = " ".join(redact(text or "").split())      # render-time pass
     return one if len(one) <= limit else one[: limit - 1] + "…"
 
 
@@ -584,7 +585,7 @@ def show(conn: sqlite3.Connection, id_prefix: str, root: str) -> str:
     it = found[0]
     a = it.get("anchor") or {}
     lines = [f"[{it['id']}] {it['kind']} ({it.get('status', 'active')})",
-             it["text"].strip(), ""]
+             redact(it["text"].strip()), ""]
     if a.get("files"):
         lines.append("files: " + ", ".join(a["files"]))
     if a.get("symbols"):
@@ -592,7 +593,7 @@ def show(conn: sqlite3.Connection, id_prefix: str, root: str) -> str:
     lines.append(f"source: {it.get('source')} | author: {it.get('author', 'agent')} "
                  f"| level: {it.get('level', 'repo')}")
     if it.get("evidence"):
-        lines.append("evidence: " + it["evidence"])
+        lines.append("evidence: " + redact(it["evidence"]))
     lines.append(freshness(it, (a.get("files") or ["."])[0], root))
     if stale_note(it):
         lines.append(stale_note(it).strip())
