@@ -307,6 +307,11 @@ def _build_parser() -> argparse.ArgumentParser:
                              "(read-only; quiet on error; always exit 0)")
     hs.add_argument("--repo", default=None,
                     help="workspace path (default: current directory)")
+    p = sub.add_parser("transcripts", help="import new prompts/answers from the "
+                       "harnesses' own transcripts (Claude, Codex, opencode, "
+                       "Cursor) into the redacted prompt log")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
     p = sub.add_parser("resume", help="print rules + the verbatim prompt log "
                        "+ git state, to continue a cut-off session in any "
                        "harness")
@@ -367,7 +372,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install", "resume", "rules", "show", "undo", "digest", "stale", "promote")
+               "capture-turn", "install", "resume", "transcripts", "rules", "show", "undo", "digest", "stale", "promote")
 
 
 def _unknown_command(word: str) -> int:
@@ -441,9 +446,17 @@ def main(argv: list[str] | None = None) -> int:
         return integrations.capture_turn_main(argv[1:])
     args = _build_parser().parse_args(argv)
 
+    if args.command == "transcripts":
+        from . import importers
+        r = importers.run(args.repo or ".")
+        print(f"imported {r.prompts} prompt(s) and {r.answers} answer(s) from "
+              f"{r.sources} changed transcript(s) {r.by_harness or ''}; "
+              f"{r.queued} exchange(s) sent to extraction.")
+        return 0
     if args.command == "resume":
-        from . import rules, spool
+        from . import importers, rules, spool
         cwd = args.repo or "."
+        importers.lazy(cwd)
         print(spool.render_resume(cwd, session=args.session,
                                   all_sessions=args.all_sessions,
                                   latest=args.latest,

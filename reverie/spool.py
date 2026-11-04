@@ -74,7 +74,7 @@ def repo_dir(cwd: str | Path) -> Path:
 
 
 def append(cwd: str | Path, kind: str, text: str, *, session: str = "",
-           branch: str | None = None, harness: str = "") -> bool:
+           branch: str | None = None, harness: str = "", t: str = "") -> bool:
     """Durably append one record. Never raises; returns success."""
     try:
         if kind not in ("prompt", "answer") or not (text or "").strip():
@@ -84,7 +84,7 @@ def append(cwd: str | Path, kind: str, text: str, *, session: str = "",
         directory = repo_dir(cwd)
         directory.mkdir(parents=True, exist_ok=True)
         record = {
-            "t": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "t": t or time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "kind": kind,
             "session": session or "",
             "branch": branch if branch is not None
@@ -132,10 +132,10 @@ def read(cwd: str | Path) -> list[dict]:
 
 def last_session(records: Iterable[dict]) -> str:
     """Session id of the most recent prompt ('' when ids are absent)."""
-    last = ""
+    last, last_t = "", ""
     for rec in records:
-        if rec["kind"] == "prompt":
-            last = rec.get("session", "")
+        if rec["kind"] == "prompt" and rec.get("t", "") >= last_t:
+            last, last_t = rec.get("session", ""), rec.get("t", "")
     return last
 
 

@@ -24,6 +24,12 @@ def _no_user_claude_config_dir(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_transcript_import(monkeypatch):
+    # tests must never scan the developer's real ~/.claude, ~/.codex, ...
+    monkeypatch.setenv("REVERIE_NO_IMPORT", "1")
+
+
+@pytest.fixture(autouse=True)
 def _capture_inline(monkeypatch):
     # capture-turn detaches a worker in production; tests run it in-process
     monkeypatch.setenv("REVERIE_CAPTURE_INLINE", "1")

@@ -131,6 +131,8 @@ def session_start(cwd: str | Path | None = None, *, print_fn=print) -> int:
     stays silent (Reverie has nothing stored for this repo yet)."""
     try:
         info = repos.resolve_repo(cwd=cwd)
+        from . import importers
+        importers.lazy(info.repo_path)         # harnesses' own transcripts -> log
         db = default_db_path()
         if not db.exists():
             _memory_blocks(info, print_fn)   # rules are plain files: no brain needed

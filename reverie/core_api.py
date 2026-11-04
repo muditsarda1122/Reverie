@@ -87,6 +87,9 @@ def summary(repo_path: str | None = None, branch: str | None = None, *,
     latency-sensitive SessionStart hook uses.
     """
     server = _server_for(_server)
+    if repo_path and not read_only:         # the hook path imports on its own
+        from . import importers
+        importers.lazy(repo_path)
     if read_only:
         info, error = _repo_and_error(server, repo_path)
         if error is not None:

@@ -95,6 +95,23 @@ Output per repo: path, enablement state, active sessions, review
 candidates, conclusions grounded there, and the origin remote (when known).
 Exit: `0` always.
 
+## reverie transcripts
+
+Reads the transcripts the harnesses already keep (Claude Code, Codex,
+opencode, Cursor) for this repo and its worktrees, and adds the new prompts
+and answers to the prompt log, redacted. This also runs on its own at session
+start, `summary` and `resume`, so headless, scripted and killed sessions are
+covered. A cursor (file + offset) means nothing is read twice; the raw
+transcripts are never copied. Exchanges not yet run through extraction are
+handed to a background worker. `REVERIE_NO_IMPORT=1` turns the automatic
+import off; a repo disabled with `reverie disable` is never read.
+
+```bash
+reverie transcripts [--repo PATH]
+```
+
+Exit: `0` always.
+
 ## reverie resume
 
 Prints what a fresh agent needs to continue a cut-off session, in any

@@ -164,8 +164,12 @@ def _run(args: argparse.Namespace) -> int:
         return 0
     repo = (args.repo or payload.get("cwd") or os.getcwd())
     branch = _branch_for(repo, args.branch or payload.get("gitBranch"))
-    core_api.capture_turn(repo, branch, exchange.user_request,
-                          exchange.assistant_reply, timeout=args.timeout)
+    out = core_api.capture_turn(repo, branch, exchange.user_request,
+                                exchange.assistant_reply, timeout=args.timeout)
+    if out.get("status") in ("ok", "skipped", "disabled"):
+        from ... import importers  # so the importer does not extract it again
+        importers.mark_captured(repo, str(payload.get("session_id") or ""),
+                                exchange.user_request)
     return 0
 
 
