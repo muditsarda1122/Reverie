@@ -95,11 +95,16 @@ Learned from the P0 runs, now on the list:
    or the working-tree diff; the agent's own answer is never evidence. The
    regex guard is gone. Still to add: tool results as a third source (they
    live in the transcripts), and diff-at-capture-time for imported exchanges.
-6. **Ground at capture**: attach file/symbol anchors by searching the code
-   for the statement's identifiers. Fixes the stale-worker misses that had no
-   anchor.
-7. **Dedupe change**: remove the write-path LLM judge; add delivery-time
-   collapse, a periodic merge job and the "seen N times" counter.
+6. **Ground at capture** DONE (b11f425). `reverie/anchors.py` checks proposed
+   and mentioned files/symbols with `git grep`, drops invented ones, adds the
+   defining files. Real run: a symbol-only rule gained its file, the stale
+   worker then flagged it correctly after a teammate commit.
+7. **Dedupe change** DONE (2547079). No judge on write; delivery collapse with
+   "seen N times"; `reverie merge` (daily, lazy). Learned: embeddings cannot
+   separate paraphrases from opposites (0.64-0.84 for both), so the periodic
+   job asks one batched judge call per candidate cluster. Real run: 10
+   delivered rule lines -> 4. Open: the extractor sometimes emits one compound
+   rule; splitting it is a prompt change.
 8. **Staleness**: diff-judge is primary; tests off by default.
 
 ### P1: make delivery bounded
