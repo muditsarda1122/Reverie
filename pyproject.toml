@@ -44,6 +44,7 @@ Issues = "https://github.com/muditsarda1122/Reverie/issues"
 reverie = "reverie.cli:main"
 reverie-mcp = "reverie.mcp_server:main"
 reverie-claude-hook = "reverie.integrations.claude.shim:main"
+reverie-opencode-hook = "reverie.integrations.opencode.shim:main"
 
 [tool.setuptools.packages.find]
 include = ["reverie*"]

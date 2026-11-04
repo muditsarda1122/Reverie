@@ -9,8 +9,10 @@ OpenCode names the MCP environment key ``environment`` and marks the entry
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
+from ... import launch
 from ..base import Integration
 from ..common import (
     _REVIEW_COMMAND_BODY,
@@ -34,6 +36,7 @@ from ..common import (
     _server_command,
     _verbatim_file,
 )
+from . import plugin as _plugin
 
 _OPENCODE_COMMANDS: dict[str, str] = {}
 for _name, _body in (("reverie-review.md", _REVIEW_COMMAND_BODY),
@@ -57,6 +60,27 @@ def _agents_path(home: Path) -> Path:
 
 def _commands_dir(home: Path) -> Path:
     return Path(home) / ".config" / "opencode" / "commands"
+
+
+def _plugin_path(home: Path) -> Path:
+    return Path(home) / ".config" / "opencode" / "plugin" / _plugin.PLUGIN_NAME
+
+
+def _hook_launch() -> tuple[list[str], dict[str, str]]:
+    """Exec-form argv (+ env) the plugin uses to run the stdlib shim."""
+    script = launch._script_path("reverie-opencode-hook") \
+        if launch._is_pip_installed() else None
+    if script:
+        return [script], {}
+    root = Path(__file__).resolve().parents[3]
+    python = root / ".venv" / "bin" / "python"
+    return ([str(python if python.is_file() else sys.executable), "-m",
+             "reverie.integrations.opencode.shim"], {"PYTHONPATH": str(root)})
+
+
+def _plugin_text() -> str:
+    argv, env = _hook_launch()
+    return _plugin.render(argv, env)
 
 
 def _entry(command: str, args: list[str], env: dict) -> dict:
@@ -97,6 +121,11 @@ class OpenCodeIntegration(Integration):
                 legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
                                 _legacy_reference_block(ref))]),
         ]
+        plug = _plugin_path(home)
+        writes.append(_verbatim_file(
+            plug, home, _plugin_text(),
+            f"Wrote {_display(plug, home)} (prompt log, session import, "
+            "rules in the system prompt)"))
         for name, body in OPENCODE_COMMANDS.items():
             path = _commands_dir(home) / name
             writes.append(_verbatim_file(
@@ -120,6 +149,8 @@ class OpenCodeIntegration(Integration):
                 legacy_blocks=[(LEGACY_REFERENCE_BLOCK_MARKER,
                                 _legacy_reference_block(ref))]),
         ]
+        removals.append(_plan_verbatim_file(
+            _plugin_path(home), home, _plugin_text(), "reverie-plugin"))
         for name, body in OPENCODE_COMMANDS.items():
             path = _commands_dir(home) / name
             removals.append(_plan_verbatim_file(path, home, body, path.stem))

@@ -224,7 +224,7 @@ class Result:
     by_harness: dict = field(default_factory=dict)
 
 
-def lazy(cwd: str | Path) -> Result | None:
+def lazy(cwd: str | Path, *, finalize: bool = False) -> Result | None:
     """Import for ``summary`` / ``resume`` / session start. Honours a disabled
     repo (nothing is read) and ``REVERIE_NO_IMPORT=1``. Never raises."""
     try:
@@ -238,7 +238,7 @@ def lazy(cwd: str | Path) -> Result | None:
                     return None
             finally:
                 conn.close()
-        return run(cwd)
+        return run(cwd, finalize=finalize)
     except Exception:
         return None
 
@@ -255,22 +255,26 @@ def _known(cwd: str | Path) -> set[str]:
 
 def run(cwd: str | Path, *, adapters_: list[Adapter] | None = None,
         now: float | None = None, max_age_days: float = MAX_AGE_DAYS,
-        extract: bool = True) -> Result:
-    """Import new transcript data for the repo containing ``cwd``. Never raises."""
+        extract: bool = True, finalize: bool = False) -> Result:
+    """Import new transcript data for the repo containing ``cwd``. Never raises.
+
+    ``finalize`` (a harness said the turn is over, e.g. opencode ``session.idle``)
+    treats every open exchange as complete instead of waiting out the idle window."""
     res = Result()
     try:
         with _lock(cwd) as held:
             if not held:                      # another import is running
                 return res
             _run(cwd, res, adapters_ if adapters_ is not None else adapters(),
-                 now if now is not None else time.time(), max_age_days, extract)
+                 now if now is not None else time.time(), max_age_days, extract,
+                 finalize)
     except Exception:
         pass
     return res
 
 
 def _run(cwd, res: Result, ads: list[Adapter], now: float, max_age_days: float,
-         extract: bool) -> None:
+         extract: bool, finalize: bool = False) -> None:
     paths = worktree_paths(cwd)
     since = now - max_age_days * 86400
     state = load_state(cwd)
@@ -340,8 +344,8 @@ def _run(cwd, res: Result, ads: list[Adapter], now: float, max_age_days: float,
                 elif op:
                     op["answer"] = redact(turn.text)[:spool.ANSWER_CAP]
                     op["t_answer"] = t
-            idle = (now - src.stamp) >= (ANSWERED_IDLE_SECS if op and op.get("answer")
-                                         else IDLE_SECS)
+            idle = finalize or (now - src.stamp) >= (
+                ANSWERED_IDLE_SECS if op and op.get("answer") else IDLE_SECS)
             if op and idle:
                 close(op, ended=True)          # session over / killed
                 op = None
