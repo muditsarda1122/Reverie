@@ -23,9 +23,9 @@ import json
 import logging
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
-import sys
 from dataclasses import dataclass, field
 
 from . import deliver, items, spool
@@ -88,14 +88,30 @@ def _touches(it: dict, files: set[str], diff: str) -> bool:
     return False
 
 
+def project_test_command(root: str) -> list[str]:
+    """How to run the PROJECT's tests: its own virtualenv, else ``pytest`` on
+    PATH, else ``python3 -m pytest``. Never Reverie's own interpreter: on a
+    real run that one lacked the project's dependencies and reported a green
+    project as "tests failed"."""
+    if not os.path.isdir(os.path.join(root, "tests")):
+        return []
+    for venv in (".venv", "venv"):
+        py = os.path.join(root, venv, "bin", "python")
+        if os.path.exists(py):
+            return [py, "-m", "pytest", "-q", "-x"]
+    exe = shutil.which("pytest")
+    if exe:
+        return [exe, "-q", "-x"]
+    py3 = shutil.which("python3")
+    return [py3, "-m", "pytest", "-q", "-x"] if py3 else []
+
+
 def run_tests(root: str, cfg) -> str:
     """'passed' | 'failed: <tail>' | 'skipped'. Runs once, at HEAD."""
     s = cfg.stale
     if not s.run_tests:
         return "skipped"
-    cmd = s.test_command.split() if s.test_command else (
-        [sys.executable, "-m", "pytest", "-q", "-x"]
-        if os.path.isdir(os.path.join(root, "tests")) else [])
+    cmd = s.test_command.split() if s.test_command else project_test_command(root)
     if not cmd:
         return "skipped"
     if spool._git(["status", "--porcelain"], root):
@@ -107,6 +123,8 @@ def run_tests(root: str, cfg) -> str:
         return f"skipped ({type(exc).__name__})"
     if p.returncode == 0:
         return "passed"
+    if p.returncode != 1:          # 1 = tests failed; anything else = runner broke
+        return f"skipped (test runner error, exit {p.returncode})"
     tail = (p.stdout or p.stderr).strip().splitlines()[-3:]
     return "failed: " + " | ".join(tail)[:300]
 
