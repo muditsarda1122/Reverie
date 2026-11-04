@@ -1,6 +1,6 @@
 # Reverie roadmap
 
-Last reordered: 2026-11-04. Reorder it whenever a test teaches us something.
+Last reordered: 2026-11-04 (after P0). Reorder it whenever a test teaches us something.
 
 ## What "better with work" means (the yardstick for every item)
 
@@ -62,22 +62,32 @@ and asks when ambiguous** (1911bd0).
 
 ## Next, in order
 
-### P0: close the capture gap (most serious)
-1. **Spike: do Codex, Cursor and opencode hooks give a good result?** One
-   short experiment per harness: install a prompt/stop hook, check it fires
-   in interactive AND headless runs, check latency and what the payload
-   holds. Includes how bad Codex's trust-approval step is for a new user.
-   Output: a table in `docs/SUPPORTED_HARNESSES.md`. Decides item 3.
-2. **Transcript importers** (harness-agnostic core + one adapter per
-   harness: Claude, Codex, opencode, Cursor). Run lazily at `summary` /
-   `resume` and on demand. Covers headless, scripted and killed sessions.
-   Redacts before storing; keeps a cursor (file + offset) so nothing is read
-   twice.
-3. **Hook integrations** for harnesses where item 1 says yes.
-4. **Redaction** (write + render): key formats, `Authorization` headers,
-   `KEY=` assignments, `.env`-style blocks, high-entropy tokens. A redacted
-   value becomes `[REDACTED:<kind>]`; a `KEY=` name is kept so the agent can
-   tell the user which variable is needed. Do this BEFORE item 2 ships.
+### P0: close the capture gap (DONE except two items waiting on the user / quota)
+1. **Spike: hooks on Codex, Cursor, opencode.** DONE, table in
+   `docs/SUPPORTED_HARNESSES.md`. opencode: yes (plugin, no trust step).
+   Codex: hooks load but are `untrusted` and skipped silently until the user
+   approves them. Cursor: `sessionStart` fires headless; prompt/stop untested
+   (usage limit).
+2. **Redaction** (write + render). DONE (1e55868). Found on a real run: the
+   importer's own cursor file kept the open prompt raw; fixed.
+3. **Transcript importers** (core + Claude/Codex/opencode/Cursor adapters).
+   DONE (14032cc, 98c692c). Real run: codex headless -> claude resume worked.
+   Found and fixed: the `/reverie` housekeeping marker matched any path
+   containing it, so those exchanges were never captured.
+4. **Hook integrations.** opencode DONE (02a974e: prompt log, session import,
+   rules in the system prompt). Waiting: **Codex** (needs the user to approve
+   the hooks once), **Cursor** (needs quota to verify prompt/stop hooks and
+   context injection). Both are covered by the importer meanwhile.
+
+Learned from the P0 runs, now on the list:
+- Provenance (P1 item 5) is the most visible quality problem: the rules index
+  now carries `agent_inferred` junk such as "tests were added but have not been
+  run yet" and "the user pasted credentials, rotate them". Do it next.
+- Worktrees of one repo share one prompt log and one memory by design; a
+  session in another worktree shows up in `resume`. Fine, but `resume` should
+  say which worktree a session ran in (small, add under item 10).
+- A harness's own transcript keeps any secret the user typed; Reverie never
+  copies it. Say so in the install text.
 
 ### P1: make what is stored trustworthy
 5. **Provenance-based capture**: every item records its source (user said /
