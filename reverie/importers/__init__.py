@@ -41,7 +41,8 @@ from typing import Iterable, Protocol
 from .. import spool
 from ..redact import redact
 
-IDLE_SECS = 600                 # a source untouched this long: its last prompt was cut off
+IDLE_SECS = 600                 # an unanswered prompt untouched this long was cut off
+ANSWERED_IDLE_SECS = 60         # an answered one is final once the source is quiet this long
 MAX_AGE_DAYS = 30               # first import looks back this far
 EXTRACT_AGE_DAYS = 7            # only exchanges this recent are sent to extraction
 MAX_EXTRACT = 8                 # per run: newest first
@@ -152,6 +153,11 @@ def load_state(cwd: str | Path) -> dict:
         if isinstance(data, dict):
             data.setdefault("sources", {})
             data.setdefault("captured", [])
+            for src in data["sources"].values():     # state written before redaction
+                op = src.get("open") if isinstance(src, dict) else None
+                if isinstance(op, dict):
+                    for f in ("prompt", "answer"):
+                        op[f] = redact(op.get(f) or "")
             return data
     except (OSError, ValueError):
         pass
@@ -328,13 +334,14 @@ def _run(cwd, res: Result, ads: list[Adapter], now: float, max_age_days: float,
                     if op:
                         close(op, ended=False)
                     log("prompt", turn, ad.name, t)
-                    op = {"prompt": turn.text, "session": turn.session or src.session,
+                    op = {"prompt": redact(turn.text), "session": turn.session or src.session,
                           "harness": ad.name, "t": t, "epoch": epoch,
                           "branch": turn.branch, "answer": ""}
                 elif op:
-                    op["answer"] = turn.text[:spool.ANSWER_CAP]
+                    op["answer"] = redact(turn.text)[:spool.ANSWER_CAP]
                     op["t_answer"] = t
-            idle = (now - src.stamp) >= IDLE_SECS
+            idle = (now - src.stamp) >= (ANSWERED_IDLE_SECS if op and op.get("answer")
+                                         else IDLE_SECS)
             if op and idle:
                 close(op, ended=True)          # session over / killed
                 op = None

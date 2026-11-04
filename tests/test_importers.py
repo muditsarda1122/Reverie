@@ -256,3 +256,48 @@ def test_resume_imports_a_codex_session_lazily(env, monkeypatch, capsys):
 def test_import_off_switch(env, monkeypatch):
     repo, tmp, _ = env
     assert importers.lazy(repo) is None                  # REVERIE_NO_IMPORT=1 from conftest
+
+
+def test_cursor_state_file_holds_no_secret(env):
+    """Regression (found on a real flask run): the open, unanswered prompt is kept in
+    import_state.json and was stored raw."""
+    repo, tmp, _ = env
+    _claude_file(tmp, repo, [_u(f"my staging token is {SECRET}, do not write it down"),
+                             _a(f"I will not write {SECRET} anywhere")])   # live: stays open
+    _run(repo)
+    raw = (spool.repo_dir(repo) / "import_state.json").read_text()
+    assert SECRET not in raw and "REDACTED" in raw
+    # and state written by an older build is cleaned when it is loaded
+    p = spool.repo_dir(repo) / "import_state.json"
+    st = json.loads(raw)
+    for v in st["sources"].values():
+        if v.get("open"):
+            v["open"]["prompt"] = "key " + SECRET
+    p.write_text(json.dumps(st))
+    assert SECRET not in json.dumps(importers.load_state(repo))
+
+
+def test_answered_exchange_closes_after_a_minute_unanswered_after_ten(env):
+    repo, tmp, queued = env
+    f = _claude_file(tmp, repo, [_u("answered one"), _a("done")])
+    import os
+    t0 = time.time()
+    os.utime(f, (t0 - 90, t0 - 90))
+    importers.run(repo, adapters_=[claude.ADAPTER], now=t0)
+    assert len(queued) == 1                                  # 90 s quiet: final
+    g = _claude_file(tmp, repo, [_u("pending one", sid="s2")], name="s2")
+    os.utime(g, (t0 - 90, t0 - 90))
+    importers.run(repo, adapters_=[claude.ADAPTER], now=t0)
+    assert len(queued) == 1                                  # unanswered: wait for 600 s
+    importers.run(repo, adapters_=[claude.ADAPTER], now=t0 + 600)
+    assert len(queued) == 2 and queued[1]["reply"] == importers.NO_REPLY
+
+
+def test_paths_containing_reverie_are_not_housekeeping():
+    """Regression (found on a real flask run): '/reverie' matched any file path such
+    as /Users/x/reverie-lab/..., so those exchanges were never captured."""
+    from reverie.core_api import is_housekeeping_exchange as hk
+    assert not hk("add a helper", "edited /Users/me/reverie-lab/p0/wt/src/flask/helpers.py")
+    assert not hk("fix reverie/spool.py", "done in /work/reverie/spool.py")
+    assert hk("/reverie-review", "ok") and hk("run /reverie status please", "x")
+    assert hk("<command-name>/reverie-status</command-name>", "x")

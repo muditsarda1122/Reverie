@@ -14,6 +14,7 @@ harness package.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from . import repos
@@ -203,16 +204,19 @@ def _no_capture(state: str, repo_path: str | None, **extra) -> dict:
 #: pending queue forever.
 _HOUSEKEEPING_MARKERS = (
     "review_token", "review_decide", "review_list", "reverie review",
-    "reverie_review", "/reverie", "<command-name>/reverie",
+    "reverie_review", "<command-name>/reverie",
     "reverie-review", "pending review candidates",
 )
+#: a slash command ("/reverie-review ...") only; NOT any path containing /reverie
+_SLASH_COMMAND = re.compile(r"(?:^|\s)/reverie[\w-]*(?=\s|$)")
 
 
 def is_housekeeping_exchange(user_request: str, assistant_reply: str) -> bool:
     """True when the exchange is about operating Reverie itself."""
     head = (user_request or "")[:4000].lower()
     reply = (assistant_reply or "")[:4000].lower()
-    return any(m in head or m in reply for m in _HOUSEKEEPING_MARKERS)
+    return (any(m in head or m in reply for m in _HOUSEKEEPING_MARKERS)
+            or bool(_SLASH_COMMAND.search(head)))
 
 
 def capture_turn(repo_path: str | None, branch: str | None,
