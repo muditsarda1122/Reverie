@@ -19,5 +19,10 @@ def _legacy_capture_for_legacy_modules(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_user_claude_config_dir(monkeypatch):
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_background_workers(monkeypatch):
     monkeypatch.setenv("REVERIE_NO_BACKGROUND", "1")

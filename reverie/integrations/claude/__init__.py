@@ -7,6 +7,8 @@ Owns every Claude-specific file, key and hook schema:
 - ``~/.claude/CLAUDE.md`` → ``@~/.reverie/AGENTS.md``
 - ``~/.claude/commands/reverie-{review,status}.md``
 
+(all four move under ``$CLAUDE_CONFIG_DIR`` when that variable is set)
+
 The command *behaviour* is harness-neutral (``reverie/hooks.py`` renders
 SessionStart context, ``reverie capture-turn`` captures a completed
 exchange); this package owns Claude's handler shape and its config format.
@@ -15,6 +17,7 @@ exchange); this package owns Claude's handler shape and its config format.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -90,7 +93,19 @@ _STOP_TIMEOUT_SECONDS = 20
 
 
 def _claude_dir(home: Path) -> Path:
-    return Path(home) / ".claude"
+    """Claude Code's config directory: ``$CLAUDE_CONFIG_DIR`` when the user
+    relocated it (settings.json, CLAUDE.md, commands/ and the global
+    ``.claude.json`` all live there), else ``~/.claude``."""
+    env = os.environ.get("CLAUDE_CONFIG_DIR")
+    return Path(env).expanduser() if env else Path(home) / ".claude"
+
+
+def _claude_json(home: Path) -> Path:
+    """The global config holding ``mcpServers``: ``<config dir>/.claude.json``
+    under ``CLAUDE_CONFIG_DIR``, else ``~/.claude.json``."""
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        return _claude_dir(home) / ".claude.json"
+    return Path(home) / ".claude.json"
 
 
 def _settings_path(home: Path) -> Path:
@@ -401,7 +416,7 @@ class ClaudeIntegration(Integration):
         writes: list[PlannedWrite] = []
         command, args, env = _server_command(reverie_bin,
                                              client=self.client_key)
-        mcp_path = home / ".claude.json"
+        mcp_path = _claude_json(home)
         writes.append(_json_merge(
             mcp_path, home, "mcpServers",
             _mcp_entry(command, args, env,
@@ -436,7 +451,7 @@ class ClaudeIntegration(Integration):
             str(_settings_path(home).resolve()), ()))
         removals: list[PlannedRemoval] = []
         removals.append(_plan_json_entry(
-            home / ".claude.json", home, "mcpServers", "claude", False,
+            _claude_json(home), home, "mcpServers", "claude", False,
             manifest))
         removals.append(_reference_removal(home, ref, manifest))
         removals.append(_uninstall_settings(home, manifest, owned))
@@ -448,7 +463,7 @@ class ClaudeIntegration(Integration):
 
     def configured_server(self, home: Path) -> ConfiguredServer | None:
         return _json_configured_server(
-            self.key, Path(home) / ".claude.json", ("mcpServers", "reverie"))
+            self.key, _claude_json(home), ("mcpServers", "reverie"))
 
 
 INTEGRATION = ClaudeIntegration()
