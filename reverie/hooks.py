@@ -88,6 +88,7 @@ def _memory_blocks(info, print_fn) -> None:
                 print_fn(line)
             if deliver.memory(conn, key, info.repo_path):
                 _spawn_stale_check(conn, key, info.repo_path)
+                _spawn_merge(info.repo_path)
         finally:
             conn.close()
     except Exception:
@@ -114,6 +115,33 @@ def _spawn_stale_check(conn, key: str, root: str) -> None:
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text(str(time.time()))
         command, args = launch.reverie_command(["stale", "check", "--repo", root])
+        subprocess.Popen(f"{command} {' '.join(args)}" if not args else [command, *args],
+                         shell=not args, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
+        pass
+
+
+MERGE_EVERY_SECS = 86400
+
+
+def _spawn_merge(root: str) -> None:
+    """At most once a day per repo, merge near-duplicates in a detached process."""
+    import os
+    import subprocess
+    import time
+
+    from . import launch, spool
+    if os.environ.get("REVERIE_NO_BACKGROUND"):
+        return
+    stamp = spool.repo_dir(root) / "merge.stamp"
+    try:
+        if stamp.exists() and time.time() - stamp.stat().st_mtime < MERGE_EVERY_SECS:
+            return
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(str(time.time()))
+        command, args = launch.reverie_command(["merge", "--repo", root])
         subprocess.Popen(f"{command} {' '.join(args)}" if not args else [command, *args],
                          shell=not args, stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

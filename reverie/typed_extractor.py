@@ -209,7 +209,7 @@ def _seen_in_other_repo(conn, cand: dict, vec, key: str, cfg, judge,
         f"AND repo_key IS NOT NULL AND repo_key != ? AND kind IN ({marks}) "
         f"AND embedding IS NOT NULL", (key, *p.kinds)).fetchall()
     others = [(r["id"], r["text"], from_blob(r["embedding"])) for r in rows]
-    verdict = dedupe.screen(cand["text"], vec, others, cfg, judge)
+    verdict = dedupe.screen(cand["text"], vec, others, cfg)
     if verdict.keep or not verdict.nearest_id:
         return False
     meta = items.bump_seen(conn, verdict.nearest_id, key)
@@ -251,7 +251,7 @@ def extract_and_store_items(
     agent_id = author or f"agent:{model_for(cfg, 'extraction')}"
     for cand in cands:
         vec = embedding_model.encode_one(cand["text"])
-        verdict = dedupe.screen(cand["text"], vec, existing, cfg, judge)
+        verdict = dedupe.screen(cand["text"], vec, existing, cfg)
         if verdict.keep:
             # Another writer may have stored this fact while the judge ran
             # (several agents share one memory): screen against what is new.
@@ -260,7 +260,7 @@ def extract_and_store_items(
             added = [e for e in fresh if e[0] not in known]
             if added:
                 existing, kinds = fresh, fresh_kinds
-                verdict = dedupe.screen(cand["text"], vec, added, cfg, judge)
+                verdict = dedupe.screen(cand["text"], vec, added, cfg)
         if not verdict.keep:
             result.deduped += 1
             if verdict.nearest_id:

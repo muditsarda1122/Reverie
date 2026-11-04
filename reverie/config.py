@@ -301,17 +301,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "mode": "items",
     },
     "dedupe": {
-        # Two-stage dedupe. Max cosine similarity of a candidate to existing
-        # items: below `low` keep with no judge; at/above `high` drop; in
-        # between ask the binary NEW_INFO judge. Starting points tuned on ONE
-        # repo's 49 items (lab X11); re-validate with `reverie dedupe-eval`.
-        "low": 0.55,
+        # Write path: a candidate with cosine similarity >= `high` to an existing
+        # item is dropped (and that item's "seen" counter goes up); everything
+        # else is kept. No LLM judge on write. Near-duplicates that survive are
+        # collapsed at delivery and merged by the periodic job (`merge_sim`).
+        "low": 0.55,              # below: clearly different (stage label only)
         "high": 0.85,
-        "neighbors": 3,           # nearest items shown to the judge
-        "judge": True,            # False: bands only, middle band keeps
-        # Also ask "is this only sandbox/tool trivia?" (lab judge). Off by
-        # default: it can drop legitimate environment quirks (H7).
-        "sandbox_trivia_check": False,
+        "neighbors": 3,           # nearest items recorded per screen
+        "merge_sim": 0.88,        # periodic merge: cosine at/above which items merge (no LLM)
+        "merge_candidate_sim": 0.60,   # periodic merge: cosine at/above which a judge is asked
         # A NEW user-said rule/decision/preference whose nearest existing items
         # are at least this similar is shown to a "did the user reverse one of
         # these?" judge. A reversal supersedes the old item (reversible with

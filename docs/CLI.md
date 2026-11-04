@@ -95,6 +95,22 @@ Output per repo: path, enablement state, active sessions, review
 candidates, conclusions grounded there, and the origin remote (when known).
 Exit: `0` always.
 
+## reverie merge
+
+Merges near-duplicate memory items for this repo: same kind, embeddings very
+close (`dedupe.merge_sim`), same polarity and numbers (so "never retry 429" is
+never merged with "retry 429"). The keeper is the user's own words, then the
+most-seen, then the oldest, and absorbs the others' "seen" counts; the others
+become `superseded` with the keeper named in `meta.merged_into`. Nothing is
+deleted. Runs by itself at most once a day at session start. Items that are
+near-identical but not yet merged are shown once, with "(seen N times)".
+
+```bash
+reverie merge [--repo PATH]
+```
+
+Exit: `0` on success, `1` when there is no memory yet.
+
 ## reverie transcripts
 
 Reads the transcripts the harnesses already keep (Claude Code, Codex,

@@ -32,8 +32,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from . import collapse, spool
 from . import items as items_mod
-from . import spool
 from .redact import redact
 
 MAX_POINT_ITEMS = 3
@@ -131,6 +131,7 @@ def memory(conn: sqlite3.Connection, key: str, root: str) -> list[dict]:
     for it in typed:
         it["origin"] = "item"
         it["grounding_commit"] = it.get("grounding_commit")
+    typed = collapse.collapse(typed)          # near-duplicates are shown once
     return typed + _legacy_conclusions(conn, root)
 
 
@@ -171,7 +172,8 @@ def _clip(text: str, limit: int = MAX_LINE_CHARS) -> str:
 
 def _line(it: dict) -> str:
     tag = "" if it["kind"] == "rule" else f"{it['kind']}: "
-    return f"- [{it['id'][:8]}] {tag}{_clip(it['text'])}"
+    seen = f" (seen {it['seen_n']} times)" if int(it.get("seen_n") or 1) > 1 else ""
+    return f"- [{it['id'][:8]}] {tag}{_clip(it['text'])}{seen}"
 
 
 def _capped(lines: list[str], cap: int, more: str, budget: int = 10**9) -> list[str]:

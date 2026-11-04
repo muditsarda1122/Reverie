@@ -335,6 +335,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="every repo, not just this one")
     p.add_argument("--no-mark", action="store_true",
                    help="do not mark everything as seen")
+    p = sub.add_parser("merge", help="merge near-duplicate memory items "
+                       "(periodic; also run lazily at session start)")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
     p = sub.add_parser("stale", help="keep memory true as the code changes")
     p.add_argument("action", choices=["check", "list", "accept", "keep"])
     p.add_argument("id", nargs="?", default=None,
@@ -372,7 +376,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install", "resume", "transcripts", "rules", "show", "undo", "digest", "stale", "promote")
+               "capture-turn", "install", "resume", "transcripts", "merge", "rules", "show", "undo", "digest", "stale", "promote")
 
 
 def _unknown_command(word: str) -> int:
@@ -464,6 +468,25 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "rules":
         return _cmd_rules(args)
+    if args.command == "merge":
+        from . import deliver, items, merge, spool
+        from .config import get_config
+        root = spool.repo_root(args.repo or ".")
+        if not deliver.db_path().exists():
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        conn = items.connect(deliver.db_path())
+        try:
+            from .dedupe import llm_judge
+            cfg = get_config()
+            rep = merge.run(conn, deliver.repo_key(root), cfg,
+                            judge=llm_judge(cfg, max_tokens=200))
+        finally:
+            conn.close()
+        for gone, keep in rep.merged:
+            print(f"merged [{gone[:8]}] into [{keep[:8]}]")
+        print(f"{len(rep.merged)} near-duplicate item(s) merged.")
+        return 0
     if args.command == "stale":
         return _cmd_stale(args)
     if args.command == "promote":

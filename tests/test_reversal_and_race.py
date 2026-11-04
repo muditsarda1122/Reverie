@@ -133,30 +133,33 @@ def test_parse_replaces(raw, count, want):
 
 # ------------------------------------------------------------ dedupe race
 
-def test_a_fact_stored_by_another_writer_during_the_judge_is_caught(env):
+def test_a_fact_stored_by_another_writer_during_extraction_is_caught(env):
     """Two agents share one memory. A's candidate passes the screen; before it
-    is written, B stores the same fact. Without the re-screen both are kept."""
+    is written, B stores the same fact. Without the re-screen both are kept.
+    (There is no write-path judge any more: the window is the embedding step.)"""
     brain, repo = env
     text = "Never retry a ReadTimeout, whatever the method."
     obj = {"kind": "directive", "text": text, "source": "user",
            "quote": "never retry a ReadTimeout", "anchor": "repo"}
-    emb = FakeEmbed()
-    # a neighbour in the judge band so the judge actually runs
+    base = FakeEmbed()
     add(brain, repo, "Retry only idempotent methods.",
-        emb=emb.encode_one("Retry only idempotent methods.").tobytes())
+        emb=base.encode_one("Retry only idempotent methods.").tobytes())
     calls = {"n": 0}
 
-    def judge(prompt):
-        calls["n"] += 1
-        if calls["n"] == 1:      # B writes the same fact while A's judge runs
-            add(brain, repo, text, emb=emb.encode_one(text).tobytes())
-        return "NEW_INFO=YES"
+    class RacyEmbed:
+        def encode_one(self, t):
+            calls["n"] += 1
+            if calls["n"] == 1:      # B writes the same fact while A is embedding
+                add(brain, repo, text, emb=base.encode_one(text).tobytes())
+            return base.encode_one(t)
+    emb = RacyEmbed()
     c = cfg()
-    c.dedupe.low, c.dedupe.high = 0.0, 0.9    # the neighbour hits the judge; an exact copy drops
+    c.dedupe.low, c.dedupe.high = 0.0, 0.9    # an exact copy drops
     with patch("reverie.typed_extractor.call_llm", return_value=json.dumps([obj])):
         res = typed_extractor.extract_and_store_items(
             brain, {"prompt": "never retry a ReadTimeout, whatever", "output": "ok"},
-            repo_path=str(repo), embedding_model=emb, config=c, commit_hash="abc", judge=judge)
+            repo_path=str(repo), embedding_model=emb, config=c, commit_hash="abc",
+            judge=lambda p: "REPLACES=NONE")
     same = [r for r in brain._conn.execute("SELECT text FROM items WHERE status='active'")
             if "ReadTimeout" in r["text"]]
     assert len(same) == 1 and res.stored == [] and res.deduped == 1

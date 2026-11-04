@@ -139,44 +139,18 @@ def vec(*parts):
     return v
 
 
-def test_screen_bands():
+def test_screen_bands_without_any_judge():
     c = cfg()
     emb = FakeEmbed()
     existing = [("a", "cache invalidation uses mtime", emb.encode_one("cache invalidation uses mtime"))]
-    calls = []
-    judge = lambda p: calls.append(p) or "NEW_INFO=NO"       # noqa: E731
-    far = dedupe.screen("zebra quantum banana", emb.encode_one("zebra quantum banana"),
-                        existing, c, judge)
-    assert far.keep and far.stage == "low" and not calls
+    far = dedupe.screen("zebra quantum banana", emb.encode_one("zebra quantum banana"), existing, c)
+    assert far.keep and far.stage == "low"
     same = dedupe.screen("cache invalidation uses mtime",
-                         emb.encode_one("cache invalidation uses mtime"), existing, c, judge)
-    assert not same.keep and same.stage == "high" and not calls and same.nearest_id == "a"
+                         emb.encode_one("cache invalidation uses mtime"), existing, c)
+    assert not same.keep and same.stage == "high" and same.nearest_id == "a"
     mid_text = "cache invalidation uses mtime and inode and size"
-    mid = dedupe.screen(mid_text, emb.encode_one(mid_text), existing,
-                        cfg(low=0.3, high=0.99), judge)
-    assert mid.stage == "judge" and len(calls) == 1 and not mid.keep
-    yes = dedupe.screen(mid_text, emb.encode_one(mid_text), existing,
-                        cfg(low=0.3, high=0.99), lambda p: "NEW_INFO=YES")
-    assert yes.keep
-
-
-def test_judge_failure_fails_open_and_judge_off_keeps():
-    emb = FakeEmbed()
-    existing = [("a", "t one two three", emb.encode_one("t one two three"))]
-    text = "t one two three four"
-
-    def boom(_):
-        raise RuntimeError("down")
-    r = dedupe.screen(text, emb.encode_one(text), existing, cfg(low=0.3, high=0.99), boom)
-    assert r.keep and r.stage == "judge_error"
-    r = dedupe.screen(text, emb.encode_one(text), existing,
-                      cfg(low=0.3, high=0.99, judge=False), boom)
-    assert r.keep and r.stage == "judge_off"
-
-
-def test_sandbox_trivia_question_is_optional():
-    assert dedupe.parse_verdict("NEW_INFO=YES SANDBOX_TRIVIA=YES", True) is False
-    assert dedupe.parse_verdict("NEW_INFO=YES SANDBOX_TRIVIA=YES", False) is True
+    mid = dedupe.screen(mid_text, emb.encode_one(mid_text), existing, cfg(low=0.3, high=0.99))
+    assert mid.keep and mid.stage == "band"          # kept: delivery collapses it later
 
 
 # ------------------------------------------------------------------ pipeline
