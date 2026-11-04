@@ -775,7 +775,7 @@ def test_stop_hook_is_installed_and_uninstalled(home, reverie_home):
     stop = settings["hooks"]["Stop"][0]["hooks"][0]    # capture-turn first
     assert stop["type"] == "command"
     assert stop["timeout"] == 20
-    assert stop["async"] is True
+    assert "async" not in stop      # sync: it detaches its own worker
     command = " ".join([stop.get("command", ""), *stop.get("args", [])])
     assert "capture-turn" in command
 
@@ -893,3 +893,49 @@ def test_capture_turn_cli_routes_through_integrations(home, reverie_home,
 
 def test_harness_hook_names_stay_with_integrations():
     assert get_integration("claude_code").name == "Claude Code"
+
+
+def test_capture_turn_detaches_a_worker_and_returns(monkeypatch):
+    """Headless runs cancel async hooks on exit, so the Stop hook is sync and
+    only spawns a detached worker that gets the payload on stdin."""
+    import json as _json
+    import subprocess
+
+    from reverie.integrations.claude import capture
+
+    monkeypatch.delenv("REVERIE_CAPTURE_INLINE", raising=False)
+    payload = {"transcript_path": "/t.jsonl", "cwd": "/r"}
+    monkeypatch.setattr(capture, "_hook_payload", lambda: payload)
+    seen: dict = {"written": b""}
+
+    class Stdin:
+        def write(self, data):
+            seen["written"] += data
+
+        def close(self):
+            seen["closed"] = True
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            seen["cmd"], seen["kw"] = cmd, kw
+            self.stdin = Stdin()
+
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    assert capture.main([]) == 0
+    assert "--worker" in seen["cmd"]
+    assert seen["kw"]["start_new_session"] is True
+    assert _json.loads(seen["written"]) == payload and seen["closed"]
+
+
+def test_capture_turn_runs_inline_when_the_spawn_fails(monkeypatch):
+    import subprocess
+
+    from reverie.integrations.claude import capture
+
+    monkeypatch.delenv("REVERIE_CAPTURE_INLINE", raising=False)
+    monkeypatch.setattr(capture, "_hook_payload", lambda: {})
+
+    def boom(*a, **k):
+        raise OSError("no fork")
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    assert capture.main([]) == 0           # never raises, never blocks

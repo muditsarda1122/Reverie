@@ -7,7 +7,8 @@ Claude's Stop hook sends JSON on stdin:
 
 We read the last user request and the final assistant reply from the
 transcript (falling back to ``last_assistant_message``), then hand them to
-``core_api.capture_turn``. The hook is fire-and-forget: this function NEVER
+``core_api.capture_turn`` in a detached worker (the hook itself returns at
+once; see ``_detach``). The hook is fire-and-forget: this function NEVER
 raises and ALWAYS exits 0 — a broken transcript, a disabled repo, a missing
 provider key or an extraction timeout must not block Claude. A timed-out or
 failed extraction is left in the pending queue for ``reverie retry``.
@@ -18,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -121,8 +123,39 @@ def _branch_for(repo: str, explicit: str | None) -> str | None:
         return None
 
 
+#: extraction budget for the detached worker (the hook itself returns at once)
+WORKER_TIMEOUT = 120.0
+
+
+def _detach(payload: dict, args: argparse.Namespace) -> bool:
+    """Hand the hook payload to a detached worker and return immediately.
+
+    The Stop hook used to be ``async``, but a headless run (``claude -p``)
+    cancels async hooks when it exits, so nothing was ever captured. A
+    synchronous hook that only spawns a session-leader child is both fast and
+    safe to exit under."""
+    try:
+        cmd = [sys.executable, "-m", "reverie.integrations.claude.capture",
+               "--worker", "--timeout", str(args.timeout)]
+        for flag in ("transcript", "repo", "branch"):
+            if getattr(args, flag):
+                cmd += [f"--{flag}", getattr(args, flag)]
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True)
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(payload).encode())
+        proc.stdin.close()
+        return True
+    except Exception:
+        return False
+
+
 def _run(args: argparse.Namespace) -> int:
     payload = _hook_payload()
+    if not args.worker and not os.environ.get("REVERIE_CAPTURE_INLINE"):
+        if _detach(payload, args):
+            return 0
     transcript = args.transcript or payload.get("transcript_path")
     if not transcript:
         return 0
@@ -141,8 +174,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--transcript", help="Claude JSONL transcript path")
     parser.add_argument("--repo", help="Repository path (default: hook cwd)")
     parser.add_argument("--branch", help="Branch (default: detected)")
-    parser.add_argument("--timeout", type=float, default=20.0,
-                        help="Extraction time limit in seconds (default: 20)")
+    parser.add_argument("--timeout", type=float, default=WORKER_TIMEOUT,
+                        help="Extraction time limit in seconds (default: 120)")
+    parser.add_argument("--worker", action="store_true",
+                        help="internal: run the capture in this process")
     try:
         return _run(parser.parse_args(argv))
     except SystemExit:

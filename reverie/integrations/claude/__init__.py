@@ -176,11 +176,11 @@ def _session_start_handler(reverie_bin: str | None = None) -> dict:
 
 def _stop_handler(reverie_bin: str | None = None) -> dict:
     """The Stop handler: the same launch form as session-start, with the
-    capture command tail."""
+    capture command tail. NOT async: a headless ``claude -p`` cancels async
+    hooks on exit, and capture-turn detaches its own worker anyway."""
     handler = _command_handler(["capture-turn"], reverie_bin)
     handler["timeout"] = _STOP_TIMEOUT_SECONDS
-    handler["async"] = True
-    return handler
+    return handler          # synchronous: it only spawns a detached worker
 
 
 _SHIM_SCRIPT = "reverie-claude-hook"
