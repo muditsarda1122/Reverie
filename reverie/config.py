@@ -312,6 +312,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Also ask "is this only sandbox/tool trivia?" (lab judge). Off by
         # default: it can drop legitimate environment quirks (H7).
         "sandbox_trivia_check": False,
+        # A NEW user-said rule/decision/preference whose nearest existing items
+        # are at least this similar is shown to a "did the user reverse one of
+        # these?" judge. A reversal supersedes the old item (reversible with
+        # `reverie undo`); without this a stale rule kept being delivered next
+        # to its replacement. Fails safe: judge error -> nothing superseded.
+        "replace_min_sim": 0.40,
+        "replace": True,
     },
     "promotion": {
         # Cross-repo learning. An AGENT-INFERRED item of one of these kinds

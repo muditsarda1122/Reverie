@@ -41,6 +41,8 @@ _GLOBAL_MARK = re.compile(
     r"any (?:project|repo)|everywhere|in general|by default)\b", re.I)
 _REPO_BOUND = re.compile(r"\b(this|the) (codebase|repo|repository|project|sdk|service)\b", re.I)
 _USER_WIDE_KINDS = ("preference", "rule")
+#: kinds a user can reverse ("forget what I said about X"); others are facts
+REVERSIBLE_KINDS = ("rule", "decision", "preference", "rejected_approach")
 
 
 class TypedExtractionError(RuntimeError):
@@ -55,6 +57,7 @@ class ItemResult:
     skipped_invalid: int = 0
     deduped: int = 0
     promoted: list[str] = field(default_factory=list)
+    superseded: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
 
 
@@ -226,14 +229,26 @@ def extract_and_store_items(
     from .embeddings import from_blob, to_blob
     conn = brain._conn
     key = deliver.repo_key(repo_path)
-    existing = [(i["id"], i["text"], from_blob(i["embedding"]))
-                for i in items.active(conn, key, with_embedding=True)
+    def load_existing() -> tuple[list[tuple[str, str, object]], dict[str, str]]:
+        rows = [i for i in items.active(conn, key, with_embedding=True)
                 if i.get("embedding")]
+        return ([(i["id"], i["text"], from_blob(i["embedding"])) for i in rows],
+                {i["id"]: i["kind"] for i in rows})
+    existing, kinds = load_existing()
     judge = judge or dedupe.llm_judge(cfg)
     agent_id = author or f"agent:{model_for(cfg, 'extraction')}"
     for cand in cands:
         vec = embedding_model.encode_one(cand["text"])
         verdict = dedupe.screen(cand["text"], vec, existing, cfg, judge)
+        if verdict.keep:
+            # Another writer may have stored this fact while the judge ran
+            # (several agents share one memory): screen against what is new.
+            known = {e[0] for e in existing}
+            fresh, fresh_kinds = load_existing()
+            added = [e for e in fresh if e[0] not in known]
+            if added:
+                existing, kinds = fresh, fresh_kinds
+                verdict = dedupe.screen(cand["text"], vec, added, cfg, judge)
         if not verdict.keep:
             result.deduped += 1
             if verdict.nearest_id:
@@ -242,6 +257,15 @@ def extract_and_store_items(
         if not cand["user_wide"] and _seen_in_other_repo(
                 conn, cand, vec, key, cfg, judge, result):
             continue
+        replaced: list[str] = []
+        if cfg.dedupe.replace and cand["source"] == "user_said" \
+                and cand["kind"] in REVERSIBLE_KINDS:
+            texts = {e[0]: e[1] for e in existing}
+            near = [(i, texts[i], sim) for i, sim in
+                    dedupe.nearest(cand["text"], vec, existing, int(cfg.dedupe.neighbors) + 2)
+                    if sim >= float(cfg.dedupe.replace_min_sim)
+                    and kinds.get(i) in REVERSIBLE_KINDS]
+            replaced = dedupe.replaces(cand["text"], near, judge)
         item_id = items.add(
             conn, text=cand["text"], kind=cand["kind"], source=cand["source"],
             repo_key=None if cand["user_wide"] else key,
@@ -253,6 +277,11 @@ def extract_and_store_items(
             evidence=cand["evidence"], embedding=to_blob(vec),
             meta={**cand["meta"], "dedupe_stage": verdict.stage,
                   "dedupe_sim": round(verdict.sim, 3)})
+        if replaced:
+            done = items.supersede(conn, item_id, replaced)
+            result.superseded += done
+            existing = [e for e in existing if e[0] not in done]
         existing.append((item_id, cand["text"], vec))
+        kinds[item_id] = cand["kind"]
         result.stored.append(item_id)
     return result

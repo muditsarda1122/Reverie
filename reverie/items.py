@@ -93,6 +93,22 @@ def add(conn: sqlite3.Connection, *, text: str, kind: str, source: str,
     return item_id
 
 
+def supersede(conn: sqlite3.Connection, new_id: str, old_ids: list[str]) -> list[str]:
+    """``new_id`` replaces ``old_ids`` (the user changed their mind). The old
+    items are kept, marked superseded, and remembered on the new item so
+    ``undo`` of the new one brings them back. Returns the ids superseded."""
+    done = []
+    for old in old_ids:
+        cur = conn.execute("UPDATE items SET status='superseded' WHERE id=? "
+                           "AND status='active' AND id != ?", (old, new_id))
+        if cur.rowcount:
+            done.append(old)
+    if done:
+        conn.commit()
+        set_meta(conn, new_id, {"superseded_ids": done})
+    return done
+
+
 def set_status(conn: sqlite3.Connection, item_id: str, status: str) -> bool:
     if status not in STATUSES:
         raise ValueError(status)

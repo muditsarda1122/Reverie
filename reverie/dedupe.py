@@ -19,6 +19,7 @@ starting points. The judge fails OPEN: if it errors, the candidate is kept.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
@@ -59,6 +60,17 @@ def _unit(v) -> np.ndarray:
     a = np.asarray(v, dtype=np.float32)
     n = float(np.linalg.norm(a))
     return a / n if n else a
+
+
+def nearest(text: str, vec, existing: Sequence[tuple[str, str, object]],
+            k: int) -> list[tuple[str, float]]:
+    """The ``k`` most similar existing items as ``[(id, sim)]``, best first."""
+    if not existing:
+        return []
+    q = _unit(vec)
+    sims = np.array([float(_unit(v) @ q) for _, _, v in existing])
+    return [(existing[int(i)][0], float(sims[int(i)]))
+            for i in np.argsort(-sims)[:k]]
 
 
 def parse_verdict(raw: str, trivia_check: bool) -> bool:
@@ -107,6 +119,47 @@ def screen(text: str, vec, existing: Sequence[tuple[str, str, object]], cfg,
         log.warning("dedupe judge failed (%s); keeping the candidate", exc)
         return mk(True, "judge_error", str(exc)[:120])
     return mk(parse_verdict(raw, trivia), "judge", raw[:120])
+
+
+REPLACE_PROMPT = """A user gave a coding agent a NEW instruction. Below are EXISTING instructions or decisions it may have changed.
+
+Existing:
+{nbrs}
+
+NEW instruction:
+{cand}
+
+Does the NEW instruction reverse, replace or directly contradict any existing item, so that the old one must no longer be followed? Only answer with item numbers if the new instruction really changes what the old one demands (a new instruction that merely adds detail, or is about a different thing, does NOT replace it).
+Reply in exactly this format on one line: REPLACES=<comma-separated item numbers, or NONE>"""
+
+_NUM = re.compile(r"\d+")
+
+
+def parse_replaces(raw: str, count: int) -> list[int]:
+    """-> zero-based indexes of the existing items the reply says are replaced."""
+    m = re.search(r"REPLACES\s*=\s*([^\n]*)", raw or "", re.I)
+    if not m or re.match(r"\s*NONE", m.group(1), re.I):
+        return []
+    return sorted({int(n) - 1 for n in _NUM.findall(m.group(1))
+                   if 1 <= int(n) <= count})
+
+
+def replaces(text: str, neighbors: Sequence[tuple[str, str, float]],
+             judge: JudgeFn | None) -> list[str]:
+    """Ids among ``neighbors`` ``[(id, text, sim)]`` that the user's new
+    instruction ``text`` reverses. Fails SAFE: no judge or an error -> nothing
+    is replaced (a wrong supersession hides a standing rule)."""
+    if not neighbors or judge is None:
+        return []
+    prompt = REPLACE_PROMPT.format(
+        nbrs="\n".join(f"{i}. {t}" for i, (_, t, _) in enumerate(neighbors, 1)),
+        cand=text)
+    try:
+        raw = judge(prompt)
+    except Exception as exc:
+        log.warning("replace judge failed (%s); replacing nothing", exc)
+        return []
+    return [neighbors[i][0] for i in parse_replaces(raw, len(neighbors))]
 
 
 def llm_judge(config, max_tokens: int = 60) -> JudgeFn:

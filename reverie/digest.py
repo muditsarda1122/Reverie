@@ -53,15 +53,26 @@ def undo(conn: sqlite3.Connection, id_prefix: str, restore: bool = False) -> str
     it = items.get(conn, id_prefix)
     if it is None:
         return f"No single item matches {id_prefix!r}."
+    replaced = list((it.get("meta") or {}).get("superseded_ids") or [])
     if restore:
         if it["status"] != "undone":
             return f"[{it['id'][:8]}] is {it['status']}, not undone."
         items.set_status(conn, it["id"], "active")
-        return f"Restored [{it['id'][:8]}]: {it['text'][:80]}"
+        again = items.supersede(conn, it["id"], replaced) if replaced else []
+        extra = (f"\n  superseded again: {', '.join(i[:8] for i in again)}"
+                 if again else "")
+        return f"Restored [{it['id'][:8]}]: {it['text'][:80]}{extra}"
     if it["status"] == "undone":
         return f"[{it['id'][:8]}] is already undone."
     items.set_status(conn, it["id"], "undone")
-    return (f"Undone [{it['id'][:8]}]: {it['text'][:80]}\n"
+    back = []
+    for old in replaced:        # the instruction it replaced applies again
+        row = items.get(conn, old)
+        if row and row["status"] == "superseded":
+            items.set_status(conn, row["id"], "active")
+            back.append(row["id"][:8])
+    extra = (f"\n  brought back what it replaced: {', '.join(back)}" if back else "")
+    return (f"Undone [{it['id'][:8]}]: {it['text'][:80]}{extra}\n"
             f"  restore with: reverie undo --restore {it['id'][:8]}")
 
 
