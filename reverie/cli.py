@@ -316,6 +316,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    "(default: the most recent one)")
     p.add_argument("--all", action="store_true", dest="all_sessions",
                    help="every recorded prompt, all sessions")
+    p.add_argument("--latest", action="store_true",
+                   help="the most recent session, without asking which")
     p = sub.add_parser("undo", help="undo a remembered item (reversible)")
     p.add_argument("id")
     p.add_argument("--restore", action="store_true",
@@ -444,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
         cwd = args.repo or "."
         print(spool.render_resume(cwd, session=args.session,
                                   all_sessions=args.all_sessions,
+                                  latest=args.latest,
                                   rules_text=rules.render(cwd)))
         return 0
     if args.command == "rules":

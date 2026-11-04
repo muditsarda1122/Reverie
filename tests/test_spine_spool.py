@@ -65,7 +65,7 @@ def test_resume_uses_latest_session_and_includes_git_state(env):
     spool.append(env, "prompt", "do the CLI now", session="new")
     (env / "a.py").write_text("x = 2\n")
     (env / "new.py").write_text("")
-    out = spool.render_resume(env)
+    out = spool.render_resume(env, latest=True)
     assert "old session prompt" not in out
     assert out.index("PLAN: CLI uses TDB_PATH") < out.index("do the CLI now")
     assert "branch: main" in out and "a.py" in out and "new.py" in out
@@ -80,7 +80,7 @@ def test_resume_compactor_seam(env):
 
 
 def test_resume_with_no_log_still_prints_git_state(env):
-    out = spool.render_resume(env)
+    out = spool.render_resume(env, latest=True)
     assert "No prompt log" in out and "branch: main" in out
 
 

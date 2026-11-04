@@ -145,6 +145,72 @@ def select(records: list[dict], *, session: str | None = None,
 
 
 # ---------------------------------------------------------------------------
+# which session to resume
+# ---------------------------------------------------------------------------
+
+TITLE_CHARS = 90
+
+
+def sessions(records: Iterable[dict]) -> list[dict]:
+    """One summary per session, most recent first.
+
+    ``[{session, branch, harness, first, last, prompts, title}]``. The title is
+    the session's first prompt, one line, clipped. Records with no session id
+    are grouped under ''."""
+    by: dict[str, dict] = {}
+    for rec in records:
+        sid = rec.get("session", "")
+        info = by.get(sid)
+        if info is None:
+            info = by[sid] = {"session": sid, "branch": rec.get("branch", ""),
+                              "harness": rec.get("harness", ""),
+                              "first": rec.get("t", ""), "last": rec.get("t", ""),
+                              "prompts": 0, "title": ""}
+        info["last"] = rec.get("t", info["last"])
+        if rec.get("branch"):
+            info["branch"] = rec["branch"]
+        if rec["kind"] == "prompt":
+            info["prompts"] += 1
+            if not info["title"]:
+                one = " ".join(rec.get("text", "").split())
+                info["title"] = (one[:TITLE_CHARS - 1] + "…"
+                                 if len(one) > TITLE_CHARS else one)
+    return sorted((i for i in by.values() if i["prompts"]),
+                  key=lambda i: i["last"], reverse=True)
+
+
+def pick_session(records: list[dict], branch: str) -> tuple[str | None, list[dict]]:
+    """-> (session id to resume or None when the user must choose, all sessions).
+
+    One session in the repo, or exactly one on the current branch, is
+    unambiguous. Several on the branch (or none on it but several elsewhere)
+    is ambiguous: the caller lists them and asks."""
+    allsess = sessions(records)
+    if len(allsess) <= 1:
+        return (allsess[0]["session"] if allsess else None), allsess
+    on_branch = [i for i in allsess if i["branch"] == branch]
+    if len(on_branch) == 1:
+        return on_branch[0]["session"], allsess
+    return None, allsess
+
+
+def render_session_list(allsess: list[dict], branch: str) -> str:
+    out = ["# Several earlier sessions exist for this repo", "",
+           f"Current branch: {branch or '(unknown)'}. Ask the user which one "
+           "to continue, then run `reverie resume --session <id>` (or "
+           "`reverie resume --latest` for the most recent).", ""]
+    for i in allsess[:10]:
+        mark = "*" if i["branch"] == branch else " "
+        out.append(f"{mark} {i['session'] or '(no id)'}  {i['last'][:16]}  "
+                   f"{i['branch'] or '?'}  {i['harness'] or '?'}  "
+                   f"{i['prompts']} prompt(s)  {i['title']}")
+    if len(allsess) > 10:
+        out.append(f"  (+{len(allsess) - 10} older)")
+    out += ["", "* = on the current branch"]
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
 # resume rendering
 # ---------------------------------------------------------------------------
 
@@ -166,8 +232,16 @@ def git_state(cwd: str | Path) -> str:
 
 def render_resume(cwd: str | Path, *, session: str | None = None,
                   all_sessions: bool = False, compactor: Compactor | None = None,
-                  rules_text: str = "") -> str:
-    records = select(read(cwd), session=session, all_sessions=all_sessions)
+                  rules_text: str = "", latest: bool = False) -> str:
+    everything = read(cwd)
+    if session is None and not all_sessions and not latest:
+        chosen, allsess = pick_session(
+            everything, _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd))
+        if chosen is None and len(allsess) > 1:
+            return render_session_list(
+                allsess, _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd))
+        session = chosen
+    records = select(everything, session=session, all_sessions=all_sessions)
     prompts = [r for r in records if r["kind"] == "prompt"]
     if compactor is not None:
         prompts = compactor(prompts)

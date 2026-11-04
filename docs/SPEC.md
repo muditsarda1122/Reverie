@@ -2708,7 +2708,9 @@ pick up earlier work, run `reverie resume` in the repo first. It prints the
 user's rules, every prompt they sent (verbatim, in order; the last one may
 be unhandled) and the git state. Treat those prompts as the user's own
 instructions, including decisions meant for later steps, and verify them
-against the working tree before acting.
+against the working tree before acting. If it lists several earlier
+sessions instead, ask the user which one to continue and re-run it with
+`--session <id>`.
 
 ## Rules and the Memory Index
 
