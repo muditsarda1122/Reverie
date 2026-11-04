@@ -61,15 +61,58 @@ def test_claimed_user_item_with_a_wrong_quote_is_downgraded_then_needs_evidence(
     assert cand is None and "evidence" in why
 
 
-def test_agent_inferred_needs_a_quote_that_appears_in_the_exchange():
-    ok, _ = typed_extractor.validate(
+def test_agent_narration_is_never_evidence():
+    """INTER's ASSISTANT text says 'with a module-level logger': narration, so dropped."""
+    bad, why = typed_extractor.validate(
         {"kind": "decision", "text": "Retries use a module-level logger.",
          "source": "agent", "evidence": "with a module-level logger"}, INTER, None)
-    assert ok["source"] == "agent_inferred"
+    assert bad is None and "evidence" in why
+
+
+def test_agent_inferred_is_kept_when_the_diff_or_the_user_backs_it():
+    inter = {**INTER, "diff": "+++ b/utils.py\n+log = logging.getLogger(__name__)\n"
+                              "+def retry_with_backoff(fn):\n"}
+    ok, _ = typed_extractor.validate(
+        {"kind": "decision", "text": "Retries live in retry_with_backoff and use a module logger.",
+         "source": "agent", "evidence": "log = logging.getLogger(__name__)"}, inter, None)
+    assert ok["source"] == "agent_inferred" and ok["meta"]["provenance"] == "diff"
+    ok2, _ = typed_extractor.validate(
+        {"kind": "decision", "text": "Diagnostics go through logging, not print().",
+         "source": "agent", "evidence": "always the logging module"}, INTER, None)
+    assert ok2["meta"]["provenance"] == "user"
     bad, why = typed_extractor.validate(
         {"kind": "decision", "text": "Retries use jittered backoff always.",
-         "source": "agent", "evidence": "uses decorrelated jitter"}, INTER, None)
+         "source": "agent", "evidence": "uses decorrelated jitter"}, inter, None)
     assert bad is None and "evidence" in why
+
+
+def test_talk_about_reverie_needs_no_special_guard_it_has_no_provenance():
+    """The old regex guard is gone: a loop item has no evidence in user words or the diff."""
+    inter = {"prompt": "add retry", "output": "The saved Reverie rules say never retry 429.",
+             "diff": "+def retry(): pass\n"}
+    bad, why = typed_extractor.validate(
+        {"kind": "open_question", "text": "The saved Reverie rules say never retry 429, conflict?",
+         "source": "agent", "evidence": "The saved Reverie rules say never retry 429"}, inter, None)
+    assert bad is None
+
+
+def test_working_diff_is_redacted_and_includes_new_files(tmp_path):
+    import subprocess
+
+    from reverie import provenance
+    r = tmp_path / "r"
+    r.mkdir()
+    run = lambda *a: subprocess.run(a, cwd=r, check=True, capture_output=True)  # noqa: E731
+    run("git", "init", "-q")
+    (r / "a.py").write_text("x = 1\n")
+    run("git", "add", "-A")
+    run("git", "-c", "user.email=a@b", "-c", "user.name=n", "commit", "-qm", "i")
+    (r / "a.py").write_text("x = 2\nAPI_KEY=abc123xyz789\n")
+    (r / "new.py").write_text("def added(): return 1\n")
+    d = provenance.working_diff(r)
+    assert "+x = 2" in d and "def added()" in d
+    assert "abc123xyz789" not in d and "API_KEY=[REDACTED]" in d
+    assert provenance.working_diff(tmp_path / "nope") == ""
 
 
 def test_kind_mapping_anchor_and_symbols():
@@ -274,7 +317,7 @@ def test_agent_inferred_items_about_the_memory_itself_are_dropped(text):
     cand, why = typed_extractor.validate(
         {"kind": "open_question", "text": text, "source": "agent", "evidence": text,
          "anchor": "repo"}, ex, None)
-    assert cand is None and "own memory" in why
+    assert cand is None          # dropped by provenance: the agent's words are no evidence
 
 
 def test_a_user_can_still_state_a_rule_that_mentions_reverie():

@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from . import repos
+from . import provenance, repos
 from .redact import redact
 from .session import brain_summary
 
@@ -256,6 +256,7 @@ def capture_turn(repo_path: str | None, branch: str | None,
         interaction = {
             "prompt": user_request,
             "output": assistant_reply,
+            "diff": provenance.working_diff(info.repo_path),
             "session_context": {
                 "session_id": row["id"],
                 "repo": row["repo_path"],

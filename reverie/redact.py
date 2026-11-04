@@ -59,7 +59,7 @@ _SECRET_NAME = (r"[A-Za-z0-9_.\-]*(?:api[_-]?key|apikey|secret|token|passw(?:or)
 
 # .env / shell / yaml style:  NAME=value   NAME: value   export NAME="value"
 _ASSIGN = re.compile(
-    r"(?im)(?P<pre>(?:^|[\s;,{(\[])(?:export\s+|set\s+)?)(?P<name>" + _SECRET_NAME + r")"
+    r"(?im)(?P<pre>(?:^|[\s;,{(\[+>|\"'`])(?:export\s+|set\s+)?)(?P<name>" + _SECRET_NAME + r")"
     r"(?P<op>\s*[=:]\s*)(?P<q>['\"]?)(?P<val>[^\s'\",;)}\]]+)(?P=q)")
 
 # JSON style:  "api_key": "value"
@@ -71,7 +71,7 @@ _PROSE = re.compile(
     r"(?i)\b(?P<lead>(?:password|passphrase|passcode|api[ _-]?key|secret|token)\s+(?:is|was|=|:)\s+)"
     r"(?P<q>['\"`]?)(?P<val>[^\s'\"`,;]{6,})(?P=q)")
 
-_ALLCAPS_ENV_LINE = re.compile(r"(?m)^(?P<name>[A-Z][A-Z0-9_]{2,})=(?P<val>\S+)\s*$")
+_ALLCAPS_ENV_LINE = re.compile(r"(?m)^(?P<mark>[+\- ]?)(?P<name>[A-Z][A-Z0-9_]{2,})=(?P<val>\S+)\s*$")
 
 _TOKEN = re.compile(r"[A-Za-z0-9_\-+=]{24,}")
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
@@ -181,7 +181,7 @@ def redact_with_kinds(text: str) -> tuple[str, list[str]]:
         # URLs and DSNs often hold credentials; plain config (PORT=8080) stays
         if re.search(r"(?:KEY|SECRET|TOKEN|PASS|PWD|CRED|AUTH|DSN)", name):
             kinds.append("assignment")
-            return f"{name}=[REDACTED]"
+            return f"{m.group('mark')}{name}=[REDACTED]"
         return m.group(0)
     out = _ALLCAPS_ENV_LINE.sub(envline, out)
 

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
-from . import dedupe, deliver, items
+from . import dedupe, deliver, items, provenance
 from .llm import LLMError, call_llm, model_for
 
 log = logging.getLogger("reverie.typed_extractor")
@@ -76,7 +76,11 @@ def format_exchange(interaction: dict) -> str:
     summary = interaction.get("work_summary") or interaction.get("reasoning_trace")
     if summary:
         parts.append(f"AGENT WORK SUMMARY: {summary}")
-    parts.append(f"AGENT FINAL ANSWER: {interaction.get('output') or ''}")
+    parts.append(f"AGENT FINAL ANSWER (context only, NOT evidence): "
+                 f"{interaction.get('output') or ''}")
+    if interaction.get("diff"):
+        parts.append("WORKING-TREE DIFF (the real change; evidence for source=agent "
+                     f"must be quoted from here):\n{interaction['diff']}")
     return "\n\n".join(parts) + "\n"
 
 
@@ -112,14 +116,6 @@ def parse_items(raw: str) -> list[dict]:
     return [d for d in data if isinstance(d, dict)]
 
 
-#: an agent-inferred item that talks about Reverie's own memory is a loop
-#: (measured: "The saved Reverie rules say not to retry 429..." stored as an
-#: open question after agents reported a rule/code conflict)
-_ABOUT_MEMORY = re.compile(
-    r"\bReverie\b|\b(?:saved|stored|recorded)\s+(?:rules?|memory|memories|items?)\b"
-    r"|\bmemory\s+(?:says|rules?|item)\b", re.I)
-
-
 def validate(raw_item: dict, interaction: dict,
              repo_path: str | None) -> tuple[dict | None, str]:
     """-> (candidate | None, reason). A candidate has the final item fields."""
@@ -130,23 +126,23 @@ def validate(raw_item: dict, interaction: dict,
     if len(text) < 8:
         return None, "text too short"
     user_msg = str(interaction.get("prompt") or "")
-    everything = exchange_text(interaction)
+    everything = provenance.evidence_text(interaction)   # user + diff, never narration
     source = "user_said" if str(raw_item.get("source")) == "user" else "agent_inferred"
-    if source == "agent_inferred" and _ABOUT_MEMORY.search(text):
-        return None, "about Reverie's own memory"
     quote = str(raw_item.get("quote") or "").strip()
     evidence = str(raw_item.get("evidence") or "").strip()
     meta: dict = {"durability": raw_item.get("durability") or "until_changed"}
     if source == "user_said":
         if quote_in(quote, user_msg):
             meta["quote"] = quote
+            meta["provenance"] = "user"
         else:                                  # claimed user-said, but not found
             source = "agent_inferred"
             evidence = evidence or quote
     if source == "agent_inferred":
         if not quote_in(evidence, everything):
-            return None, "agent-inferred without verifiable evidence"
+            return None, "agent-inferred without evidence in the user's words or the diff"
         meta["evidence_quote"] = evidence
+        meta["provenance"] = ("user" if quote_in(evidence, user_msg) else "diff")
     user_wide = False
     if str(raw_item.get("scope")) == "user" and source == "user_said" \
             and kind in _USER_WIDE_KINDS:

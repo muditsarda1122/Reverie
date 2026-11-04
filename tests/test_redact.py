@@ -140,3 +140,11 @@ def test_prose_password_but_not_plain_words():
     assert "Tr0ub4dor" not in out and "password is [REDACTED]" in out
     for ok in ("the token is refreshed on 401", "my secret is safe", "api key: required"):
         assert redact(ok) == ok
+
+
+def test_diff_lines_are_redacted():
+    """Regression: `+API_KEY=...` in a diff slipped past because of the leading '+'."""
+    d = "+API_KEY=abc123xyz789\n-DB_PASSWORD=oldpass99\n+  token = \"s3cr3tvalue99\"\n PORT=80\n"
+    out = redact(d)
+    assert "abc123xyz789" not in out and "oldpass99" not in out and "s3cr3tvalue99" not in out
+    assert "+API_KEY=[REDACTED]" in out and " PORT=80" in out
