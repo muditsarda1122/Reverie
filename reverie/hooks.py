@@ -67,39 +67,26 @@ def _db_ready(db: Path) -> bool:
 
 
 def _memory_blocks(info, print_fn) -> None:
-    """Rules lane, headline index, digest nudge (read-only; never raises)."""
+    """Rules, rules from earlier sessions, headline index (all in
+    ``deliver.startup_text``, size-capped), then the digest nudge. Read-only;
+    never raises."""
     try:
-        from . import deliver, digest, rules
+        from . import deliver, digest
         from .config import get_config
-        block = rules.render(info.repo_path)
-        if block:
-            print_fn("Reverie rules (the user's own words; always apply):\n"
-                     + block)
+        text = deliver.startup_text(info.repo_path)
+        if text:
+            print_fn(text)
         conn = deliver.open_db()
         if conn is None:
             return
         try:
             key = deliver.repo_key(info.repo_path)
-            mem = deliver.memory(conn, key, info.repo_path)
-            wide = [m for m in mem if m.get("repo_key") is None
-                    and m.get("origin") == "item"
-                    and m["kind"] in ("rule", "preference")]
-            if wide:
-                print_fn("Your preferences and rules across all repos:\n"
-                         + "\n".join(f"- {m['text'].strip()}" for m in wide))
-            said = [m for m in mem if m["kind"] == "rule" and m not in wide]
-            if said:
-                print_fn("Rules you stated in earlier sessions:\n" + "\n".join(
-                    f"- {m['text'].strip()}" for m in said))
-            index = deliver.headline_index(mem)
-            if index:
-                print_fn(index)
             d = get_config().digest
             line = digest.nudge(conn, key, int(d.min_new_items),
                                 float(d.min_days))
             if line:
                 print_fn(line)
-            if mem:
+            if deliver.memory(conn, key, info.repo_path):
                 _spawn_stale_check(conn, key, info.repo_path)
         finally:
             conn.close()

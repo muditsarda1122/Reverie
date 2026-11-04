@@ -12,6 +12,16 @@ Three delivery paths, by measured value (lab X7/X9):
 
 Every delivered item carries freshness: "verified at commit X; file changed
 since: yes/no/unknown".
+
+The same memory reaches harnesses with no hooks through the MCP tools
+(``startup_text`` in ``summary``, ``query_context`` in ``query``): measured on
+httpx, a codex/opencode agent was told "the brain holds 0 conclusions" while a
+standing rule existed, and broke it. Nothing here names a harness.
+
+Liveness: a to-do or an open question describes the repo at one moment. Once
+the code it was about has changed (or a stale check flagged it) it is not
+delivered at all; a stale-flagged rule or decision is delivered in its own
+"possibly outdated" group, never in the always-apply list.
 """
 
 from __future__ import annotations
@@ -27,6 +37,15 @@ from . import spool
 
 MAX_POINT_ITEMS = 3
 MAX_CONTEXT_CHARS = 6000          # harnesses cap hook context (10k chars)
+MAX_STARTUP_CHARS = 8000          # session-start block, under that cap
+MAX_RULE_LINES = 30
+MAX_WIDE_LINES = 15
+MAX_OUTDATED_LINES = 8
+MAX_LINE_CHARS = 320
+MAX_QUERY_HITS = 6
+QUERY_MIN_SIM = 0.30
+#: kinds that describe the repo at one moment, not a lasting fact
+TRANSIENT_KINDS = ("work_state", "open_question")
 INDEX_MAX_LINES = 80
 INDEX_TITLE_WORDS = 14
 MAX_FILE_BYTES = 1_000_000
@@ -115,6 +134,236 @@ def memory(conn: sqlite3.Connection, key: str, root: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# liveness + the shared startup / query text
+# ---------------------------------------------------------------------------
+
+def is_stale_flagged(it: dict) -> bool:
+    return bool((it.get("meta") or {}).get("stale"))
+
+
+def is_live(it: dict, root: str) -> bool:
+    """May this item still be delivered?
+
+    A to-do ("implement X next") or an open question describes the repo at one
+    moment. Once the code it was about changed, or a stale check flagged it,
+    it is dead weight that misleads (measured: a fresh agent was handed "the
+    transports are not written yet" three commits after they shipped)."""
+    if it.get("kind") not in TRANSIENT_KINDS:
+        return True
+    if is_stale_flagged(it):
+        return False
+    commit = it.get("grounding_commit")
+    if not commit or not spool._git(["cat-file", "-t", commit], root):
+        return True                       # cannot tell: keep it
+    files = (it.get("anchor") or {}).get("files") or []
+    if files:
+        return not spool._git(["diff", "--name-only", commit, "--", *files],
+                              root).strip()
+    return spool._git(["rev-list", "--count", f"{commit}..HEAD"],
+                      root) in ("", "0")
+
+
+def _clip(text: str, limit: int = MAX_LINE_CHARS) -> str:
+    one = " ".join((text or "").split())
+    return one if len(one) <= limit else one[: limit - 1] + "…"
+
+
+def _line(it: dict) -> str:
+    tag = "" if it["kind"] == "rule" else f"{it['kind']}: "
+    return f"- [{it['id'][:8]}] {tag}{_clip(it['text'])}"
+
+
+def _capped(lines: list[str], cap: int, more: str, budget: int = 10**9) -> list[str]:
+    """At most ``cap`` lines and ``budget`` characters; a cut is always said."""
+    out: list[str] = []
+    used = 0
+    for ln in lines[:cap]:
+        if used + len(ln) + 1 > budget:
+            break
+        out.append(ln)
+        used += len(ln) + 1
+    if len(out) < len(lines):
+        out.append(f"(+{len(lines) - len(out)} more {more})")
+    return out
+
+
+def _rules_files_text(cwd: str) -> str:
+    """The user's rules.md files, header boilerplate stripped."""
+    from . import rules
+    out = []
+    loaded = rules.load(cwd)
+    for key, label in (("user", "Your personal rules"),
+                       ("repo", "This repo's rules (team)")):
+        body = "\n".join(
+            ln for ln in loaded[key].splitlines()
+            if ln.strip() and not ln.startswith("# Reverie rules")
+            and not ln.startswith("One rule per bullet"))
+        if body.strip():
+            out.append(f"### {label}\n{body.strip()}")
+    return "\n\n".join(out)
+
+
+def startup_text(cwd: str) -> str:
+    """Everything an agent should know at the start of a session, within
+    ``MAX_STARTUP_CHARS``: the user's rules, rules stated in earlier sessions
+    (stale ones set apart), and the headline index of everything else.
+    '' when disabled or empty. Never raises; read-only."""
+    try:
+        root = spool.repo_root(cwd)
+        files_text = _rules_files_text(cwd)
+        mem: list[dict] = []
+        conn = open_db()
+        if conn is not None:
+            try:
+                key = repo_key(cwd)
+                if is_disabled(conn, key):
+                    return ""
+                mem = memory(conn, key, root)
+            finally:
+                conn.close()
+        mem = [m for m in mem if is_live(m, root)]
+        flagged = [m for m in mem if is_stale_flagged(m)]
+        fresh = [m for m in mem if not is_stale_flagged(m)]
+        wide = [m for m in fresh if m.get("repo_key") is None
+                and m.get("origin") == "item"
+                and m["kind"] in ("rule", "preference")]
+        wide_ids = {m["id"] for m in wide}
+        repo_rules = [m for m in fresh if m["kind"] == "rule"
+                      and m["id"] not in wide_ids]
+        listed = wide_ids | {m["id"] for m in repo_rules}
+        rest = [m for m in fresh if m["id"] not in listed]
+
+        parts: list[str] = []
+        left = MAX_STARTUP_CHARS - 700          # keep room for the index + notes
+        if files_text:
+            if len(files_text) > 2400:
+                files_text = files_text[:2400].rsplit("\n", 1)[0] + (
+                    "\n(…more in the rules files; `reverie rules list`)")
+            parts.append("Reverie rules (the user's own words; always apply):\n"
+                         + files_text)
+            left -= len(parts[-1])
+        if wide:
+            body = "\n".join(_capped([_line(m) for m in wide], MAX_WIDE_LINES,
+                                     "— `reverie rules list`", min(1500, max(left, 0))))
+            parts.append("Your preferences and rules across all repos:\n" + body)
+            left -= len(parts[-1])
+        if repo_rules:
+            body = "\n".join(_capped([_line(m) for m in repo_rules], MAX_RULE_LINES,
+                                     "— open any with `reverie show <id>`",
+                                     min(4500, max(left - 900, 300))))
+            parts.append("Rules you stated in earlier sessions:\n" + body)
+            left -= len(parts[-1])
+        if flagged:
+            lines = []
+            for m in flagged:
+                st = (m.get("meta") or {}).get("stale") or {}
+                lines.append(_line(m) + f"  [a later commit {str(st.get('commit', ''))[:8]} "
+                             f"may contradict this: {_clip(str(st.get('reason', '')), 160)}]")
+            body = "\n".join(_capped(lines, MAX_OUTDATED_LINES, "possibly outdated",
+                                     min(1800, max(left, 300))))
+            parts.append("Possibly outdated (a later commit may contradict these; verify "
+                         "against the code before relying on them):\n" + body)
+        used = sum(len(p) for p in parts) + 2 * len(parts)
+        room = max(0, MAX_STARTUP_CHARS - used - 220)
+        limit = max(0, min(INDEX_MAX_LINES, room // 150))
+        index = headline_index(rest, limit=limit) if rest and limit else ""
+        if index:
+            parts.append(index)
+        text = "\n\n".join(parts)
+        if len(text) > MAX_STARTUP_CHARS:
+            text = text[: MAX_STARTUP_CHARS - 80].rstrip() + (
+                "\n(…truncated; `reverie rules list` and `reverie digest` show the rest)")
+        return text
+    except Exception:
+        return ""
+
+
+def _mentions(it: dict, query_lc: str) -> str | None:
+    a = it.get("anchor") or {}
+    for sym in a.get("symbols") or []:
+        for part in {sym, sym.split(".")[-1], sym.split("::")[-1]}:
+            if len(part) >= 3 and re.search(
+                    rf"(?<![a-z0-9_]){re.escape(part.lower())}(?![a-z0-9_])", query_lc):
+                return f"symbol `{sym}`"
+    for f in a.get("files") or []:
+        base = _norm(f).rsplit("/", 1)[-1].lower()
+        if _norm(f).lower() in query_lc or (len(base) >= 4 and base in query_lc):
+            return f"file `{f}`"
+    return None
+
+
+def query_context(cwd: str, query: str, embed=None) -> str:
+    """Typed memory for an agent's question (the MCP ``query`` path): every
+    standing rule that applies repo-wide, plus items that match the question
+    by anchor or by embedding similarity, each with its freshness. '' when
+    there is nothing. ``embed`` is a callable text -> vector (optional).
+    Never raises; read-only."""
+    try:
+        import numpy as np
+
+        from .embeddings import from_blob
+        root = spool.repo_root(cwd)
+        conn = open_db()
+        if conn is None:
+            return ""
+        try:
+            key = repo_key(cwd)
+            if is_disabled(conn, key):
+                return ""
+            rows = items_mod.active(conn, key, with_embedding=True)
+        finally:
+            conn.close()
+        rows = [r for r in rows if is_live(r, root)]
+        for r in rows:
+            r["origin"] = "item"
+        q = (query or "").lower()
+        qv = None
+        if embed is not None:
+            try:
+                v = np.asarray(embed(query), dtype=np.float32)
+                qv = v / (float(np.linalg.norm(v)) or 1.0)
+            except Exception:
+                qv = None
+        scored: list[tuple[float, dict, str]] = []
+        for r in rows:
+            why = _mentions(r, q)
+            sim = 0.0
+            if qv is not None and r.get("embedding"):
+                iv = np.asarray(from_blob(r["embedding"]), dtype=np.float32)
+                sim = float(iv @ qv / (float(np.linalg.norm(iv)) or 1.0))
+            if why is None and sim >= QUERY_MIN_SIM:
+                why = f"similar to your question ({sim:.2f})"
+            if why:
+                scored.append((1.0 + sim if why.startswith(("symbol", "file")) else sim, r, why))
+        scored.sort(key=lambda t: -t[0])
+        hits = scored[:MAX_QUERY_HITS]
+        hit_ids = {r["id"] for _, r, _ in hits}
+        standing = [r for r in rows if r["kind"] == "rule" and r["id"] not in hit_ids
+                    and not is_stale_flagged(r)]
+        if not hits and not standing:
+            return ""
+        lines = ["Reverie typed memory (the user's decisions and findings; past beliefs "
+                 "to verify against the code). Items marked STANDING are decisions "
+                 "already made: do not write code that contradicts one; if the task "
+                 "seems to need it, stop and ask the user first."]
+        for _, r, why in hits:
+            tag = "STANDING " if _is_standing(r) and not is_stale_flagged(r) else ""
+            lines.append(f"- [{r['id'][:8]}] {tag}{r['kind']} ({why}): {_clip(r['text'], 600)}")
+            anchor_file = ((r.get("anchor") or {}).get("files") or ["."])[0]
+            lines.append(f"  {freshness(r, anchor_file, root)}")
+            note = stale_note(r)
+            if note:
+                lines.append(note)
+        if standing:
+            lines.append("Other standing rules for this repo:")
+            lines += _capped([_line(r) for r in standing], MAX_RULE_LINES,
+                             "— open any with `reverie show <id>`")
+        return "\n".join(lines)[:MAX_CONTEXT_CHARS]
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # headline index
 # ---------------------------------------------------------------------------
 
@@ -191,8 +440,6 @@ def match(mem: list[dict], rel: str, file_text: str) -> list[tuple[dict, str]]:
     Returns (item, why) pairs, file-anchored first."""
     hits: list[tuple[dict, str]] = []
     for it in mem:
-        if it["kind"] == "rule":
-            continue                       # rules ride the always-on lane
         if file_anchor_match(it, rel):
             hits.append((it, "file anchor"))
         else:
@@ -243,7 +490,7 @@ def render_point(hits: list[tuple[dict, str]], rel: str, root: str) -> str:
              "ask the user first (name the item and offer alternatives). "
              "Everything else is past belief: verify against the code."]
     for it, why in shown:
-        tag = "STANDING " if _is_standing(it) else ""
+        tag = "STANDING " if _is_standing(it) and not is_stale_flagged(it) else ""
         lines.append(f"- [{it['id'][:8]}] {tag}{it['kind']} ({why}): "
                      f"{it['text'].strip()}")
         lines.append(f"  {freshness(it, rel, root)}")
@@ -308,6 +555,7 @@ def point_of_action(cwd: str, session: str, target: str,
             text = ""
         text += "\n" + extra_text
         seen = _already(cwd, session)
+        mem = [m for m in mem if is_live(m, root)]
         hits = [h for h in match(mem, rel, text) if h[0]["id"] not in seen]
         if not hits:
             return ""

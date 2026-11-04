@@ -100,9 +100,14 @@ def test_freshness_unchanged_vs_changed_vs_unknown(env):
     assert "file changed since: unknown" in pre(env, "pkg/store.py", session="3")
 
 
-def test_rules_are_not_point_delivered_and_disabled_repo_is_silent(env):
+def test_anchored_rules_are_point_delivered_as_standing_and_disabled_repo_is_silent(env):
+    """Rules used to ride only the session-start lane. Measured on a real repo,
+    the edit-time reminder is what makes an agent stop, so an anchored rule now
+    fires there too (once per session)."""
     add(env, "A rule item", kind="rule", files=["pkg/store.py"])
-    assert pre(env, "pkg/store.py") == ""
+    first = pre(env, "pkg/store.py")
+    assert "STANDING rule" in first and "A rule item" in first
+    assert pre(env, "pkg/store.py") == ""                    # once per session
     add(env, "Decision C", files=["pkg/store.py"])
     assert pre(env, "pkg/store.py", session="x")
     b = Brain(deliver.db_path())

@@ -53,6 +53,28 @@ def _repo_and_error(server, repo_path: str | None):
     return server._resolve_repo({"repo_path": repo_path} if repo_path else {})
 
 
+def _with_typed_memory(payload: dict, repo_path: str | None) -> dict:
+    """Add the typed memory (rules + headline index) to a summary payload, so
+    harnesses with no session-start hook still receive it. Without this a
+    codex/opencode agent was told "the brain holds 0 conclusions" while a
+    standing rule existed."""
+    if payload.get("status") != "ok":
+        return payload
+    repo = (payload.get("session") or {}).get("repo") or repo_path
+    if not repo:
+        return payload
+    try:
+        from . import deliver
+        text = deliver.startup_text(str(repo))
+        if text:
+            payload["memory"] = text
+            payload["message"] = (payload.get("message", "") +
+                                  "\n\n" + text).strip()
+    except Exception:
+        pass
+    return payload
+
+
 def summary(repo_path: str | None = None, branch: str | None = None, *,
             read_only: bool = False, _server=None) -> dict:
     """Brain statistics (and the review nudge), never individual conclusions.
@@ -96,8 +118,9 @@ def summary(repo_path: str | None = None, branch: str | None = None, *,
         else:
             row = server._enabled_session(info)
         wanted_branch = branch or info.branch
-    return _summary_payload(server, info if ctx is not None else None, row,
-                            wanted_branch)
+    return _with_typed_memory(
+        _summary_payload(server, info if ctx is not None else None, row,
+                         wanted_branch), repo_path)
 
 
 def observe(user_prompt: str, work_summary: str,

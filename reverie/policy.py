@@ -26,8 +26,8 @@ you are changing, even when the change looks small.
 architectural decision, or a disproved assumption. AT MOST ONCE per task; \
 not for simple changes.
 - `reconsolidate`: call {RECONSOLIDATE_TRIGGER}
-- `summary`: once at session start, for counts and topics only. Never anchor \
-on conclusion contents.
+- `summary`: once at session start. It returns brain counts plus the user's \
+rules and a memory index: read the rules and follow them.
 - `review_list` and `review_decide`: show every candidate in full. Relay only \
 decisions the user states.
 - `set_repo_state`: only when the user explicitly asks to turn Reverie off or \

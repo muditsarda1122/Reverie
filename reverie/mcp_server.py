@@ -282,10 +282,11 @@ branch resolves or is created by this call. Pass the workspace path as
 'repo_path' on every call."""
 
 _SUMMARY_DESCRIPTION = """\
-Get a summary of what the Reverie brain knows. Call this ONCE at session
-start for counts and topics only. Returns brain statistics and scope
-distribution — never individual conclusions; never anchor on conclusion
-contents.
+Session-start briefing. Call this ONCE at session start. Returns brain
+statistics and scope distribution, plus the user's rules, rules stated in
+earlier sessions and an index of past decisions (`memory`). Read the rules and
+follow them; items marked as possibly outdated need verifying against the code.
+Use query for the details of anything that looks relevant.
 
 If the response contains a pending-review nudge, mention it to the user at
 most once per conversation (counts only, never contents)."""
@@ -921,7 +922,11 @@ class ReverieServer:
             message = (
                 f"Remembered {len(ids)} item{'s' if len(ids) != 1 else ''} "
                 f"({result.deduped} duplicate{'s' if result.deduped != 1 else ''} "
-                f"dropped, {result.rejected_count} rejected). Undo any with "
+                f"dropped, {result.rejected_count} rejected"
+                + (f", {len(result.superseded)} older item"
+                   f"{'s' if len(result.superseded) != 1 else ''} superseded"
+                   if result.superseded else "")
+                + "). Undo any with "
                 "`reverie undo <id>`; `reverie digest` lists what was added.")
         elif ids:
             message = (
@@ -1084,9 +1089,25 @@ class ReverieServer:
                                         session_id=row["id"])
         activation.save(brain)                       # D22 — §6.6 resume
         payload = {**result, "session_active": True}
+        typed = self._typed_memory_for(info.repo_path, query)
         if result["groups_retrieved"] == 0:
-            payload["message"] = NO_ECUS_FOUND.format(query=query)
+            payload["message"] = (
+                "No older conclusions matched; the typed memory below applies."
+                if typed else NO_ECUS_FOUND.format(query=query))
+        if typed:
+            payload["memory"] = typed
+            payload["formatted"] = typed + "\n\n" + str(payload.get("formatted", ""))
         return payload
+
+    def _typed_memory_for(self, repo_path: str, query: str) -> str:
+        """Typed items (rules, decisions, findings) for this question. This is
+        how hook-less harnesses receive them; hooks never see it."""
+        try:
+            from . import deliver
+            return deliver.query_context(repo_path, query,
+                                         self.embedding_model.encode_one)
+        except Exception:
+            return ""
 
     def _tool_summary(self, args: dict) -> dict:
         """§16.3 summary — the nudge line included (feat/flow §4).

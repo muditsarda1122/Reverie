@@ -79,8 +79,8 @@ you need them.
 
 Reverie provides seven MCP tools:
 - observe: Record engineering conclusions from your work summary
-- query: Retrieve relevant engineering conclusions
-- summary: Get brain statistics at session start
+- query: Retrieve relevant engineering conclusions and the user's standing decisions
+- summary: Session-start briefing: brain counts, the user's rules and a memory index
 - reconsolidate: Update a retrieved conclusion with new evidence
 - set_repo_state: Turn Reverie off (or back on) for a repo when the user asks
 - review_list: Show the user's pending review candidates
@@ -113,11 +113,18 @@ against the working tree before acting.
 
 ## Rules and the Memory Index
 
-Rules the user wrote (`~/.reverie/rules.md`, `<repo>/.reverie/rules.md`) are
-loaded at session start and always apply; never edit them. The memory index
-lists past decisions and findings by id: open one with `reverie show <id>`
-when it looks relevant. They are past beliefs, so verify against the code.
-Each item says whether its file changed since it was verified.
+Call `summary` once at the start of every session and read what it returns:
+the user's rules (`~/.reverie/rules.md`, `<repo>/.reverie/rules.md`; never
+edit them), rules stated in earlier sessions, and an index of past decisions
+and findings by id (open one with `reverie show <id>`). Some harnesses also
+inject this at session start and before edits; it is the same information.
+
+`query` also returns the stored decisions that match your question. Items
+marked STANDING are decisions the user already made: do not write code that
+contradicts one; if the task seems to need it, stop and ask the user first,
+naming the item. Items under "Possibly outdated" may no longer hold: verify
+them against the code. Everything is a past belief; each item says whether its
+file changed since it was verified.
 
 ## Sessions Are Automatic
 
