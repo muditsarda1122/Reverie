@@ -130,8 +130,11 @@ Learned from the P0 runs, now on the list:
     weaker extractor (measured 4/13 vs 12/13) and what to do about it.
 
 ### P2: prove it learns
-13. **Usage feedback loop**: log item delivered, then whether the agent used,
-    ignored or contradicted it; feed confidence.
+13. **Usage feedback loop** DONE (first slice): deliveries are logged, a batched
+    judge labels used/ignored/irrelevant/contradicted/overridden per exchange, counts live
+    in `meta.usage`, `reverie usage` reports, repeat contradictions mark an item
+    `challenged`. Open: let usage RANK delivery (dormant items sink, proven ones rise);
+    verify the judge on more than three cases.
 14. **Learning-curve benchmark**: a sequence of N realistic tasks on a fresh
     repo, memory on vs off, the metrics above. Repeat on a new repo each time
     (httpx was the first). Runs after every P0/P1 item that changes behaviour.

@@ -32,7 +32,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from . import collapse, spool
+from . import collapse, spool, usage
 from . import items as items_mod
 from .redact import redact
 
@@ -192,7 +192,9 @@ def _clip(text: str, limit: int = MAX_LINE_CHARS) -> str:
 def _line(it: dict) -> str:
     tag = "" if it["kind"] == "rule" else f"{it['kind']}: "
     seen = f" (seen {it['seen_n']} times)" if int(it.get("seen_n") or 1) > 1 else ""
-    return f"- [{it['id'][:8]}] {tag}{_clip(it['text'])}{seen}"
+    warn = (" [agents contradicted this repeatedly: confirm or fix it]"
+            if (it.get("meta") or {}).get("challenged") else "")
+    return f"- [{it['id'][:8]}] {tag}{_clip(it['text'])}{seen}{warn}"
 
 
 def _capped(lines: list[str], cap: int, more: str, budget: int = 10**9) -> list[str]:
@@ -293,6 +295,8 @@ def startup_text(cwd: str) -> str:
         if index:
             parts.append(index)
         text = "\n\n".join(parts)
+        usage.log_delivery(cwd, "start", [m["id"] for m in wide + repo_rules + flagged]
+                           + [m["id"] for m in rest[:limit]])
         if len(text) > cap:
             text = text[: cap - 80].rstrip() + (
                 "\n(…truncated; `reverie rules list` and `reverie digest` show the rest)")
@@ -381,6 +385,7 @@ def query_context(cwd: str, query: str, embed=None) -> str:
             lines.append("Other standing rules for this repo:")
             lines += _capped([_line(r) for r in standing], MAX_RULE_LINES,
                              "— open any with `reverie show <id>`")
+        usage.log_delivery(cwd, "query", [r["id"] for _, r, _ in hits] + [r["id"] for r in standing])
         return "\n".join(lines)[:MAX_CONTEXT_CHARS]
     except Exception:
         return ""
@@ -584,6 +589,7 @@ def point_of_action(cwd: str, session: str, target: str,
             return ""
         shown = hits[:MAX_POINT_ITEMS]
         _remember(cwd, session, seen | {h[0]["id"] for h in shown})
+        usage.log_delivery(cwd, "edit", [h[0]["id"] for h in shown])
         return render_point(shown, rel, root)
     except Exception:
         return ""

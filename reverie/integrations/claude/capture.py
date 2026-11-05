@@ -170,6 +170,9 @@ def _run(args: argparse.Namespace) -> int:
         from ... import importers  # so the importer does not extract it again
         importers.mark_captured(repo, str(payload.get("session_id") or ""),
                                 exchange.user_request)
+        import time as _time
+        importers.judge_usage(repo, exchange.user_request, exchange.assistant_reply,
+                              _time.time() - 60)
     return 0
 
 

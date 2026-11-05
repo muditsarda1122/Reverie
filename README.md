@@ -86,6 +86,7 @@ To switch provider, run `reverie install --provider anthropic`, or edit the `llm
 | `reverie digest` | List what was added recently |
 | `reverie promote` | Make an item apply to all your projects (or back to one repo) |
 | `reverie stale` | Check memory against new commits; accept or keep what is flagged |
+| `reverie usage` | Show which items agents used, ignored or contradicted |
 | `reverie merge` | Merge near-duplicate items (also runs by itself, at most daily) |
 | `reverie review` | Review legacy candidate conclusions in a terminal interface |
 | `reverie status` | Show the session and brain report |

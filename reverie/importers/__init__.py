@@ -310,7 +310,8 @@ def _run(cwd, res: Result, ads: list[Adapter], now: float, max_age_days: float,
         if op["epoch"] >= now - EXTRACT_AGE_DAYS * 86400:
             queue.append({"key": k, "prompt": op["prompt"], "reply": reply or NO_REPLY,
                           "session": op["session"], "branch": op.get("branch", ""),
-                          "epoch": op["epoch"]})
+                          "epoch": op["epoch"],
+                          "epoch_end": _epoch(op.get("t_answer") or op["t"], op["epoch"])})
         else:
             state["captured"].append(k)     # too old to bother the LLM with
 
@@ -394,8 +395,30 @@ def _extract_worker(cwd: str, exchanges: list[dict]) -> None:
                                         timeout=120.0)
             if out.get("status") in ("ok", "skipped", "disabled"):
                 mark_captured(cwd, ex["session"], ex["prompt"])
+                judge_usage(cwd, ex["prompt"], ex["reply"], float(ex.get("epoch") or time.time()),
+                            float(ex["epoch_end"]) if ex.get("epoch_end") else None)
         except Exception:
             continue
+
+
+def judge_usage(cwd: str, prompt: str, reply: str, epoch: float,
+                epoch_end: float | None = None) -> None:
+    """Label the memory items delivered around this exchange (best effort)."""
+    try:
+        from .. import deliver, items, usage
+        from ..config import get_config
+        from ..dedupe import llm_judge
+        if not usage._path(cwd).exists():
+            return
+        conn = items.connect(deliver.db_path())
+        try:
+            cfg = get_config()
+            usage.judge_exchange(cwd, conn, prompt=prompt, reply=reply, epoch=epoch,
+                                 judge=llm_judge(cfg, max_tokens=120), epoch_end=epoch_end)
+        finally:
+            conn.close()
+    except Exception:
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:

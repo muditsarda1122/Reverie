@@ -95,6 +95,22 @@ Output per repo: path, enablement state, active sessions, review
 candidates, conclusions grounded there, and the origin remote (when known).
 Exit: `0` always.
 
+## reverie usage
+
+Shows, per memory item, how often agents **used**, **ignored** or **contradicted**
+it (and how often it was **irrelevant** or rightly **overridden** by what you asked).
+Reverie logs every delivery (session start, before an edit, `query`) and, after an
+exchange is captured, one batched judge call labels the delivered items using your
+prompt, the real diff and the agent's reply. An item that agents keep contradicting is
+marked challenged and delivery says so. Turn the delivery log off with
+`REVERIE_NO_USAGE_LOG=1`.
+
+```bash
+reverie usage [--repo PATH]
+```
+
+Exit: `0` on success, `1` when there is no memory yet.
+
 ## reverie merge
 
 Merges near-duplicate memory items for this repo: same kind, embeddings very

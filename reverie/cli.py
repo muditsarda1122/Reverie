@@ -351,6 +351,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="every repo, not just this one")
     p.add_argument("--no-mark", action="store_true",
                    help="do not mark everything as seen")
+    p = sub.add_parser("usage", help="which memory items agents actually used, ignored "
+                       "or contradicted")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
     p = sub.add_parser("merge", help="merge near-duplicate memory items "
                        "(periodic; also run lazily at session start)")
     p.add_argument("--repo", default=None,
@@ -393,7 +397,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install", "resume", "transcripts", "merge", "rules", "show", "undo", "digest", "stale", "promote")
+               "capture-turn", "install", "resume", "transcripts", "merge", "usage", "rules", "show", "undo", "digest", "stale", "promote")
 
 
 def _unknown_command(word: str) -> int:
@@ -485,6 +489,25 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "rules":
         return _cmd_rules(args)
+    if args.command == "usage":
+        from . import deliver, items, spool, usage
+        root = spool.repo_root(args.repo or ".")
+        if not deliver.db_path().exists():
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        conn = items.connect(deliver.db_path())
+        try:
+            rows = usage.report(conn, deliver.repo_key(root))
+        finally:
+            conn.close()
+        if not rows:
+            print("No usage recorded yet (it is judged after each captured exchange).")
+        for row in rows:
+            u = row["usage"]
+            tally = " ".join(f"{k.lower()}={u[k]}" for k in usage.LABELS if u.get(k))
+            flag = "  <- CHALLENGED: agents keep contradicting it" if row["challenged"] else ""
+            print(f"[{row['id'][:8]}] {row['kind']}: {row['text'][:80]}\n    {tally}{flag}")
+        return 0
     if args.command == "merge":
         from . import deliver, items, merge, spool
         from .config import get_config
