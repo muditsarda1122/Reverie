@@ -202,7 +202,7 @@ when new commits exist.
 ```bash
 reverie stale check               # recheck since the last checked commit
 reverie stale check --since v1.2  # or since a revision
-reverie stale check --no-tests    # skip the test-suite evidence
+reverie stale check --tests       # also run the project's tests as extra evidence (off by default)
 reverie stale list                # pending superseding candidates
 reverie stale accept <candidate>  # the candidate replaces the old memory
 reverie stale keep <memory>       # the old memory was fine; clear the flag

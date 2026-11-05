@@ -330,7 +330,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # whose anchors the commit touched are rechecked.
         "judge_workers": 4,
         "diff_chars": 6000,       # diff shown to the judge per commit
-        "run_tests": True,        # run the suite at HEAD first; failures are evidence
+        # The diff judge is the evidence. Running the project's tests is optional extra
+        # evidence and OFF by default: it is slow, needs the project's environment, and
+        # is meaningless on a repo that is not green (httpx had 10 baseline failures).
+        # Turn on per run with `reverie stale check --tests`, or set this to true.
+        "run_tests": False,
         "test_command": "",       # "" = `python -m pytest -q -x` when tests/ exists
         "test_timeout": 300,
     },

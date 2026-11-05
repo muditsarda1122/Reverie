@@ -123,8 +123,8 @@ def _cmd_stale(args) -> int:
         key = deliver.repo_key(root)
         if args.action == "check":
             cfg = get_config()
-            if args.no_tests:
-                cfg.stale["run_tests"] = False
+            if args.tests:
+                cfg.stale["run_tests"] = True
             rep = staleness.check(conn, root, cfg, staleness.default_judge(cfg),
                                   since=args.since)
             print(f"Checked {rep.commits} commit(s); {rep.triggered} memory "
@@ -348,8 +348,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--since", default=None, metavar="REV",
                    help="check: recheck commits after REV instead of the "
                         "last checked commit")
-    p.add_argument("--no-tests", action="store_true",
-                   help="check: do not run the test suite first")
+    p.add_argument("--tests", action="store_true",
+                   help="check: also run the project's tests first and give a "
+                        "failure to the judge as extra evidence (off by default)")
     p = sub.add_parser("promote", help="make a memory item apply in every "
                        "repo (always/never), or take it back")
     p.add_argument("id")

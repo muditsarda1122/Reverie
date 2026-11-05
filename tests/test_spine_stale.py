@@ -200,3 +200,9 @@ def test_legacy_conclusion_is_flagged_in_its_own_metadata(env):
     assert row["status"] == "active" and "stale" in json.loads(row["metadata_json"])
     assert "Accepted" in staleness.accept(brain._conn, rep.flags[0].candidate_id)
     assert brain._conn.execute("SELECT status FROM ecus WHERE id=?", (ecu,)).fetchone()[0] == "superseded"
+
+
+def test_tests_are_off_by_default_and_the_judge_is_the_evidence(env):
+    from reverie import config as cfgmod
+    assert cfgmod.get_config().stale.run_tests is False
+    assert staleness.run_tests("/nonexistent", cfgmod.get_config()) == "skipped"

@@ -35,6 +35,7 @@ def test_a_broken_test_runner_is_not_evidence_that_the_code_fails(tmp_path):
     root = tmp_path / "p"
     (root / "tests").mkdir(parents=True)
     c = cfg()
+    c.stale.run_tests = True
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     for code, want in ((2, "skipped (test runner error"), (1, "failed")):
         script = tmp_path / f"exit{code}.py"
