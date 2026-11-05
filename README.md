@@ -67,6 +67,8 @@ Reverie makes its own LLM calls to extract conclusions and classify relationship
 | OpenRouter | `anthropic/claude-haiku-5.5` | `OPENROUTER_API_KEY` |
 | Ollama (local) | `qwen2.5-coder:14b` | none |
 
+**Local models:** Ollama keeps everything on your machine, but capture quality depends on the model. In one test the offline default kept 4 of 13 planted facts and timed out on a long exchange, while a hosted small model kept 12 of 13. Use a coding-capable model at least that strong, or keep a hosted provider for extraction.
+
 To switch provider, run `reverie install --provider anthropic`, or edit the `llm:` block directly. Anything you don't set is filled from the registry, and anything you set wins. You can also choose a different model for each task under `llm.models`.
 
 ## Commands

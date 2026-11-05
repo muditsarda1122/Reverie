@@ -123,11 +123,11 @@ Learned from the P0 runs, now on the list:
     chains of sessions across tools, an LLM rewrite of the card.
 
 ### P2: install experience
-11. **Profile discovery**: find every Claude/Codex/OpenCode/Cursor profile or
-    config dir (`CLAUDE_CONFIG_DIR`, `~/.claude*`, `CODEX_HOME`, XDG), list
-    them, ask the user where to install. Never guess.
-12. Local-model guidance in the install text: use a coding-capable model;
-    the offline default is not good enough for capture.
+11. **Profile discovery** DONE: `reverie/profiles.py`, `reverie install
+    --list-profiles`, `--profile KEY=PATH`; asks or refuses, never guesses. Also fixed:
+    Codex and opencode ignored `CODEX_HOME` / `XDG_CONFIG_HOME`.
+12. **Local-model guidance** DONE: install text and README say a local model is a
+    weaker extractor (measured 4/13 vs 12/13) and what to do about it.
 
 ### P2: prove it learns
 13. **Usage feedback loop**: log item delivered, then whether the agent used,

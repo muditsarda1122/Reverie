@@ -261,6 +261,15 @@ _OLLAMA_INSTALL_INSTRUCTIONS = (
     "    and set these keys in ~/.reverie/config.yaml:\n"
     f"{_OLLAMA_CONFIG_SNIPPET}"
 )
+#: measured in the httpx product test: the offline default captured 4 of 13 planted facts,
+#: took 145 s on one exchange and timed out on another; a hosted small model got 12 of 13.
+_LOCAL_MODEL_NOTE = (
+    "  ! Local models keep everything on your machine, but what Reverie remembers depends on\n"
+    "    the model. In one test the offline default (qwen2.5-coder:14b) kept 4 of 13 planted\n"
+    "    facts and timed out on a long exchange; a hosted small model kept 12 of 13. If you\n"
+    "    use Ollama, pick a coding-capable model at least that strong (and raise llm.timeout),\n"
+    "    or keep a hosted provider for extraction."
+)
 _OLLAMA_OFFER = (
     f"\nConfigure Reverie for offline use with Ollama ({OLLAMA_MODEL})? "
     "(y/n): "
@@ -368,6 +377,7 @@ def _configure_provider(reverie_home: Path, home: Path, entry: providers.Provide
     )
     _emit(write, home, dry_run, print_fn)
     if entry.key == "ollama":
+        print_fn(_LOCAL_MODEL_NOTE)
         if ollama_path:
             print_fn(f"  ✓ Ollama detected ({ollama_path})")
         if dry_run:
@@ -398,6 +408,7 @@ def _configure_provider(reverie_home: Path, home: Path, entry: providers.Provide
                      "re-run `reverie install`.")
     if entry.key != "ollama" and ollama_path:
         print_fn(_OLLAMA_FALLBACK_NOTE)
+        print_fn("    (it is a weak extractor for this job: see `reverie install --provider ollama`.)")
 
 
 def _live_ping(config) -> tuple[bool, str]:
