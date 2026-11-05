@@ -75,9 +75,14 @@ and asks when ambiguous** (1911bd0).
    Found and fixed: the `/reverie` housekeeping marker matched any path
    containing it, so those exchanges were never captured.
 4. **Hook integrations.** opencode DONE (02a974e: prompt log, session import,
-   rules in the system prompt). Waiting: **Codex** (needs the user to approve
-   the hooks once), **Cursor** (needs quota to verify prompt/stop hooks and
-   context injection). Both are covered by the importer meanwhile.
+   rules in the system prompt). **Codex** DONE in code (ffdc5db): hooks fire
+   headless after approval. Trust is per user and per hook definition (Codex
+   stores a `trusted_hash`); unapproved hooks are skipped silently. Decision
+   taken: Reverie does NOT write the hash itself. The importer + MCP already
+   cover Codex without hooks, the installer prints the one-time `/hooks` step,
+   and `reverie status` should warn when hooks are installed but untrusted
+   (see "Codex trust" below). **Cursor**: importer + MCP only; hooks are not
+   shipped until someone with quota can verify prompt/stop/context injection.
 
 Learned from the P0 runs, now on the list:
 - Provenance (P1 item 5) is the most visible quality problem: the rules index
@@ -129,6 +134,51 @@ Learned from the P0 runs, now on the list:
 14. **Learning-curve benchmark**: a sequence of N realistic tasks on a fresh
     repo, memory on vs off, the metrics above. Repeat on a new repo each time
     (httpx was the first). Runs after every P0/P1 item that changes behaviour.
+
+### Codex trust (open decision for the user)
+Every user must approve Reverie's hooks once (`/hooks`), and again if the hook
+command changes. Options, in order of preference: (1) do nothing special, the
+importer covers capture and MCP covers read; (2) `reverie status` and the
+install summary say plainly "Codex hooks installed, not approved yet" (read-only
+`hooks/list`); (3) an opt-in `reverie install --trust-codex-hooks` that does what
+`/hooks` does through Codex's own config API. (3) writes a security control on
+the user's behalf, so it needs their explicit decision and is not built.
+
+### Cursor without a subscription
+Importer + MCP already work from the transcripts Cursor keeps. Hooks stay
+unshipped until verified. Ship a `docs/` checklist (3 commands) that anyone with
+quota can run to verify prompt/stop/context injection, and retry when the
+account's quota resets.
+
+### Team context layer (design, validate before building)
+Idea: a team keeps shared context documents that load into every teammate's
+agent; anyone proposes a change, authorised people approve (merge-request
+style). Assessment:
+- Real pain (senior vs junior AGENTS.md quality). But a repo AGENTS.md under git
+  with PR review and CODEOWNERS already gives approval and history for one repo,
+  so the product must beat that. Where git falls short: context that spans
+  repos; contributors who are not engineers; layering and precedence (org >
+  team > repo > personal, with conflicts shown); nobody knows whether agents
+  follow it or whether it is still true; and one large file dumped into every
+  prompt bloats context.
+- Reverie's edge, so build THESE and not "a shared markdown file": split the doc
+  into items with anchors and deliver rules always, the rest at the point of
+  need (bounded); run the staleness check on the shared doc ("this paragraph
+  contradicts `x.py` since commit Y"); record whether agents used or ignored an
+  item (roadmap item 13); show precedence and conflicts.
+- v1 without a server: documents in the repo (`.reverie/context/*.md`) with
+  CODEOWNERS as approvers, imported as items. The paid tier adds hosted sync,
+  cross-repo documents and an approver UI. Not in the single-person plan; the
+  single-person version is personal, ordered, versioned context files.
+
+### Local UI (validate first)
+A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
+(stdlib `http.server`, no new dependency). First slice, read-only: repos,
+rules, items with source/provenance/stale flags, history. Editing, version
+history and ordering of several context files come after the read-only page
+shows people use it. Usefulness test before building the editor: do users edit
+rules by hand (`reverie rules` usage), and does a read-only page make them
+trust or fix memory. Version history can reuse git for repo-resident files.
 
 ### Later (accepted as deferred)
 Team layer, multi-agent board, cross-machine sync (the paid cloud tier),
