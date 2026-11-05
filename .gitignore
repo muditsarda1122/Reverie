@@ -45,6 +45,7 @@ runs/
 /demo/
 /starlette-baseline/
 /prompt.md
+/x-replies.json
 docs/handoffs/
 docs/ASSESSMENT.md
 docs/SPEC_AUDIT.md

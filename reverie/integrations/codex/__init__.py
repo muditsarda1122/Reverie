@@ -353,8 +353,11 @@ class CodexIntegration(Integration):
     name = "Codex"
     binary = "codex"
     marker = ".codex/config.toml"
-    next_step = ("Restart Codex CLI; the reverie-review and reverie-status "
-                 "skills are available (use /skills or $reverie-review).")
+    next_step = ("Restart Codex CLI and type /hooks once to approve Reverie's three "
+                 "hooks (Codex skips unapproved hooks silently; until you approve, "
+                 "Reverie still reads your sessions from Codex's transcripts). "
+                 "The reverie-review and reverie-status skills are available "
+                 "(use /skills or $reverie-review).")
 
     def install(self, home: Path, reverie_bin: str | None = None,
                 dry_run: bool = False, *,
