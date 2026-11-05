@@ -190,8 +190,16 @@ def _cmd_repos(_args) -> int:
 
 def _cmd_install(args) -> int:
     from . import install
+    if getattr(args, "list_profiles", False):
+        from . import profiles
+        for key, plist in profiles.discover().items():
+            print(f"{key}:" + ("" if plist else "  (none found)"))
+            for p in plist:
+                print(f"  {p.label()}")
+        return 0
     try:
         return install.run(
+            profile_args=getattr(args, "profile", None),
             all_agents=getattr(args, "all", False),
             only=[k.strip() for k in args.only.split(",") if k.strip()]
             if getattr(args, "only", None) else None,
@@ -258,6 +266,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true")
     p.add_argument("--only", default=None)
     p.add_argument("--provider", default=None)
+    p.add_argument("--profile", action="append", default=None, metavar="KEY=PATH",
+                   help="install into this config directory of a harness that can have "
+                        "several (claude_code=PATH, codex=PATH); repeatable")
+    p.add_argument("--list-profiles", action="store_true",
+                   help="list every config directory found for each agent and exit")
     p.add_argument("--no-verify", action="store_true")
     p.add_argument("--dry-run", action="store_true")
 

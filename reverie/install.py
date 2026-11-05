@@ -937,13 +937,72 @@ def _select_interactive(detected: list[Integration], input_fn, print_fn
 
 
 # ---------------------------------------------------------------------------
+# which profile (config directory) of a harness to install into
+# ---------------------------------------------------------------------------
+
+def _choose_profiles(selected, home: Path, environ, profile_args: list[str] | None,
+                     interactive: bool, input_fn, print_fn) -> dict[str, str]:
+    """-> {ENV VAR: path} overrides for harnesses whose config dir can be relocated.
+
+    Never guesses. One profile: use it. This shell's environment points at one:
+    use it and mention the others. Several and no pointer: ``--profile KEY=PATH``
+    decides; otherwise ask (interactive) or refuse with the list (scripted)."""
+    from . import profiles as prof
+    found = prof.discover(home, environ)
+    wanted: dict[str, str] = {}
+    for arg in profile_args or []:
+        key, _, path = arg.partition("=")
+        if key not in prof.ENV_FOR or not path:
+            raise InstallError(f"--profile expects KEY=PATH with KEY one of "
+                               f"{', '.join(sorted(prof.ENV_FOR))} (got {arg!r})")
+        wanted[key] = str(Path(path).expanduser())
+    overrides: dict[str, str] = {}
+    for agent in selected:
+        var = prof.ENV_FOR.get(agent.key)
+        if var is None:
+            continue
+        if agent.key in wanted:
+            overrides[var] = wanted[agent.key]
+            continue
+        options = found.get(agent.key, [])
+        active = [p for p in options if p.active]
+        others = [p for p in options if not p.active]
+        if active:
+            if others:
+                print_fn(f"\n{agent.name}: installing into {active[0].path} (this shell's "
+                         f"{var}). Also found: {', '.join(str(p.path) for p in others)} "
+                         f"(install there with --profile {agent.key}=PATH).")
+            continue
+        if len(options) <= 1:
+            continue
+        if not interactive:
+            raise InstallError(
+                f"{agent.name} has several config directories and nothing says which one "
+                f"your agent reads:\n  " + "\n  ".join(p.label() for p in options) +
+                f"\nRe-run with --profile {agent.key}=PATH (or set {var}).")
+        print_fn(f"\n{agent.name} has several config directories:")
+        for i, p in enumerate(options, 1):
+            print_fn(f"  [{i}] {p.label()}")
+        try:
+            raw = input_fn("Install into which one? (number): ")
+        except EOFError:
+            raw = ""
+        try:
+            overrides[var] = str(options[int(raw.strip()) - 1].path)
+        except (ValueError, IndexError):
+            raise InstallError(f"no valid choice for {agent.name}; nothing was written. "
+                               f"Use --profile {agent.key}=PATH.") from None
+    return overrides
+
+
+# ---------------------------------------------------------------------------
 # the installer
 # ---------------------------------------------------------------------------
 
 def run(*, home: Path | None = None, reverie_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
         dry_run: bool = False, provider: str | None = None,
-        reconfigure: bool = False,
+        reconfigure: bool = False, profile_args: list[str] | None = None,
         no_verify: bool = False, verify_fn=None, import_file: str | None = None,
         check_fn=None, input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
@@ -1015,6 +1074,28 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
         print_fn("  No supported agents detected. Configure one anyway with "
                  "--only (e.g. `python -m reverie.install --only claude_code`).")
 
+    # -- which profile of each relocatable harness ----------------------------
+    interactive = only is None and not all_agents
+    overrides = _choose_profiles(selected, home, environ, profile_args, interactive,
+                                 input_fn, print_fn)
+    saved_env = {k: os.environ.get(k) for k in overrides}
+    os.environ.update(overrides)
+    try:
+        return _install_rest(
+            home, reverie_home, selected, detected, existing_llm, config_existed, dry_run,
+            provider, reconfigure, no_verify, verify_fn, import_file, check_fn, input_fn,
+            print_fn, which, environ, runner)
+    finally:
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _install_rest(home, reverie_home, selected, detected, existing_llm, config_existed,
+                  dry_run, provider, reconfigure, no_verify, verify_fn, import_file,
+                  check_fn, input_fn, print_fn, which, environ, runner) -> int:
     # -- per-agent configuration -------------------------------------------
     writes: list[tuple[str | None, PlannedWrite]] = []
     for agent in selected:

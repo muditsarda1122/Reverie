@@ -111,6 +111,20 @@ reverie merge [--repo PATH]
 
 Exit: `0` on success, `1` when there is no memory yet.
 
+## reverie install: profiles
+
+An agent can have several config directories (`CLAUDE_CONFIG_DIR=~/.claude-work`,
+a second `~/.claude-*`, `CODEX_HOME`, a relocated `XDG_CONFIG_HOME`). Reverie
+never guesses which one your agent reads. If your shell's environment points at
+one, it installs there and lists the others. If several exist and nothing points
+at one, it asks (interactive) or stops and lists them (`--all` / `--only`).
+
+```bash
+reverie install --list-profiles                      # what is on this machine
+reverie install --profile claude_code=~/.claude-work   # choose explicitly (repeatable)
+reverie install --profile codex=~/.codex-alt
+```
+
 ## reverie transcripts
 
 Reads the transcripts the harnesses already keep (Claude Code, Codex,

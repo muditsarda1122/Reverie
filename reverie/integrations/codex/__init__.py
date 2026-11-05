@@ -17,7 +17,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from ... import launch
+from ... import launch, profiles
 from ..base import Integration
 from ..common import (
     _REVIEW_COMMAND_BODY,
@@ -80,15 +80,15 @@ CODEX_SKILL_OPENAI = "allow_implicit_invocation: false\n"
 
 
 def _config_path(home: Path) -> Path:
-    return Path(home) / ".codex" / "config.toml"
+    return profiles.codex_dir(home) / "config.toml"
 
 
 def _agents_path(home: Path) -> Path:
-    return Path(home) / ".codex" / "AGENTS.md"
+    return profiles.codex_dir(home) / "AGENTS.md"
 
 
 def _prompts_dir(home: Path) -> Path:
-    return Path(home) / ".codex" / "prompts"
+    return profiles.codex_dir(home) / "prompts"
 
 
 def _skills_root(home: Path) -> Path:

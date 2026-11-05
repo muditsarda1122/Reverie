@@ -24,6 +24,13 @@ def _no_user_claude_config_dir(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_user_harness_dirs(monkeypatch):
+    # installer tests pass a tmp `home`; a developer's CODEX_HOME / XDG_CONFIG_HOME must not leak in
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_transcript_import(monkeypatch):
     # tests must never scan the developer's real ~/.claude, ~/.codex, ...
     monkeypatch.setenv("REVERIE_NO_IMPORT", "1")

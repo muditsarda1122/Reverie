@@ -12,7 +12,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from ... import launch
+from ... import launch, profiles
 from ..base import Integration
 from ..common import (
     _REVIEW_COMMAND_BODY,
@@ -51,19 +51,19 @@ OPENCODE_COMMANDS: dict[str, str] = _OPENCODE_COMMANDS
 
 
 def _config_path(home: Path) -> Path:
-    return Path(home) / ".config" / "opencode" / "opencode.json"
+    return profiles.opencode_dir(home) / "opencode.json"
 
 
 def _agents_path(home: Path) -> Path:
-    return Path(home) / ".config" / "opencode" / "AGENTS.md"
+    return profiles.opencode_dir(home) / "AGENTS.md"
 
 
 def _commands_dir(home: Path) -> Path:
-    return Path(home) / ".config" / "opencode" / "commands"
+    return profiles.opencode_dir(home) / "commands"
 
 
 def _plugin_path(home: Path) -> Path:
-    return Path(home) / ".config" / "opencode" / "plugin" / _plugin.PLUGIN_NAME
+    return profiles.opencode_dir(home) / "plugin" / _plugin.PLUGIN_NAME
 
 
 def _hook_launch() -> tuple[list[str], dict[str, str]]:
