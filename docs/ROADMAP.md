@@ -135,9 +135,12 @@ Learned from the P0 runs, now on the list:
     in `meta.usage`, `reverie usage` reports, repeat contradictions mark an item
     `challenged`. Open: let usage RANK delivery (dormant items sink, proven ones rise);
     verify the judge on more than three cases.
-14. **Learning-curve benchmark**: a sequence of N realistic tasks on a fresh
-    repo, memory on vs off, the metrics above. Repeat on a new repo each time
-    (httpx was the first). Runs after every P0/P1 item that changes behaviour.
+14. **Learning-curve benchmark**: first slice DONE (pytest, 6 tasks, memory on vs off,
+    claude, 1 run per arm). Round 1 was confounded (agent imitated the earlier function
+    in the same file) and is reported as no evidence. Round 2 (new file per task, an
+    arbitrary naming rule): memory-on 0 violations in 5 post-rule tasks, off 3 of 5; behaviour 6/6
+    both; no drop in exploration; ~10% more cost per task. Next: 10+ tasks, 3 repeats, a second
+    harness, rules that change (staleness), cost over time. Details in `P0_LOG.md`.
 
 ### Codex trust (open decision for the user)
 Every user must approve Reverie's hooks once (`/hooks`), and again if the hook
