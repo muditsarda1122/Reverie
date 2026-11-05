@@ -42,6 +42,23 @@ Importer readers (all stdlib, read-only, redact before storing, cursor =
 file + offset so nothing is read twice): Claude, Codex, opencode (only the
 session/message/part tables, never the credential tables), Cursor.
 
+## Verifying Cursor hooks (needs an account with usage left)
+
+Cursor's `sessionStart` hook was seen firing headless. The prompt, stop and
+context-injection hooks were not, because the test account was over its usage
+limit before a prompt was submitted, so Reverie does not install Cursor hooks
+yet (the transcript importer and MCP cover Cursor). To finish the check:
+
+1. In a throwaway git repo create `.cursor/hooks.json` with `beforeSubmitPrompt`,
+   `stop` and `sessionStart` entries that run a script appending stdin to a file.
+2. Run `cursor-agent -p --trust "say pong"` and read the file: expect the three
+   events, a `conversation_id`, and for `stop` the final message or a `transcript_path`.
+3. Make the `sessionStart` hook print `{"additional_context": "the secret word is plum"}`
+   and ask the agent "what is the secret word?": if it answers, context injection works.
+
+If all three hold, add a `cursor` hooks block mirroring `integrations/opencode`
+(stdlib shim + installer entry) and move Cursor to "hooks + importer" in the README table.
+
 ## Version notes
 
 - **Claude Code** needs 2.1.121 or later for `"alwaysLoad": true`. Without it,
