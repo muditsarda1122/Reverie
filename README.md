@@ -1,8 +1,14 @@
 # Reverie
 
-Reverie is engineering memory for coding agents. While you and your agent work, it captures the engineering conclusions you reach (invariants, root causes, design decisions, corrected assumptions) and stores them in one local SQLite file. In a later conversation, after you have reviewed them, those conclusions come back to the agent with their confidence, their grounding in your code, and their current status, framed as past understanding to verify, never as authority.
+Reverie is engineering memory for coding agents. It works across Claude Code, Codex CLI, opencode and Cursor, on one local SQLite file. It remembers what **you** said (rules, decisions, preferences) and what the code really changed, hands it to the next agent at the start of a session and again when that agent edits the file it applies to, keeps it true as the code moves on, and lets you pick up a session another tool left unfinished.
 
-> **Status: early.** Reverie has been used on a small number of projects so far. Some candidate conclusions are wrong, and your agent doesn't always check memory on its own. Review what Reverie keeps, and tell us where it fails.
+- **Capture from evidence.** An item is stored only when your own words or the real diff back it. What an agent says about its own work is never a source.
+- **Across tools.** Reverie reads the transcripts each harness already keeps (including headless, scripted and killed sessions) and, where a harness allows hooks, hooks in too. A session started in Codex can be finished in Claude: `reverie resume`.
+- **Secrets never stored.** API keys, tokens, `Authorization` headers and `KEY=value` secrets are redacted before anything is written, and again when it is shown (`KEY=[REDACTED]` keeps the variable name).
+- **Stays correct.** Anchors point at real files and symbols; when a commit contradicts an item, it is flagged with a proposed replacement.
+- **Bounded.** Near-duplicates are shown once ("seen 5 times"), and a daily merge folds restatements together.
+
+> **Status: early.** Reverie has been used on a small number of projects. Expect rough edges and tell us where it fails.
 
 ## Install
 
@@ -31,15 +37,22 @@ You need an LLM provider key before Reverie can extract anything. Set one before
 
 ## Quick start
 
-1. Open your agent in any project.
-2. **Reverie is on in every repo by default.** There is no question to answer. Opt a repo out with `reverie disable` (and back in with `reverie enable`); existing memory is kept. `reverie install` tells you once what is sent to your LLM provider.
-3. **Just code.** Sessions are automatic per branch. As your agent works, it records a conclusion when it reaches a real engineering insight, not for every edit. A candidate from one branch isn't visible on another branch. Accepted conclusions are visible everywhere.
-4. **Review when you like.** Candidates wait in one review queue across every branch and repo. Run `reverie review` in a terminal, say "show my Reverie candidates" in the chat, or type `/reverie-review`. Nothing reaches long-term memory without your decision.
-5. In a later conversation, after your agent reads the relevant code, it asks Reverie for past conclusions. They come back with their confidence, grounding and status, framed as past understanding to verify, never as authoritative context.
+1. Open your agent in any project. **Reverie is on in every repo by default**; opt a repo out with `reverie disable` (back in with `reverie enable`). Existing memory is kept.
+2. **Just code.** Reverie logs your prompts (redacted) and extracts rules, decisions and preferences in the background. Nothing to review before it works; every item can be undone with `reverie undo <id>`, and `reverie digest` lists what was added.
+3. **New session, any tool.** Your rules and a short index arrive at session start; items tied to a file arrive when the agent edits it.
+4. **Session cut off?** In the next agent, say "my previous session got cut off, run `reverie resume`". It prints your rules, every prompt you sent (verbatim, redacted) and the git state, whichever tool the session ran in.
+5. **Keep it true.** `reverie stale check` (also automatic after new commits) flags items a commit contradicts. `reverie stale accept|keep` resolves them.
 
 ## Supported agents
 
-Reverie connects to Claude Code, Codex CLI, Cursor and OpenCode as an MCP server. The tested versions, what Reverie writes for each, and what was verified are in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md). The file paths, hooks and permission setup for each agent are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). Any other MCP client can be set up by hand, as described in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+| Agent | Memory delivered by | Prompts and answers captured by |
+|---|---|---|
+| Claude Code | hooks (session start, before each edit) + MCP | hooks + transcript importer |
+| opencode | plugin (rules in the system prompt) + MCP | plugin + transcript importer |
+| Codex CLI | hooks after you approve them once (`/hooks` in Codex) + MCP | hooks (once approved) + transcript importer |
+| Cursor | MCP | transcript importer (hooks not verified yet) |
+
+Every agent is also an MCP client of Reverie (`query`, `summary`, ...), which stays the fallback. Codex only runs a hook after you approve it; until then the transcript importer still covers every session. Tested versions, what Reverie writes for each agent, and the spike results are in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md); file paths and permissions are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). Any other MCP client can be set up by hand, as in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
 ## Model providers
 
@@ -63,7 +76,16 @@ To switch provider, run `reverie install --provider anthropic`, or edit the `llm
 | `reverie install` | Configure your agents and `~/.reverie` |
 | `reverie enable` / `reverie disable` | Turn Reverie on or off for the current repo |
 | `reverie repos` | List every repo Reverie knows about, with its state and counts |
-| `reverie review` | Review pending candidates in a terminal interface |
+| `reverie resume` | Print rules, your prompt log and git state to continue a cut-off session in any tool |
+| `reverie transcripts` | Import new prompts/answers from the harnesses' own transcripts (also automatic) |
+| `reverie rules` | Show or edit the rules Reverie always applies |
+| `reverie show` | Show one memory item in full |
+| `reverie undo` | Undo an item that was added automatically |
+| `reverie digest` | List what was added recently |
+| `reverie promote` | Make an item apply to all your projects (or back to one repo) |
+| `reverie stale` | Check memory against new commits; accept or keep what is flagged |
+| `reverie merge` | Merge near-duplicate items (also runs by itself, at most daily) |
+| `reverie review` | Review legacy candidate conclusions in a terminal interface |
 | `reverie status` | Show the session and brain report |
 | `reverie export` / `reverie import` | Back up or restore your memory as one ZIP file |
 | `reverie reset` | Wipe the brain, or one repo, after an automatic backup |
@@ -77,7 +99,8 @@ The full reference, with flags and examples, is in [`docs/CLI.md`](docs/CLI.md).
 
 - Everything is local, in one SQLite file: `~/.reverie/reverie.db`. Your configuration, the agent instructions and the slash commands sit beside it. There is no account, no cloud service and no telemetry.
 - **Reverie never writes into your repositories.** Each repo's state (on, off, asked) is stored in `~/.reverie`, not in a file inside your project.
-- **What leaves your machine:** only what the LLM features need, such as the extraction prompt, your agent's reasoning and output, and candidate pairs for classification. Those go to the provider you configured. With Ollama, nothing leaves your machine.
+- **Secrets are redacted before they are stored** (the prompt log, items, the importer's cursor file) and again when shown. Reverie keeps no raw copy. Your harness's own transcript is outside Reverie and may still hold what you typed.
+- **What leaves your machine:** only what the LLM features need, such as the redacted exchange and the working-tree diff for extraction, and candidate pairs for merging. Those go to the provider you configured. With Ollama, nothing leaves your machine.
 - **API keys** are read from environment variables. Reverie never writes them to disk.
 - **Backups:** `reverie export` writes one ZIP file with a consistent snapshot. `reverie import` restores it. `--replace` makes an automatic backup first.
 

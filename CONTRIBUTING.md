@@ -82,3 +82,11 @@ part of the user documentation:
 
 By contributing, you agree that your contributions will be licensed under
 the [Apache License 2.0](LICENSE).
+
+## Keep the README current
+
+The README describes what the product does today. `tests/test_readme_sync.py`
+fails when a CLI command or a supported harness is missing from it, so a change
+that adds one updates the README in the same commit. Behaviour changes that the
+test cannot see (what is captured, how memory is delivered, what is redacted)
+belong in the README's intro, Quick start and Supported agents sections too.
