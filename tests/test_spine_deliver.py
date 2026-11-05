@@ -198,3 +198,40 @@ def test_headline_index_orders_rules_first_and_caps(env):
     assert "Decision first please" in lines[1]
     assert lines[-1].startswith("(+3 more")
     assert " …" in deliver.title("w " * 40)
+
+
+def test_startup_cap_is_configurable_and_rules_always_survive(tmp_path, monkeypatch):
+    import subprocess
+
+    from reverie import deliver, items
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("REVERIE_HOME", str(home))
+    repo = tmp_path / "r"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    conn = items.connect(home / "reverie.db")
+    conn.execute("CREATE TABLE IF NOT EXISTS repos (repo_key TEXT PRIMARY KEY, state TEXT)")
+    key = deliver.repo_key(repo)
+    for i in range(3):
+        items.add(conn, text=f"Rule number {i}: always run linters before committing step {i}",
+                  kind="rule", source="user_said", repo_key=key)
+    for i in range(120):
+        items.add(conn, text=f"Decision {i}: module m{i} caches results for reason {i}",
+                  kind="decision", source="user_said", repo_key=key)
+    conn.close()
+    monkeypatch.setenv("REVERIE_STARTUP_CHARS", "8000")
+    big = deliver.startup_text(str(repo))
+    monkeypatch.setenv("REVERIE_STARTUP_CHARS", "1500")
+    small = deliver.startup_text(str(repo))
+    assert len(small) <= 1500 and len(big) <= 8000 and len(small) < len(big)
+    for n in range(3):
+        assert f"Rule number {n}" in small and f"Rule number {n}" in big   # rules never dropped
+    assert small.count("Decision") < big.count("Decision")                 # the index shrinks
+    monkeypatch.delenv("REVERIE_STARTUP_CHARS")
+    (home / "config.yaml").write_text("deliver:\n  startup_chars: 2000\nother: 1\n")
+    assert deliver.startup_cap() == 2000
+    (home / "config.yaml").write_text("deliver:\n  startup_chars: 5\n")
+    assert deliver.startup_cap() == deliver.MIN_STARTUP_CHARS
+    (home / "config.yaml").write_text("x: 1\n")
+    assert deliver.startup_cap() == deliver.MAX_STARTUP_CHARS

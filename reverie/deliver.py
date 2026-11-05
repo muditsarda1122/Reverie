@@ -38,7 +38,8 @@ from .redact import redact
 
 MAX_POINT_ITEMS = 3
 MAX_CONTEXT_CHARS = 6000          # harnesses cap hook context (10k chars)
-MAX_STARTUP_CHARS = 8000          # session-start block, under that cap
+MAX_STARTUP_CHARS = 8000          # default size of the session-start block
+MIN_STARTUP_CHARS = 1500          # below this the rules themselves would not fit
 MAX_RULE_LINES = 30
 MAX_WIDE_LINES = 15
 MAX_OUTDATED_LINES = 8
@@ -55,6 +56,24 @@ MAX_FILE_BYTES = 1_000_000
 _KIND_ORDER = {"rule": 0, "decision": 1, "rejected_approach": 2,
                "work_state": 3, "preference": 4, "environment": 5,
                "external_context": 6, "open_question": 7, "observation": 9}
+
+
+def startup_cap() -> int:
+    """Size cap of the session-start block: env ``REVERIE_STARTUP_CHARS``, else
+    ``deliver.startup_chars`` in config.yaml (read with a regex: this module must
+    not import yaml), else the default. Clamped to a sane range."""
+    raw = os.environ.get("REVERIE_STARTUP_CHARS")
+    if not raw:
+        try:
+            text = (spool.reverie_home() / "config.yaml").read_text(encoding="utf-8")
+            m = re.search(r"(?m)^deliver:\s*\n(?:[ \t]+.*\n)*?[ \t]+startup_chars:\s*(\d+)", text)
+            raw = m.group(1) if m else ""
+        except OSError:
+            raw = ""
+    try:
+        return max(MIN_STARTUP_CHARS, min(int(raw), 9500)) if raw else MAX_STARTUP_CHARS
+    except ValueError:
+        return MAX_STARTUP_CHARS
 
 
 def db_path() -> Path:
@@ -208,10 +227,11 @@ def _rules_files_text(cwd: str) -> str:
 
 def startup_text(cwd: str) -> str:
     """Everything an agent should know at the start of a session, within
-    ``MAX_STARTUP_CHARS``: the user's rules, rules stated in earlier sessions
+    the configured cap (``deliver.startup_chars``, default 8000): the user's rules, rules stated in earlier sessions
     (stale ones set apart), and the headline index of everything else.
     '' when disabled or empty. Never raises; read-only."""
     try:
+        cap = startup_cap()
         root = spool.repo_root(cwd)
         files_text = _rules_files_text(cwd)
         mem: list[dict] = []
@@ -237,7 +257,7 @@ def startup_text(cwd: str) -> str:
         rest = [m for m in fresh if m["id"] not in listed]
 
         parts: list[str] = []
-        left = MAX_STARTUP_CHARS - 700          # keep room for the index + notes
+        left = cap - 700          # keep room for the index + notes
         if files_text:
             if len(files_text) > 2400:
                 files_text = files_text[:2400].rsplit("\n", 1)[0] + (
@@ -267,14 +287,14 @@ def startup_text(cwd: str) -> str:
             parts.append("Possibly outdated (a later commit may contradict these; verify "
                          "against the code before relying on them):\n" + body)
         used = sum(len(p) for p in parts) + 2 * len(parts)
-        room = max(0, MAX_STARTUP_CHARS - used - 220)
+        room = max(0, cap - used - 220)
         limit = max(0, min(INDEX_MAX_LINES, room // 150))
         index = headline_index(rest, limit=limit) if rest and limit else ""
         if index:
             parts.append(index)
         text = "\n\n".join(parts)
-        if len(text) > MAX_STARTUP_CHARS:
-            text = text[: MAX_STARTUP_CHARS - 80].rstrip() + (
+        if len(text) > cap:
+            text = text[: cap - 80].rstrip() + (
                 "\n(…truncated; `reverie rules list` and `reverie digest` show the rest)")
         return text
     except Exception:

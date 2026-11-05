@@ -338,6 +338,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "test_command": "",       # "" = `python -m pytest -q -x` when tests/ exists
         "test_timeout": 300,
     },
+    "deliver": {
+        # Session-start block size in characters. Rules are always included first;
+        # everything else is a pointer in the index, so a smaller cap loses index
+        # lines, never rules. Hooks harnesses cap injected context near 10 000.
+        "startup_chars": 8000,
+    },
     "digest": {
         "min_new_items": 5,       # nudge at session start once this many are new
         "min_days": 3,            # ...or when the last digest is this old

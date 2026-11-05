@@ -113,8 +113,9 @@ Learned from the P0 runs, now on the list:
 8. **Staleness**: diff-judge is primary; tests off by default.
 
 ### P1: make delivery bounded
-9. **Start block**: rules always, the rest as pointers; configurable cap
-   (`deliver.startup_chars`).
+9. **Start block** DONE: rules always, the rest as pointers; cap is
+   `deliver.startup_chars` (config.yaml) or `REVERIE_STARTUP_CHARS`, clamped
+   1500-9500, default 8000. A smaller cap drops index lines, never rules.
 10. **Resume card**: per-task rewritten card with a fixed budget; last
     unhandled prompt trimmed with a pointer; card built lazily at `resume`
     when the session was killed. Redacted secrets appear as a note, not a
