@@ -288,6 +288,10 @@ earlier sessions and an index of past decisions (`memory`). Read the rules and
 follow them; items marked as possibly outdated need verifying against the code.
 Use query for the details of anything that looks relevant.
 
+If the user asks you to continue earlier work that was cut off, call summary
+again with resume=true: it returns their rules, every prompt they sent and the
+git state.
+
 If the response contains a pending-review nudge, mention it to the user at
 most once per conversation (counts only, never contents)."""
 
@@ -434,7 +438,11 @@ def _query_schema() -> dict:
 
 
 def _summary_schema() -> dict:
-    return _schema({"repo_path": dict(_REPO_PATH_PROP)}, [])
+    return _schema({"repo_path": dict(_REPO_PATH_PROP),
+                    "resume": {"type": "boolean", "description": (
+                        "Set true when the user asks you to continue earlier work that was "
+                        "cut off: returns the resume card (their rules, every prompt they "
+                        "sent, git state).")}}, [])
 
 
 def _reconsolidate_schema() -> dict:
@@ -1116,7 +1124,8 @@ class ReverieServer:
         global server in the home folder still reports brain stats). The
         harness-neutral implementation lives in ``core_api.summary`` so the
         SessionStart hook can reuse the exact same formatting."""
-        return core_api.summary(args.get("repo_path"), _server=self)
+        return core_api.summary(args.get("repo_path"), resume=bool(args.get("resume")),
+                                _server=self)
 
     def _tool_reconsolidate(self, args: dict) -> dict:
         """D37 — reconsolidate (design doc §5.2): re-evaluate a labile

@@ -141,6 +141,7 @@ reverie resume                  # latest session in this repo
 reverie resume --session <id>   # a specific session
 reverie resume --all            # every recorded prompt
 reverie resume --latest         # skip the picker, take the most recent session
+reverie resume --prompt 3       # prompt 3 of the session in full (the card trims long ones)
 ```
 
 Exit: `0` always.

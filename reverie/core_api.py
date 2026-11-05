@@ -77,8 +77,30 @@ def _with_typed_memory(payload: dict, repo_path: str | None) -> dict:
     return payload
 
 
+def _with_continuation(payload: dict, repo_path: str | None, resume: bool) -> dict:
+    """A recent cut-off session is announced in one line; ``resume=True`` returns the
+    bounded resume card itself (rules, prompts, git state)."""
+    repo = (payload.get("session") or {}).get("repo") or repo_path
+    if not repo or payload.get("status") != "ok":
+        return payload
+    try:
+        from . import rules, spool
+        if resume:
+            payload["resume"] = spool.render_resume(repo, latest=True,
+                                                    rules_text=rules.render(repo))
+            payload["message"] = (payload.get("message", "") + "\n\n" + payload["resume"]).strip()
+        else:
+            hint = spool.cutoff_hint(repo)
+            if hint:
+                payload["continuation"] = hint
+                payload["message"] = (payload.get("message", "") + "\n\n" + hint).strip()
+    except Exception:
+        pass
+    return payload
+
+
 def summary(repo_path: str | None = None, branch: str | None = None, *,
-            read_only: bool = False, _server=None) -> dict:
+            read_only: bool = False, resume: bool = False, _server=None) -> dict:
     """Brain statistics (and the review nudge), never individual conclusions.
 
     Default matches the MCP ``summary`` tool exactly: gated on enablement,
@@ -123,9 +145,9 @@ def summary(repo_path: str | None = None, branch: str | None = None, *,
         else:
             row = server._enabled_session(info)
         wanted_branch = branch or info.branch
-    return _with_typed_memory(
+    return _with_continuation(_with_typed_memory(
         _summary_payload(server, info if ctx is not None else None, row,
-                         wanted_branch), repo_path)
+                         wanted_branch), repo_path), repo_path, resume)
 
 
 def observe(user_prompt: str, work_summary: str,

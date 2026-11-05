@@ -116,11 +116,11 @@ Learned from the P0 runs, now on the list:
 9. **Start block** DONE: rules always, the rest as pointers; cap is
    `deliver.startup_chars` (config.yaml) or `REVERIE_STARTUP_CHARS`, clamped
    1500-9500, default 8000. A smaller cap drops index lines, never rules.
-10. **Resume card**: per-task rewritten card with a fixed budget; last
-    unhandled prompt trimmed with a pointer; card built lazily at `resume`
-    when the session was killed. Redacted secrets appear as a note, not a
-    value. The agent asks the user only if it actually needs one, and
-    prefers an env var.
+10. **Resume card** DONE (this commit). Bounded (~2K chars last prompt, 6K for the
+    rest), buried constraints kept, per-prompt tool label, `--prompt N` for the whole
+    text, secrets as a note. Cut-off sessions are announced by MCP `summary` (works with
+    no shell/PATH and no hooks) and `summary resume:true` returns the card. Open: link
+    chains of sessions across tools, an LLM rewrite of the card.
 
 ### P2: install experience
 11. **Profile discovery**: find every Claude/Codex/OpenCode/Cursor profile or

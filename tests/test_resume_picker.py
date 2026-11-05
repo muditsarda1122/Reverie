@@ -52,3 +52,27 @@ def test_render_resume_asks_then_latest_flag_resumes(tmp_path, monkeypatch):
     latest = spool.render_resume(repo, latest=True)
     assert "second task" in latest and "first task" not in latest
     assert "first task" in spool.render_resume(repo, session="s1")
+
+
+def test_cutoff_hint_and_summary_resume_for_agents_without_a_shell(tmp_path, monkeypatch):
+    """Regression (real run): codex's login shell had no `reverie` on PATH, so the policy's
+    `reverie resume` silently failed. MCP `summary` now announces a cut-off session and can
+    return the card."""
+    import time
+
+    from reverie import spool
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "r"
+    repo.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    spool.append(repo, "prompt", "add summarize_failures, only log when DEBUG is on",
+                 session="c1", harness="claude", branch="main", t="2026-11-05T10:00:00+0000")
+    base = time.mktime(time.strptime("2026-11-05T10:00:00", "%Y-%m-%dT%H:%M:%S"))
+    assert spool.cutoff_hint(repo, now=base + 30) == ""              # too fresh: the live session
+    hint = spool.cutoff_hint(repo, now=base + 600)
+    assert "unanswered" in hint and "only log when DEBUG is on" in hint and "resume: true" in hint
+    assert spool.cutoff_hint(repo, now=base + 3 * 86400) == ""       # a day old: history
+    spool.append(repo, "answer", "done", session="c1", harness="claude", branch="main",
+                 t="2026-11-05T10:01:00+0000")
+    assert spool.cutoff_hint(repo, now=base + 600) == ""              # it was answered

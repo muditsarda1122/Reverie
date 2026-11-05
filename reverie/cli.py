@@ -323,6 +323,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="every recorded prompt, all sessions")
     p.add_argument("--latest", action="store_true",
                    help="the most recent session, without asking which")
+    p.add_argument("--prompt", type=int, default=None, metavar="N",
+                   help="print prompt N of the session in full (the resume card "
+                        "trims long prompts)")
     p = sub.add_parser("undo", help="undo a remembered item (reversible)")
     p.add_argument("id")
     p.add_argument("--restore", action="store_true",
@@ -464,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
         importers.lazy(cwd)
         print(spool.render_resume(cwd, session=args.session,
                                   all_sessions=args.all_sessions,
-                                  latest=args.latest,
+                                  latest=args.latest, full_prompt=args.prompt,
                                   rules_text=rules.render(cwd)))
         return 0
     if args.command == "rules":

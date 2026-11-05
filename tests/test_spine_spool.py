@@ -184,3 +184,71 @@ def test_uninstall_removes_only_reverie_hooks(tmp_path):
     left.pop("permissions", None)      # owned-entry bookkeeping is not under test
     assert left == {"hooks": {"UserPromptSubmit": [
         {"hooks": [{"type": "command", "command": "mine.sh"}]}]}}
+
+
+# ------------------------------------------------------------- bounded resume card
+
+def _log(tmp_path, monkeypatch, prompts):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "r"
+    repo.mkdir()
+    for i, (text, harness) in enumerate(prompts):
+        spool.append(repo, "prompt", text, session="s1", harness=harness, branch="main",
+                     t=f"2026-11-05T10:{i:02d}:00+0000")
+    return repo
+
+
+def test_card_is_bounded_keeps_the_last_prompt_and_a_buried_constraint(tmp_path, monkeypatch):
+    huge = ("Here is the failing log: " + "line of noise 12345 abc. " * 6000 +
+            " Also: only log this when DEBUG is set, and test both transports.")
+    repo = _log(tmp_path, monkeypatch, [(huge, "claude"), ("now add the docs", "codex"),
+                                        ("finish the CLI part and run the tests", "codex")])
+    out = spool.render_resume(repo, session="s1")
+    assert len(out) < 9_000                                   # was 150K before
+    assert "only log this when DEBUG is set" in out           # the buried requirement survived
+    assert "finish the CLI part and run the tests" in out and "(LAST: may not have been handled)" in out
+    assert "[prompt 1 · claude]" in out and "[prompt 3 · codex]" in out
+    assert "reverie resume --prompt 1" in out                 # pointer to the whole text
+    assert spool.render_resume(repo, session="s1", full_prompt=1).startswith("Here is the failing log")
+    assert len(spool.render_resume(repo, session="s1", full_prompt=1)) > 100_000
+    assert spool.render_resume(repo, session="s1", full_prompt=9).startswith("No prompt 9")
+
+
+def test_card_drops_oldest_prompts_when_there_are_many_and_says_so(tmp_path, monkeypatch):
+    prompts = [(f"step {i}: " + "x" * 450, "claude") for i in range(1, 31)]
+    repo = _log(tmp_path, monkeypatch, prompts)
+    out = spool.render_resume(repo, session="s1")
+    assert "[prompt 30 · claude] (LAST" in out and "[prompt 29" in out
+    assert "[prompt 1 ·" not in out and "earlier prompt(s) left out" in out
+    assert len(out) < 9_500
+    full = spool.render_resume(repo, all_sessions=True)
+    assert "[prompt 1] step 1:" in full                      # --all stays verbatim
+
+
+def test_short_sessions_are_unchanged(tmp_path, monkeypatch):
+    repo = _log(tmp_path, monkeypatch, [("add retry_on", "claude"), ("also test it", "claude")])
+    out = spool.render_resume(repo, session="s1")
+    assert "add retry_on" in out and "also test it" in out and "left out" not in out
+
+
+def test_the_resume_request_itself_is_not_the_session_to_resume(tmp_path, monkeypatch):
+    """Regression (real run): codex's 'my previous session got cut off, run reverie resume'
+    was logged as the newest session and `--latest` resumed it instead of the cut-off one."""
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "r"
+    repo.mkdir()
+    spool.append(repo, "prompt", "add summarize_failures; also only log when DEBUG is on",
+                 session="claude-1", harness="claude", branch="main", t="2026-11-05T10:00:00+0000")
+    spool.append(repo, "prompt", "My previous session on this repo got cut off. Run reverie resume "
+                 "and finish it.", session="codex-1", harness="codex", branch="main",
+                 t="2026-11-05T10:05:00+0000")
+    out = spool.render_resume(repo, latest=True)
+    assert "only log when DEBUG is on" in out
+    out2 = spool.render_resume(repo)                      # no flag: unambiguous too
+    assert "only log when DEBUG is on" in out2 and "Several earlier sessions" not in out2
+    # a session that mixes a resume ask with real work stays a candidate
+    spool.append(repo, "prompt", "continue the previous session, then also add docs",
+                 session="codex-1", harness="codex", branch="main", t="2026-11-05T10:06:00+0000")
+    assert spool.last_session(spool.read(repo)) in ("claude-1", "codex-1")
+    only = [{"kind": "prompt", "session": "a", "text": "resume please: cut off", "t": "1"}]
+    assert spool.last_session(only) == "a"                # all-resume repo: still returns something

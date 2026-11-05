@@ -33,7 +33,14 @@ from .redact import PLACEHOLDER, redact
 
 ANSWER_CAP = 8000          # chars of a final answer kept in the log
 PROMPT_CAP = 200_000       # sanity cap only; prompts are otherwise verbatim
-RESUME_BUDGET_CHARS = 40_000
+RESUME_BUDGET_CHARS = 40_000     # `--all` and legacy callers
+#: the bounded resume card (about 1.5-2K tokens of prompts)
+CARD_PROMPT_BUDGET = 6_000       # all earlier prompts together
+CARD_LAST_CAP = 2_000            # the last prompt: the one that may be unhandled
+CARD_EARLIER_CAP = 600           # each earlier prompt
+CARD_CUE = re.compile(
+    r"\b(never|always|must|only|don'?t|do not|also|make sure|instead|before|after that|"
+    r"later|then|when you|require[sd]?|should not|shouldn'?t|without)\b", re.I)
 
 #: Compaction seam. A compactor takes the prompt records of one session and
 #: returns the records to print. The default keeps everything: the log was
@@ -132,11 +139,74 @@ def read(cwd: str | Path) -> list[dict]:
 
 def last_session(records: Iterable[dict]) -> str:
     """Session id of the most recent prompt ('' when ids are absent)."""
+    records = list(records)
+    skip = resume_only_sessions(records)
     last, last_t = "", ""
     for rec in records:
-        if rec["kind"] == "prompt" and rec.get("t", "") >= last_t:
+        if rec["kind"] == "prompt" and rec.get("session", "") not in skip \
+                and rec.get("t", "") >= last_t:
             last, last_t = rec.get("session", ""), rec.get("t", "")
+    if not last:                         # nothing but resume requests: the newest of them
+        for rec in records:
+            if rec["kind"] == "prompt" and rec.get("t", "") >= last_t:
+                last, last_t = rec.get("session", ""), rec.get("t", "")
     return last
+
+
+#: a prompt that only asks to continue earlier work: it is the CURRENT session, not
+#: the one to resume (found on a real run: codex's own "my session got cut off, run
+#: reverie resume" prompt was imported as the newest session and `--latest` picked it)
+RESUME_ASK = re.compile(
+    r"reverie resume|cut off|got interrupted|pick up where|continue (?:the |my )?(?:previous|earlier|last)|"
+    r"resume (?:the |my )?(?:previous|earlier|last)|previous session", re.I)
+
+
+def resume_only_sessions(records: Iterable[dict]) -> set[str]:
+    """Sessions in which EVERY prompt is a request to resume (short, matching RESUME_ASK)."""
+    seen: dict[str, bool] = {}
+    for rec in records:
+        if rec.get("kind") != "prompt":
+            continue
+        text = rec.get("text", "")
+        is_ask = len(text) < 600 and bool(RESUME_ASK.search(text))
+        sid = rec.get("session", "")
+        seen[sid] = seen.get(sid, True) and is_ask
+    return {sid for sid, only in seen.items() if only}
+
+
+CUTOFF_MIN_AGE = 120          # s: younger than this it is probably the live session
+CUTOFF_MAX_AGE = 86_400       # s: older than a day is history, not a cut-off
+
+
+def cutoff_hint(cwd: str | Path, now: float | None = None) -> str:
+    """One short paragraph when a recent session ended right after a prompt (no
+    answer logged after it), else ''. Lets agents with no shell on PATH (and no
+    hooks) discover that there is something to resume."""
+    try:
+        records = read(cwd)
+        skip = resume_only_sessions(records)
+        now = now if now is not None else time.time()
+        for info in sessions(records):
+            if info["session"] in skip:
+                continue
+            mine = [r for r in records if r.get("session", "") == info["session"]]
+            if not mine or mine[-1]["kind"] != "prompt":
+                return ""                 # the newest real session was answered
+            try:
+                age = now - time.mktime(time.strptime(info["last"][:19], "%Y-%m-%dT%H:%M:%S"))
+            except ValueError:
+                return ""
+            if not (CUTOFF_MIN_AGE <= age <= CUTOFF_MAX_AGE):
+                return ""
+            last = " ".join(mine[-1]["text"].split())
+            last = last[:117] + "..." if len(last) > 120 else last
+            return (f"An earlier session ({info['harness'] or 'unknown tool'}, last activity "
+                    f"{info['last'][:16]}) ended right after this prompt, unanswered: \"{last}\". "
+                    "If the user asks you to continue earlier work, get the full card with "
+                    "`summary` and `resume: true` (or `reverie resume` if it is on your PATH).")
+        return ""
+    except Exception:
+        return ""
 
 
 def select(records: list[dict], *, session: str | None = None,
@@ -189,6 +259,10 @@ def pick_session(records: list[dict], branch: str) -> tuple[str | None, list[dic
     unambiguous. Several on the branch (or none on it but several elsewhere)
     is ambiguous: the caller lists them and asks."""
     allsess = sessions(records)
+    skip = resume_only_sessions(records)
+    real = [i for i in allsess if i["session"] not in skip]
+    if real and len(real) < len(allsess):
+        allsess = real                   # the resume request itself is not a candidate
     if len(allsess) <= 1:
         return (allsess[0]["session"] if allsess else None), allsess
     on_branch = [i for i in allsess if i["branch"] == branch]
@@ -233,9 +307,57 @@ def git_state(cwd: str | Path) -> str:
     return "\n".join(parts)
 
 
+def trim_prompt(text: str, limit: int) -> tuple[str, bool]:
+    """-> (text within ``limit`` chars, was it trimmed). The head is kept; from the
+    rest, sentences with an instruction cue (never, always, also, only, ...) are
+    kept so a requirement tucked into a long message is not lost."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text, False
+    head_len = max(limit // 2, 200)
+    head = text[:head_len].rsplit(" ", 1)[0]
+    rest = text[len(head):]
+    kept: list[str] = []
+    used = len(head) + 40
+    for sent in re.split(r"(?<=[.!?\n])\s+", rest):
+        s = sent.strip()
+        if s and CARD_CUE.search(s) and used + len(s) + 2 <= limit:
+            kept.append(s)
+            used += len(s) + 2
+    tail = (" [...] " + " ".join(kept)) if kept else " [...]"
+    return head + tail, True
+
+
+def _card_lines(prompts: list[dict]) -> tuple[list[str], int]:
+    """Budgeted prompt lines, oldest first. The last prompt is clipped to
+    CARD_LAST_CAP, earlier ones to CARD_EARLIER_CAP while CARD_PROMPT_BUDGET lasts
+    (newest of them first); each says which tool it came from and how to get it whole."""
+    n = len(prompts)
+    rendered: dict[int, str] = {}
+    budget = CARD_PROMPT_BUDGET
+    order = [n - 1] + list(range(n - 2, -1, -1))        # the last one first, then newest back
+    for idx in order:
+        rec = prompts[idx]
+        cap = CARD_LAST_CAP if idx == n - 1 else CARD_EARLIER_CAP
+        if idx != n - 1 and budget <= 150:
+            break
+        text, trimmed = trim_prompt(rec["text"], cap if idx == n - 1 else min(cap, budget))
+        tool = f" · {rec['harness']}" if rec.get("harness") else ""
+        tag = f"[prompt {idx + 1}{tool}]" + (" (LAST: may not have been handled)" if idx == n - 1 else "")
+        more = f"\n(trimmed; whole prompt: `reverie resume --prompt {idx + 1}`)" if trimmed else ""
+        rendered[idx] = f"{tag} {text}{more}\n"
+        if idx != n - 1:
+            budget -= len(rendered[idx])
+    lines: list[str] = []
+    for idx in sorted(rendered):
+        lines += [rendered[idx].rstrip("\n"), ""]
+    return lines, n - len(rendered)
+
+
 def render_resume(cwd: str | Path, *, session: str | None = None,
                   all_sessions: bool = False, compactor: Compactor | None = None,
-                  rules_text: str = "", latest: bool = False) -> str:
+                  rules_text: str = "", latest: bool = False,
+                  full_prompt: int | None = None) -> str:
     everything = read(cwd)
     if session is None and not all_sessions and not latest:
         chosen, allsess = pick_session(
@@ -247,6 +369,10 @@ def render_resume(cwd: str | Path, *, session: str | None = None,
     records = select(everything, session=session, all_sessions=all_sessions)
     records = [{**r, "text": redact(r.get("text", ""))} for r in records]  # render pass
     prompts = [r for r in records if r["kind"] == "prompt"]
+    if full_prompt is not None:             # `reverie resume --prompt N`: one prompt, whole
+        if 1 <= full_prompt <= len(prompts):
+            return prompts[full_prompt - 1]["text"]
+        return f"No prompt {full_prompt} in this session ({len(prompts)} recorded)."
     if compactor is not None:
         prompts = compactor(prompts)
     out = ["# Resuming a previous session", ""]
@@ -260,9 +386,17 @@ def render_resume(cwd: str | Path, *, session: str | None = None,
             "later steps; honour all of them.",
             "",
         ]
-        for i, rec in enumerate(prompts, 1):
-            out.append(f"[prompt {i}] {rec['text']}")
-            out.append("")
+        if all_sessions or compactor is not None:
+            for i, rec in enumerate(prompts, 1):
+                out.append(f"[prompt {i}] {rec['text']}")
+                out.append("")
+        else:
+            lines, elided = _card_lines(prompts)
+            if elided:
+                out.append(f"({elided} earlier prompt(s) left out to keep this short: "
+                           "`reverie resume --all`)")
+                out.append("")
+            out += lines
     else:
         out += ["## What the user asked", "No prompt log exists for this repo "
                 "yet (nothing was recorded).", ""]
