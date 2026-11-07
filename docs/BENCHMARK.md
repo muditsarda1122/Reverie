@@ -48,3 +48,58 @@ Headline number: task 10 vs task 1 (and the slope), memory ON vs OFF.
   confounded and is reported as no evidence.
 - Everything is logged in the lab (`~/reverie-lab/P0_LOG.md`); scripts live in
   `~/reverie-lab/big/` and are reusable.
+
+
+## Results, run 1 (2026-11-07; poetry, claude + codex + opencode)
+
+Hidden checks written and validated against reference solutions before any agent ran.
+12 tiny tasks (one new module each), 4 conventions stated once by the "user"
+(task 1: name prefix, keyword-only params, error prefix; task 3: docstring last line),
+one of them CHANGED at task 9. Memory on vs off, every arm on its own clone.
+Clean data: single user, 5 repeats per arm (repeat 1 discarded, see below).
+
+| | memory ON | memory OFF |
+|---|---|---|
+| valid task-runs | 49 | 43 |
+| convention violations per task (max 4) | **0.04** (2 in 49) | **2.33** (100 in 43) |
+| tasks with zero violations | 47 / 49 | 5 / 43 |
+| behaviour correct (hidden tests) | 49 / 49 | 43 / 43 |
+| after the rule change (tasks 10-12): new error prefix used | 12 / 12 | 5 / 10 |
+| claude tools per task / before first edit / cost | 4.5 / 3.0 / $0.099 | 3.4 / 1.8 / $0.090 |
+
+By harness (tasks 2+): claude 0.07 vs 2.80, codex 0.05 vs 2.60, opencode 0.00 vs 2.00 (opencode n=9 vs 3, thin).
+Cut-off and resume in another harness (task 5 codex->claude, task 8 opencode->codex):
+memory ON, nothing existed on disk at the cut and the resumed agent finished correctly
+(module + tests) in 8 of 8 runs; memory OFF, 0 of 5 (task 8). Caveat: kill timing differed
+between arms, so this is a handoff signal, not a controlled comparison.
+
+Second user (separate clone, own memory, rules never stated to them), claude, 2 repeats x 3 tasks:
+nothing known: 4.00 violations per task (all four rules broken every time);
+the team's rules in a repo `.reverie/rules.md`: 0.00. Behaviour correct in all.
+
+### What it does and does not show
+- Memory removes forgotten conventions across sessions AND harnesses. Without it, an agent
+  never learns them (OFF stays flat at 2-3 violations per task for all 12 tasks).
+- It is a step (task 1 -> task 2), not a gradual curve: the rules were stated explicitly once,
+  so this tests recall and delivery, not judgement. A gradual curve needs implicit corrections.
+- Memory cost more exploration (reads the memory first), ~10% more cost per claude task. No saving.
+- Tasks are tiny and the conventions arbitrary; this is one repo and one model per harness.
+  "In my tests", not proof.
+
+### Problems the run found (all in the lab log)
+1. Contamination, caught before reporting: worktrees of one repo share a prompt log by
+   design, so the OFF arm's sessions leaked into the ON arm (rule change seen 4 tasks early).
+   Fixed with one clone per arm. Then a reused folder name imported an earlier run's
+   transcripts (30-day window): repeat 1 is discarded.
+2. An agent read the hidden checker from the parent folder: moved out of reach, `--dir` pinned.
+3. OpenRouter credits ran out mid-run: every opencode task of repeats 4-6 failed in BOTH arms
+   (and the OpenCode key is expired), so opencode evidence is thin. Provider-failed runs are
+   excluded and counted, never scored as violations.
+
+### What it says about the team layer
+- A shared rules file in the repo already gives a second user the first user's result (0.00 vs 4.00).
+  The missing piece is promotion: nothing moves a rule one user taught their agent into the
+  team document. Build that, with an approver, before a hosted layer.
+- Delivery worked equally in all three harnesses, so a team layer can be harness-agnostic.
+- Memory scope is path/worktree based (see 1): a team layer needs explicit scope (repo, team, org),
+  not the folder an agent happens to start in.
