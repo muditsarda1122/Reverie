@@ -184,6 +184,13 @@ style). Assessment:
   cross-repo documents and an approver UI. Not in the single-person plan; the
   single-person version is personal, ordered, versioned context files.
 
+Decisions (2026-11-07): the product-manager contributor stays in v1. Layering and
+precedence are in: first a WORKING fixed structure (org > team > repo > personal,
+conflicts shown, org rules can be non-overridable). Letting each company define its
+own layers, and edit layers and their rules from the UI, comes AFTER the fixed
+structure works. Whether to build a rules editor waits on whether people edit rules
+by hand today (a product decision, later).
+
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
 (stdlib `http.server`, no new dependency). First slice, read-only: repos,
