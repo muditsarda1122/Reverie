@@ -71,7 +71,8 @@ By harness (tasks 2+): claude 0.07 vs 2.80, codex 0.05 vs 2.60, opencode 0.00 vs
 Cut-off and resume in another harness (task 5 codex->claude, task 8 opencode->codex):
 memory ON, nothing existed on disk at the cut and the resumed agent finished correctly
 (module + tests) in 8 of 8 runs; memory OFF, 0 of 5 (task 8). Caveat: kill timing differed
-between arms, so this is a handoff signal, not a controlled comparison.
+between arms: memory OFF task 5 had the module on disk at the cut and was finished 5 of 5 from git state alone,
+so the 0 of 5 is only for the case where nothing existed yet. A handoff signal, not a controlled comparison.
 
 Second user (separate clone, own memory, rules never stated to them), claude, 2 repeats x 3 tasks:
 nothing known: 4.00 violations per task (all four rules broken every time);
