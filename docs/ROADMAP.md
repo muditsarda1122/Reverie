@@ -143,13 +143,16 @@ Learned from the P0 runs, now on the list:
     harness, rules that change (staleness), cost over time. Details in `P0_LOG.md`.
 
 ### Codex trust (open decision for the user)
-Every user must approve Reverie's hooks once (`/hooks`), and again if the hook
-command changes. Options, in order of preference: (1) do nothing special, the
-importer covers capture and MCP covers read; (2) `reverie status` and the
-install summary say plainly "Codex hooks installed, not approved yet" (read-only
-`hooks/list`); (3) an opt-in `reverie install --trust-codex-hooks` that does what
-`/hooks` does through Codex's own config API. (3) writes a security control on
-the user's behalf, so it needs their explicit decision and is not built.
+DONE (user decision, 2026-11-07). Codex runs a hook only once approved
+(`trusted_hash`, per user and per hook definition). `reverie install` now
+approves Reverie's OWN three hooks by default, through Codex's app-server:
+`hooks/list` gives Codex's own `currentHash`, `config/batchWrite` stores it.
+Reverie never computes a hash and never approves a hook it did not write
+(`reverie/integrations/codex/trust.py`). `--no-trust-codex-hooks` leaves approval
+to the user (`/hooks`). Verified headless: install -> `codex exec` -> hooks fire
+-> prompt and answer in the log. Still open: `reverie status` warning when hooks
+are installed but not approved (read-only `reverie_hook_status` exists).
+Note: any change to the hook command changes the hash, so re-run `reverie install`.
 
 ### Cursor without a subscription
 Importer + MCP already work from the transcripts Cursor keeps. Hooks stay
@@ -188,6 +191,12 @@ rules by hand (`reverie rules` usage), and does a read-only page make them
 trust or fix memory. Version history can reuse git for repo-resident files.
 
 ### Later (accepted as deferred)
+- **Cursor hooks**: parked until there is quota to verify prompt/stop/context
+  injection (checklist in `docs/SUPPORTED_HARNESSES.md`). Importer + MCP cover Cursor now.
+- **Compound rules**: on 3 fresh multi-rule messages the extractor already split
+  them (3, 1, 3 items), so a prompt change showed no gain and was not shipped. Needs
+  a real repro (the scrapy case) before any change; a deterministic splitter at
+  delivery is the fallback.
 Team layer, multi-agent board, cross-machine sync (the paid cloud tier),
 UI, git-history mining. Retention/pruning of the derived log.
 

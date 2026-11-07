@@ -359,6 +359,19 @@ class CodexIntegration(Integration):
                  "The reverie-review and reverie-status skills are available "
                  "(use /skills or $reverie-review).")
 
+    def approve_hooks(self, home: Path) -> tuple[bool, str] | None:
+        import os
+        if os.environ.get("REVERIE_NO_CODEX_TRUST"):          # tests never start codex
+            return None
+        from . import trust
+        report = trust.trust_reverie_hooks(profiles.codex_dir(home), Path.cwd())
+        if not report.ok:
+            return False, report.message
+        n = len(report.approved)
+        return True, (f"approved Reverie's {n} hook(s) through Codex's own API "
+                      "(the same thing /hooks does)" if n
+                      else "Reverie's hooks were already approved")
+
     def install(self, home: Path, reverie_bin: str | None = None,
                 dry_run: bool = False, *,
                 reverie_home: Path | None = None,

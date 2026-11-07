@@ -200,6 +200,7 @@ def _cmd_install(args) -> int:
     try:
         return install.run(
             profile_args=getattr(args, "profile", None),
+            trust_codex_hooks=getattr(args, "trust_codex_hooks", True),
             all_agents=getattr(args, "all", False),
             only=[k.strip() for k in args.only.split(",") if k.strip()]
             if getattr(args, "only", None) else None,
@@ -269,6 +270,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--profile", action="append", default=None, metavar="KEY=PATH",
                    help="install into this config directory of a harness that can have "
                         "several (claude_code=PATH, codex=PATH); repeatable")
+    p.add_argument("--trust-codex-hooks", action=argparse.BooleanOptionalAction, default=True,
+                   help="approve Reverie's own Codex hooks through Codex's API, as /hooks "
+                        "would (default); --no-trust-codex-hooks leaves that to you")
     p.add_argument("--list-profiles", action="store_true",
                    help="list every config directory found for each agent and exit")
     p.add_argument("--no-verify", action="store_true")

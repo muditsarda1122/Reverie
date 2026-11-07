@@ -37,6 +37,8 @@ reverie install                     # interactive: pick harnesses + provider
 reverie install --all               # every detected harness, no prompts
 reverie install --only claude_code,codex --provider anthropic
 reverie install --dry-run           # print every planned write; change nothing
+reverie install --trust-codex-hooks      # default: approve Reverie's own Codex hooks via Codex's API
+reverie install --no-trust-codex-hooks   # leave Codex hook approval to you (/hooks)
 reverie install --import memory.zip # restore an export on a new machine
 ```
 

@@ -38,6 +38,11 @@ class Integration:
     #: What to tell the user after install, e.g. "Restart Claude Code".
     next_step: str = ""
 
+    def approve_hooks(self, home: Path) -> tuple[bool, str] | None:
+        """Optional: approve this integration's own hooks where the harness requires
+        it. -> (ok, detail), or None when the harness has no such step."""
+        return None
+
     def detect(self, home: Path, which=shutil.which) -> bool:
         """Whether this harness is installed on the machine."""
         marker = getattr(self, "marker", None)

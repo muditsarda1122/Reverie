@@ -1010,10 +1010,26 @@ def _choose_profiles(selected, home: Path, environ, profile_args: list[str] | No
 # the installer
 # ---------------------------------------------------------------------------
 
+def _approve_hooks(agent, home: Path, print_fn) -> bool:
+    """Approve an integration's own hooks where the harness needs it (Codex).
+    Failure is not an error: the user can still approve them in the harness."""
+    result = agent.approve_hooks(home)
+    if result is None:
+        return False
+    ok, detail = result
+    if ok:
+        print_fn(f"  ✓ {agent.name}: {detail}")
+        return True
+    print_fn(f"  ! {agent.name} hooks not approved automatically ({detail}). "
+             "Type /hooks in Codex once to approve them.")
+    return False
+
+
 def run(*, home: Path | None = None, reverie_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
         dry_run: bool = False, provider: str | None = None,
         reconfigure: bool = False, profile_args: list[str] | None = None,
+        trust_codex_hooks: bool = True,
         no_verify: bool = False, verify_fn=None, import_file: str | None = None,
         check_fn=None, input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
@@ -1095,7 +1111,7 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
         return _install_rest(
             home, reverie_home, selected, detected, existing_llm, config_existed, dry_run,
             provider, reconfigure, no_verify, verify_fn, import_file, check_fn, input_fn,
-            print_fn, which, environ, runner)
+            print_fn, which, environ, runner, trust_codex_hooks)
     finally:
         for k, v in saved_env.items():
             if v is None:
@@ -1106,7 +1122,8 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
 
 def _install_rest(home, reverie_home, selected, detected, existing_llm, config_existed,
                   dry_run, provider, reconfigure, no_verify, verify_fn, import_file,
-                  check_fn, input_fn, print_fn, which, environ, runner) -> int:
+                  check_fn, input_fn, print_fn, which, environ, runner,
+                  trust_codex_hooks=True) -> int:
     # -- per-agent configuration -------------------------------------------
     writes: list[tuple[str | None, PlannedWrite]] = []
     for agent in selected:
@@ -1126,6 +1143,12 @@ def _install_rest(home, reverie_home, selected, detected, existing_llm, config_e
         if not dry_run and write.owned_entries:
             owned_entries.setdefault(str(Path(write.path).resolve()),
                                      []).extend(write.owned_entries)
+
+    codex_trusted = False
+    if not dry_run and trust_codex_hooks:
+        for agent in selected:
+            if agent.key == "codex":
+                codex_trusted = _approve_hooks(agent, home, print_fn)
 
     # -- ~/.reverie bootstrap (§28.2) -------------------------------------------
     # review fix 48: only announce directory creation when it happens.
@@ -1283,7 +1306,10 @@ def _install_rest(home, reverie_home, selected, detected, existing_llm, config_e
         print_fn(f"  {agent.name}:")
         for w in agent_writes:
             print_fn(f"    ✓ {_display(w.path, home)}")
-        if agent.next_step:
+        if agent.key == "codex" and codex_trusted:
+            print_fn("    Next: restart Codex CLI. Reverie's three hooks are approved "
+                     "(`reverie install --no-trust-codex-hooks` leaves that to you).")
+        elif agent.next_step:
             print_fn(f"    Next: {agent.next_step}")
     if not selected:
         print_fn("  (no agents configured — run `reverie install --only "

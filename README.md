@@ -49,10 +49,10 @@ You need an LLM provider key before Reverie can extract anything. Set one before
 |---|---|---|
 | Claude Code | hooks (session start, before each edit) + MCP | hooks + transcript importer |
 | opencode | plugin (rules in the system prompt) + MCP | plugin + transcript importer |
-| Codex CLI | hooks after you approve them once (`/hooks` in Codex) + MCP | hooks (once approved) + transcript importer |
+| Codex CLI | hooks (`reverie install` approves them for you through Codex's own API; `--no-trust-codex-hooks` leaves it to `/hooks`) + MCP | hooks (once approved) + transcript importer |
 | Cursor | MCP | transcript importer (hooks not verified yet) |
 
-Every agent is also an MCP client of Reverie (`query`, `summary`, ...), which stays the fallback. Codex only runs a hook after you approve it; until then the transcript importer still covers every session. Tested versions, what Reverie writes for each agent, and the spike results are in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md); file paths and permissions are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). Any other MCP client can be set up by hand, as in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+Every agent is also an MCP client of Reverie (`query`, `summary`, ...), which stays the fallback. Codex only runs a hook after it is approved. `reverie install` does that for Reverie's own three hooks (the same `trusted_hash` the `/hooks` screen writes, taken from Codex's own `hooks/list`; it never touches a hook you wrote). Pass `--no-trust-codex-hooks` to approve them yourself with `/hooks`. Until approved, the transcript importer still covers every session. Tested versions, what Reverie writes for each agent, and the spike results are in [`docs/SUPPORTED_HARNESSES.md`](docs/SUPPORTED_HARNESSES.md); file paths and permissions are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). Any other MCP client can be set up by hand, as in [`docs/INSTALLATION.md`](docs/INSTALLATION.md).
 
 ## Model providers
 

@@ -34,6 +34,7 @@ def _no_user_harness_dirs(monkeypatch):
 def _no_transcript_import(monkeypatch):
     # tests must never scan the developer's real ~/.claude, ~/.codex, ...
     monkeypatch.setenv("REVERIE_NO_IMPORT", "1")
+    monkeypatch.setenv("REVERIE_NO_CODEX_TRUST", "1")
 
 
 @pytest.fixture(autouse=True)
