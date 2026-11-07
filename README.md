@@ -15,7 +15,7 @@ Reverie is engineering memory for coding agents. It works across Claude Code, Co
 You need Python 3.12 and git. Run these commands from a clean machine:
 
 ```bash
-git clone --branch v0.2.0 https://github.com/muditsarda1122/Reverie.git
+git clone --branch feat/continuity-spine https://github.com/muditsarda1122/Reverie.git
 cd Reverie
 python3.12 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -29,7 +29,7 @@ The first install downloads PyTorch and a sentence-embedding model. Expect sever
 
 The installer writes absolute paths into each agent's config, so agents can find the server outside your virtualenv. If you move the `Reverie` folder, run `reverie install` again.
 
-The clone command above pins Reverie to the v0.2.0 release. `main` can contain changes that haven't been released yet.
+The clone command above installs the current development branch (hooks, transcript import, resume, provenance, staleness, usage loop). The older `v0.2.0` release does not have these. Once the branch is merged, this command will point at `main`.
 
 To see what the installer would change without writing anything, run `reverie install --dry-run`. Non-interactive: `reverie install --all` configures every detected agent, and `--only claude_code,codex` configures only the ones you name.
 
@@ -124,8 +124,7 @@ Reverie is pinned to a release tag. To move to a newer release, use the latest t
 
 ```bash
 cd Reverie
-git fetch --tags
-git checkout <latest-tag>
+git pull
 source .venv/bin/activate
 pip install -e .
 reverie install
@@ -143,7 +142,7 @@ Your agent learns how to use Reverie from its instruction file and from the serv
 `reverie install` allows Reverie's read tools in each agent's permission settings. If a read tool still prompts, run `reverie install` again. If it still prompts, check your agent's version. Older versions ignore per-tool approval settings. Write tools (`observe`, `reconsolidate`, `set_repo_state`, `review_decide`) prompt on purpose.
 
 **Reverie behaves like an older version.**
-Check out the latest release tag, then run `pip install -e .` and `reverie install`. `reverie uninstall --dry-run` shows which entries are configured and where, before you change anything.
+Run `git pull` in your clone, then `pip install -e .` and `reverie install`. (A clone of the old `v0.2.0` tag lacks the newer features: re-clone with the command above.) `reverie uninstall --dry-run` shows which entries are configured and where, before you change anything.
 
 ## Documentation
 
