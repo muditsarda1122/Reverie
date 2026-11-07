@@ -142,6 +142,9 @@ Learned from the P0 runs, now on the list:
     both; no drop in exploration; ~10% more cost per task. Next: 10+ tasks, 3 repeats, a second
     harness, rules that change (staleness), cost over time. Details in `P0_LOG.md`.
 
+Full benchmark design (multi-harness, one user and two users, ON vs OFF, 12 tasks,
+3 repeats, hidden checks first): `docs/BENCHMARK.md`. Not run yet; needs a budget decision.
+
 ### Codex trust (open decision for the user)
 DONE (user decision, 2026-11-07). Codex runs a hook only once approved
 (`trusted_hash`, per user and per hook definition). `reverie install` now
