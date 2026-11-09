@@ -442,12 +442,6 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="accept: candidate id; keep: memory id")
     p.add_argument("--repo", default=None,
                    help="repo path (default: current directory)")
-    p.add_argument("--scope", default=None,
-                   help="which org/team folder to write to when several are configured (add)")
-    p.add_argument("--paths", default=None,
-                   help="comma-separated globs: the rule applies only under these paths (add)")
-    p.add_argument("--why", default=None,
-                   help="why, written into the proposal for the owners (add)")
     p.add_argument("--since", default=None, metavar="REV",
                    help="check: recheck commits after REV instead of the "
                         "last checked commit")
@@ -483,6 +477,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="lower layers cannot override this rule (add)")
     p.add_argument("--tag", default=None,
                    help="name the rule so another layer can answer it, {id: NAME} (add)")
+    p.add_argument("--scope", default=None,
+                   help="which org/team folder to write to when several are configured (add)")
+    p.add_argument("--paths", default=None,
+                   help="comma-separated globs: the rule applies only under these paths (add)")
+    p.add_argument("--why", default=None,
+                   help="why, written into the proposal for the owners (add)")
     p.add_argument("--since", default=None,
                    help="check: recheck commits since this revision (default: last check)")
     p.add_argument("--doc", default=None,

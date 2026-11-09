@@ -356,3 +356,20 @@ def test_disabled_repo_gets_no_team_context_anywhere(env, monkeypatch):
     assert cli.main(["disable"]) == 0
     assert deliver.point_of_action(str(repo), "s2", str(f)) == ""
     assert deliver.startup_text(str(repo)) == ""
+
+
+def test_cli_context_flags_are_on_the_context_parser(env, monkeypatch, capsys):
+    """Regression (found by the lab driver): --scope/--paths/--why had been added to
+    the `stale` parser, so `reverie context add --why ...` failed to parse and
+    `reverie context add` crashed with a missing `paths` attribute."""
+    from reverie import cli
+    repo, org, _ = env
+    monkeypatch.chdir(repo)
+    assert cli.main(["context", "add", "--why", "because", "Rule one"]) == 0
+    assert cli.main(["context", "add", "Rule two", "--paths", "src/a/**"]) == 0
+    assert cli.main(["context", "add", "--layer", "org", "--scope", "acme/org", "--locked",
+                     "--tag", "t", "Org rule"]) == 0
+    assert cli.main(["context", "proposals"]) == 0
+    assert cli.main(["context", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "Rule one" in out and "Org rule" in out and "only under src/a/**" in out
