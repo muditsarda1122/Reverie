@@ -569,7 +569,7 @@ def point_of_action(cwd: str, session: str, target: str,
         root = spool.repo_root(cwd)
         absolute = target if os.path.isabs(target) else os.path.join(cwd, target)
         rel = os.path.relpath(os.path.realpath(absolute), os.path.realpath(root))
-        team, ids = ("", set()) if rel.startswith("..") else \
+        team, ids = ("", set()) if rel.startswith("..") or _repo_disabled(cwd) else \
             team_context.point_text(root, rel, _already(cwd, session))
         if ids:
             _remember(cwd, session, _already(cwd, session) | ids)
@@ -577,6 +577,16 @@ def point_of_action(cwd: str, session: str, target: str,
         return "\n\n".join(t for t in (team, mem_text) if t)
     except Exception:
         return ""
+
+
+def _repo_disabled(cwd: str) -> bool:
+    conn = open_db()
+    if conn is None:
+        return False
+    try:
+        return is_disabled(conn, repo_key(cwd))
+    finally:
+        conn.close()
 
 
 def _memory_point(cwd: str, session: str, target: str, extra_text: str) -> str:

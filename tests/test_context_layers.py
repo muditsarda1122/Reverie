@@ -338,3 +338,21 @@ def test_startup_text_includes_team_rules_and_is_bounded(env):
                                                        for i in range(80)))
     assert "rule number 0" in deliver.startup_text(str(repo))
     assert len(context.render(str(repo), budget=1500)) < 1700
+
+
+def test_disabled_repo_gets_no_team_context_anywhere(env, monkeypatch):
+    """Regression (found before the lab run): the edit hook delivered path-scoped
+    team rules even when Reverie was disabled for the repo, which would have
+    leaked into every Reverie-off control arm."""
+    from reverie import cli
+    repo, org, _ = env
+    (org / "r.md").write_text("## Rules\n- Org rule alpha\n")
+    context.add(str(repo), "Amounts are integer cents", paths=("services/billing/**",))
+    (repo / "services" / "billing").mkdir(parents=True)
+    f = repo / "services" / "billing" / "a.py"
+    f.write_text("x = 1\n")
+    assert "integer cents" in deliver.point_of_action(str(repo), "s0", str(f))
+    monkeypatch.chdir(repo)
+    assert cli.main(["disable"]) == 0
+    assert deliver.point_of_action(str(repo), "s2", str(f)) == ""
+    assert deliver.startup_text(str(repo)) == ""
