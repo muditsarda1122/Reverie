@@ -699,7 +699,8 @@ def _append(path: Path, bullet: str, rule: bool, paths: tuple[str, ...] = (),
     if not body.strip():
         head = (f"applies-to-paths: {', '.join(paths)}\n" if paths else "") + \
                (f"owner: {owner}\n" if owner else "")
-        body = f"{head}# {name.replace('-', ' ').title()}\n\n{heading}\n\n"
+        title = name.replace('-', ' ').title()
+        body = f"{head}# {'Team context' if title in ('Rules', 'Guidance') else title}\n\n{heading}\n\n"
     elif not heads or last_is_rules != rule:
         body = body.rstrip("\n") + f"\n\n{heading}\n\n"
     elif not body.endswith("\n"):
