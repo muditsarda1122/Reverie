@@ -35,12 +35,23 @@ def _claude_file(tmp, repo, lines, name="s1"):
     return f
 
 
-def _u(text, sid="s1", ts="2026-11-01T10:00:00.000Z"):
+def _ts(hours: float, secs: float = 0) -> str:
+    """A timestamp 3 days ago (inside the 7-day extraction window, whatever today
+    is) plus an offset; fixed dates rotted out of the window."""
+    import datetime as dt
+    base = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=3)
+    return (base + dt.timedelta(hours=hours, seconds=secs)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+_T0 = _ts(0)
+
+
+def _u(text, sid="s1", ts=_T0):
     return {"type": "user", "sessionId": sid, "timestamp": ts, "gitBranch": "feat/x",
             "message": {"role": "user", "content": text}}
 
 
-def _a(text, sid="s1", ts="2026-11-01T10:00:05.000Z"):
+def _a(text, sid="s1", ts=_ts(0, 5)):
     return {"type": "assistant", "sessionId": sid, "timestamp": ts,
             "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
 
@@ -78,7 +89,7 @@ def test_only_new_bytes_are_read(env):
     old = time.time() - 3 * 86400
     os.utime(f, (old, old))
     _run(repo)
-    _claude_file(tmp, repo, [_u("second", ts="2026-11-01T11:00:00.000Z"), _a("done 2")])
+    _claude_file(tmp, repo, [_u("second", ts=_ts(1)), _a("done 2")])
     os.utime(f, (old + 5, old + 5))
     r = _run(repo)
     assert (r.prompts, r.answers) == (1, 1)
@@ -120,7 +131,7 @@ def test_live_session_pairs_answer_that_arrives_later(env):
     _claude_file(tmp, repo, [_a("done it")])
     r = _run(repo)
     assert r.answers == 0                                     # not final yet
-    _claude_file(tmp, repo, [_u("next", ts="2026-11-01T12:00:00.000Z")])
+    _claude_file(tmp, repo, [_u("next", ts=_ts(2))])
     _run(repo)
     assert any(x["kind"] == "answer" and x["text"] == "done it" for x in spool.read(repo))
     assert len(queued) == 1 and queued[0]["reply"] == "done it"
