@@ -195,6 +195,59 @@ own layers, and edit layers and their rules from the UI, comes AFTER the fixed
 structure works. Whether to build a rules editor waits on whether people edit rules
 by hand today (a product decision, later).
 
+#### Team layer v1: design note (2026-11-09, build spec)
+
+**Layers**, highest first: `org > team > repo > personal`. Fixed names, no
+user-defined layers yet.
+
+**Files** (plain markdown, no server, git is the history, CODEOWNERS the approvers):
+- repo layer: `<repo>/.reverie/context/*.md` (and the existing `.reverie/rules.md`)
+- org / team layers: a folder of the same kind of `.md` files, usually its own git
+  repo checked out next to the code. Pointed at by `<repo>/.reverie/context.toml`
+  (committed) or `~/.reverie/context.toml` (personal):
+  `[sources]` `org = "../acme-context/org"`, `team = "../acme-context/payments"`.
+  Relative paths resolve from the repo root; `~` works.
+- personal layer: `~/.reverie/rules.md` plus the learned items (as today).
+- Cross-repo: a document may start with a small header
+  `applies-to: payments-api, billing` (repo folder or remote names; `*` or absent
+  = every repo that points at its folder).
+
+**Document format (what a product manager writes)**: ordinary markdown. A
+section headed *Rules* / *Always* / *Never* / *Must* holds rules, one per
+bullet; every other bullet is *guidance* (a pointer). A bullet ending in
+`(locked)` cannot be overridden by a lower layer. Optional `{id: no-print}` tag
+at the end of a bullet names it, so another layer can answer the same rule.
+No code, no YAML, no front matter required; `reverie context add` writes the
+bullet for you.
+
+**Items**: each bullet becomes an item at read time (stable id = hash of
+layer + file + text, so usage and staleness data stick to it). Read at delivery,
+stdlib only; nothing is copied into the database, the files stay the source.
+
+**Precedence and conflicts**: higher layer wins. A conflict is two rules at
+different layers with the same `{id}`, or one a judge flags (`reverie context
+check`, cached by content hash, never run in a hook). The lower rule is NOT
+dropped: delivery lists it as "overridden by <layer> rule X (locked)" so the
+agent and the human see both; a locked org rule beats everything and the
+overriding attempt is shown as a violation. Never silent.
+
+**Delivery** is unchanged in spirit: rules always (grouped by layer, bounded),
+guidance as pointers (`reverie show <id>`), size capped by `deliver.startup_chars`.
+
+**Staleness**: backticked paths/symbols in a bullet become anchors (checked
+against the repo, as `anchors.py`); `reverie context check --stale` runs the
+existing diff judge on commits touching them and flags the bullet ("this
+paragraph contradicts `x.py` since commit Y"). Flags are kept in a sidecar in
+`REVERIE_HOME`, not written into the shared document.
+
+**Promotion**: `reverie context propose <rule-id>` writes a proposal file
+`.reverie/context/proposals/<slug>.md` (what, why, who taught it, evidence)
+that goes through an ordinary PR; CODEOWNERS on that folder approve; `reverie
+context accept <proposal>` moves the bullet into the target document and
+deletes the proposal.
+
+**Not built now**: user-defined layers, UI editing, hosted sync.
+
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
 (stdlib `http.server`, no new dependency). First slice, read-only: repos,
