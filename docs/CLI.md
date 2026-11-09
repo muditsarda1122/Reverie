@@ -190,6 +190,40 @@ reverie rules add --user "Prefer minimal diffs"                # everywhere
 reverie rules list
 ```
 
+## reverie context
+
+Layered team context: `org > team > repo > personal`. Plain markdown in the repo
+(`.reverie/context/*.md`) and, for org and team, in folders you point at from
+`.reverie/context.toml` (or `~/.reverie/context.toml`):
+
+```toml
+[sources]
+org  = "../acme-context/org"
+team = "../acme-context/payments"
+```
+
+A section headed Rules / Always / Never / Must holds rules, one per bullet; every
+other bullet is guidance, delivered as a pointer (`reverie show <id>`). A bullet
+ending `(locked)` cannot be overridden by a lower layer; `{id: name}` at the end
+names a rule so another layer can answer it. A first line `applies-to: repo-a, repo-b`
+limits a document to those repos (default: every repo that points at its folder).
+Higher layer wins; an overridden rule is shown as a conflict, never dropped. The
+approvers are whoever CODEOWNERS names for those folders; no server is involved.
+
+```bash
+reverie context list                                   # every layer, with conflicts and flags
+reverie context add "Never log card numbers"           # repo layer, a rule (no code needed)
+reverie context add --layer org --locked --tag no-pii "Never log card numbers"
+reverie context add --guidance --doc deploys "Deploys go through the staging gate"
+reverie context check                                  # judge cross-layer conflicts + staleness
+reverie context check --since v1.2                     # recheck commits since a revision
+```
+
+`check` calls the model (conflicts: one call per lower-layer rule, cached by
+content; staleness: the diff judge on commits touching a bullet's backticked
+files and symbols). Results are kept in `~/.reverie/context_state.json`, never
+written into the shared documents.
+
 ## reverie show
 
 Prints one memory item in full (id prefix is enough), with its anchor,

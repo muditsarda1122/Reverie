@@ -111,6 +111,56 @@ def _cmd_rules(args) -> int:
     return 0
 
 
+def _cmd_context(args) -> int:
+    from . import context, spool
+    root = spool.repo_root(args.repo or ".")
+    if args.action == "add":
+        try:
+            path = context.add(root, " ".join(args.text), layer=args.layer,
+                               rule=not args.guidance, locked=args.locked,
+                               tag=args.tag or "", doc=args.doc or "")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(f"Added to {path}")
+        return 0
+    if args.action == "check":
+        from . import context_check
+        judge_cfg = context_check._cfg_judge()
+        cfg, judge = judge_cfg
+        conflicts = context_check.find_conflicts(root, judge)
+        flags = context_check.check_stale(root, judge, since=args.since,
+                                          diff_chars=int(cfg.stale.diff_chars))
+        print(f"{len(conflicts)} conflict(s) between layers, {len(flags)} newly outdated.")
+        for f in flags:
+            print(f"  [{f['id']}] {f['file']}: contradicted since commit "
+                  f"{f['commit'][:8]} ({f['reason']})")
+        return 0
+    res = context.resolve(root)
+    if not res.items:
+        print("No team context applies here. Put markdown in .reverie/context/ "
+              "(see docs/CLI.md, `reverie context`).")
+        return 0
+    wins = {c.winner.id for c in res.conflicts}
+    lost = {o.id for c in res.conflicts for o in c.overridden}
+    for layer in context.LAYERS:
+        mine = [i for i in res.items if i.layer == layer]
+        if not mine:
+            continue
+        print(f"{layer} ({len({i.file for i in mine})} document(s)):")
+        for it in mine:
+            marks = [f for f, on in (("locked", it.locked), ("overridden", it.id in lost),
+                                     ("wins a conflict", it.id in wins),
+                                     ("possibly outdated", it.id in res.stale)) if on]
+            tail = f"  [{', '.join(marks)}]" if marks else ""
+            print(f"  [{it.id}] {it.kind}: {it.text}{tail}")
+    for c in res.conflicts:
+        print(f"conflict {c.key}: [{c.winner.layer}] {c.winner.id} overrides "
+              + ", ".join(f"[{o.layer}] {o.id}" for o in c.overridden)
+              + (" (locked)" if c.locked else ""))
+    return 0
+
+
 def _cmd_stale(args) -> int:
     from . import deliver, items, spool, staleness
     from .config import get_config
@@ -392,6 +442,24 @@ def _build_parser() -> argparse.ArgumentParser:
                         "default is this repo's .reverie/rules.md")
     p.add_argument("--repo", default=None,
                    help="repo path (default: current directory)")
+    p = sub.add_parser("context", help="layered team context (org > team > repo "
+                       "> personal), plain markdown in the repo")
+    p.add_argument("action", choices=["list", "add", "check"])
+    p.add_argument("text", nargs="*", help="the rule or guidance text (add)")
+    p.add_argument("--layer", choices=["org", "team", "repo", "personal"], default="repo",
+                   help="which layer's folder to write to (add; default repo)")
+    p.add_argument("--guidance", action="store_true",
+                   help="add as guidance (delivered as a pointer) instead of a rule (add)")
+    p.add_argument("--locked", action="store_true",
+                   help="lower layers cannot override this rule (add)")
+    p.add_argument("--tag", default=None,
+                   help="name the rule so another layer can answer it, {id: NAME} (add)")
+    p.add_argument("--since", default=None,
+                   help="check: recheck commits since this revision (default: last check)")
+    p.add_argument("--doc", default=None,
+                   help="document file name, without .md (add; default rules or guidance)")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
     sub.add_parser("capture-turn", help="capture the completed exchange "
                    "(invoked by the installed hook; reads hook JSON on "
                    "stdin)")
@@ -401,7 +469,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install", "resume", "transcripts", "merge", "usage", "rules", "show", "undo", "digest", "stale", "promote")
+               "capture-turn", "install", "resume", "transcripts", "merge", "usage", "rules", "show", "undo", "digest", "stale", "promote", "context")
 
 
 def _unknown_command(word: str) -> int:
@@ -493,6 +561,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "rules":
         return _cmd_rules(args)
+    if args.command == "context":
+        return _cmd_context(args)
     if args.command == "usage":
         from . import deliver, items, spool, usage
         root = spool.repo_root(args.repo or ".")
@@ -573,6 +643,11 @@ def main(argv: list[str] | None = None) -> int:
         from . import deliver, spool
         ro = deliver.open_db()
         if ro is None:
+            from . import context as team_context
+            text = team_context.show(spool.repo_root(args.repo or "."), args.id)
+            if text:
+                print(text)
+                return 0
             print("No Reverie memory yet.", file=sys.stderr)
             return 1
         try:

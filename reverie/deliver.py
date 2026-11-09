@@ -267,6 +267,11 @@ def startup_text(cwd: str) -> str:
             parts.append("Reverie rules (the user's own words; always apply):\n"
                          + files_text)
             left -= len(parts[-1])
+        from . import context as team_context
+        team_text = team_context.render(root, budget=min(3600, max(left // 2, 800)))
+        if team_text:
+            parts.insert(0, team_text)       # org/team rules outrank the personal ones
+            left -= len(team_text)
         if wide:
             body = "\n".join(_capped([_line(m) for m in wide], MAX_WIDE_LINES,
                                      "— `reverie rules list`", min(1500, max(left, 0))))
@@ -597,6 +602,10 @@ def point_of_action(cwd: str, session: str, target: str,
 
 def show(conn: sqlite3.Connection, id_prefix: str, root: str) -> str:
     """Full text of one item or legacy conclusion, by id prefix."""
+    from . import context as team_context
+    ctx = team_context.show(root, id_prefix)
+    if ctx:
+        return ctx
     like = id_prefix + "%"
     found: list[dict] = []
     try:
