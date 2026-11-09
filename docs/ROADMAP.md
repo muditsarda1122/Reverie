@@ -248,6 +248,58 @@ deletes the proposal.
 
 **Not built now**: user-defined layers, UI editing, hosted sync.
 
+#### Team layer v1, REVISION (2026-11-09): scopes and authority, not a fixed ladder
+
+Three problems found in review of the note above. This revision REPLACES the
+"fixed layer names" and "higher layer wins" parts; everything else stands.
+
+**1. Roles: Reverie does not know any.** The note assumed "developers and PMs".
+Real teams also have designers, legal, security, support, data, sales engineers.
+Two separate questions, kept apart:
+- *Contribute* is permissionless. Anyone, whatever their job, can write a bullet
+  or run `reverie context add`. What they write is a PROPOSAL until it lands in a
+  scope whose owners accept it. Reverie has no role list and never asks "are you
+  a developer".
+- *Authority* is the only permissioned part: who may accept, change or lock
+  things in a given scope. v1 takes this from what the team already has (git:
+  CODEOWNERS on the folder; identity = git identity). Role names, if a team wants
+  them, are free labels in an optional `authority` file (`legal = @a, @b`); the
+  code never branches on a role name. A hosted tier later adds a permission
+  screen over the same model.
+- Content stays two kinds only (rule, guidance) so the format never depends on
+  who wrote it. An optional `owner:` line says whom to ask about a document.
+
+**2. Many teams, many orgs in one repo: scopes, not a stack.** A document
+declares WHERE it applies, and the only precedence is containment:
+- Scope = an org, a team, a repo, a path inside a repo (`applies-to-paths:
+  services/billing/**`, the same idea as CODEOWNERS), or a person. A session's
+  active scopes = the ones its repo, path and user belong to. Team B's rules do
+  not reach team A's people unless the work touches a path B owns.
+- Nested scopes (a path inside a repo, a repo inside a team): the narrower one
+  answers the wider one, unless the wider one is locked.
+- Sibling scopes (team A vs team B, org X vs org Y) have NO order and neither
+  wins. If their rules contradict on the same work, that is an UNRESOLVED
+  conflict: both are shown, and the agent is told to ask the user instead of
+  guessing. A human resolves it once, by writing a resolution (`{id}` answer)
+  in the scope that contains both (the repo owner); it is then remembered.
+- A lock binds only inside its author's own scope: an org lock covers that
+  org's people and repos and cannot bind another org. Two locks that contradict
+  in a shared repo = unresolved conflict, never a silent winner.
+- The four named layers (org > team > repo > personal) become the DEFAULT
+  PRESET of this model, not a special case, so user-defined layers later are
+  just new named scopes with a parent. No rewrite then.
+
+**3. Conflicts stay shown, and now say what to do.** Every conflict is listed
+with both rules, whose they are, and a status: `overridden` (nested, a winner
+exists), `locked` (a lock won), or `unresolved` (siblings: agent asks the user;
+resolution is a recorded decision). Never dropped silently.
+
+**Build order change**: refactor the core already committed (7e3c1df) to this
+scope model, add path scoping, peer conflicts and proposals-by-anyone, THEN run
+the lab test. The lab run must include: two teams in one repo, two orgs with a
+conflicting lock, a path-scoped rule, a rule written by a non-developer role,
+and a second user inheriting rules (each with a memory-off control).
+
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
 (stdlib `http.server`, no new dependency). First slice, read-only: repos,
