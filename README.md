@@ -81,7 +81,7 @@ To switch provider, run `reverie install --provider anthropic`, or edit the `llm
 | `reverie resume` | Print rules, your prompt log and git state to continue a cut-off session in any tool |
 | `reverie transcripts` | Import new prompts/answers from the harnesses' own transcripts (also automatic) |
 | `reverie rules` | Show or edit the rules Reverie always applies |
-| `reverie context` | Layered team context (org > team > repo > personal): plain markdown in the repo, higher layer wins, conflicts shown, `(locked)` org rules. Early feature on the branch |
+| `reverie context` | Team context as plain markdown in scopes (org, team, repo, paths, you): the narrower scope answers the wider unless locked, sibling teams that contradict make the agent ask, anyone can propose, CODEOWNERS accept. Early feature on the branch |
 | `reverie show` | Show one memory item in full |
 | `reverie undo` | Undo an item that was added automatically |
 | `reverie digest` | List what was added recently |

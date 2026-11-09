@@ -114,24 +114,48 @@ def _cmd_rules(args) -> int:
 def _cmd_context(args) -> int:
     from . import context, spool
     root = spool.repo_root(args.repo or ".")
-    if args.action == "add":
+    if args.action in ("add", "resolve"):
+        text = " ".join(args.text[1:] if args.action == "resolve" else args.text)
+        paths = tuple(x.strip() for x in (args.paths or "").split(",") if x.strip())
         try:
-            path = context.add(root, " ".join(args.text), layer=args.layer,
-                               rule=not args.guidance, locked=args.locked,
-                               tag=args.tag or "", doc=args.doc or "")
+            added = context.add(root, text, layer=args.layer, rule=not args.guidance,
+                              locked=args.locked, tag=args.tag or "", doc=args.doc or "",
+                              scope=args.scope or "", paths=paths, why=args.why or "",
+                              resolves=args.text[0] if args.action == "resolve" else "")
+        except (ValueError, IndexError) as exc:
+            print(str(exc) or "usage: reverie context resolve <conflict-key> <decision>",
+                  file=sys.stderr)
+            return 2
+        if added.proposal:
+            print(f"Written as a proposal: {added.path}\n"
+                  f"The owners ({', '.join(added.owners)}) review it like any pull request; "
+                  f"an owner runs `reverie context accept <name>`.")
+        else:
+            print(f"Added to {added.path}")
+        return 0
+    if args.action == "proposals":
+        found = context.proposals(root)
+        if not found:
+            print("No open proposals.")
+        for p in found:
+            print(f"{p['slug']}: {p['bullet']}  (by {p.get('proposed-by', '?')}, "
+                  f"for {p.get('document', '?')})")
+        return 0
+    if args.action == "accept":
+        try:
+            doc = context.accept(root, args.text[0] if args.text else "")
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
-        print(f"Added to {path}")
+        print(f"Accepted into {doc}")
         return 0
     if args.action == "check":
         from . import context_check
-        judge_cfg = context_check._cfg_judge()
-        cfg, judge = judge_cfg
+        cfg, judge = context_check._cfg_judge()
         conflicts = context_check.find_conflicts(root, judge)
         flags = context_check.check_stale(root, judge, since=args.since,
                                           diff_chars=int(cfg.stale.diff_chars))
-        print(f"{len(conflicts)} conflict(s) between layers, {len(flags)} newly outdated.")
+        print(f"{len(conflicts)} conflict(s) between scopes, {len(flags)} newly outdated.")
         for f in flags:
             print(f"  [{f['id']}] {f['file']}: contradicted since commit "
                   f"{f['commit'][:8]} ({f['reason']})")
@@ -141,7 +165,6 @@ def _cmd_context(args) -> int:
         print("No team context applies here. Put markdown in .reverie/context/ "
               "(see docs/CLI.md, `reverie context`).")
         return 0
-    wins = {c.winner.id for c in res.conflicts}
     lost = {o.id for c in res.conflicts for o in c.overridden}
     for layer in context.LAYERS:
         mine = [i for i in res.items if i.layer == layer]
@@ -149,15 +172,15 @@ def _cmd_context(args) -> int:
             continue
         print(f"{layer} ({len({i.file for i in mine})} document(s)):")
         for it in mine:
-            marks = [f for f, on in (("locked", it.locked), ("overridden", it.id in lost),
-                                     ("wins a conflict", it.id in wins),
+            marks = [f for f, on in (("locked", it.locked), ("conflict", it.id in lost),
                                      ("possibly outdated", it.id in res.stale)) if on]
             tail = f"  [{', '.join(marks)}]" if marks else ""
-            print(f"  [{it.id}] {it.kind}: {it.text}{tail}")
+            where = f" (only under {', '.join(it.paths)})" if it.paths else ""
+            who = f" <{it.scope}>" if layer in ("org", "team") else ""
+            print(f"  [{it.id}]{who} {it.kind}{where}: {it.text}{tail}")
     for c in res.conflicts:
-        print(f"conflict {c.key}: [{c.winner.layer}] {c.winner.id} overrides "
-              + ", ".join(f"[{o.layer}] {o.id}" for o in c.overridden)
-              + (" (locked)" if c.locked else ""))
+        names = " vs ".join(f"[{x.label}] {x.id}" for x in c.items)
+        print(f"conflict {c.key} ({c.status}): {names}" + (f" - {c.reason}" if c.reason else ""))
     return 0
 
 
@@ -419,6 +442,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="accept: candidate id; keep: memory id")
     p.add_argument("--repo", default=None,
                    help="repo path (default: current directory)")
+    p.add_argument("--scope", default=None,
+                   help="which org/team folder to write to when several are configured (add)")
+    p.add_argument("--paths", default=None,
+                   help="comma-separated globs: the rule applies only under these paths (add)")
+    p.add_argument("--why", default=None,
+                   help="why, written into the proposal for the owners (add)")
     p.add_argument("--since", default=None, metavar="REV",
                    help="check: recheck commits after REV instead of the "
                         "last checked commit")
@@ -444,7 +473,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="repo path (default: current directory)")
     p = sub.add_parser("context", help="layered team context (org > team > repo "
                        "> personal), plain markdown in the repo")
-    p.add_argument("action", choices=["list", "add", "check"])
+    p.add_argument("action", choices=["list", "add", "check", "proposals", "accept", "resolve"])
     p.add_argument("text", nargs="*", help="the rule or guidance text (add)")
     p.add_argument("--layer", choices=["org", "team", "repo", "personal"], default="repo",
                    help="which layer's folder to write to (add; default repo)")

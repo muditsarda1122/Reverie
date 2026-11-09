@@ -1,137 +1,11 @@
-"""Team context layers: parsing, precedence, conflicts, delivery, adding."""
+"""Scoped team context: parsing, containment, conflict statuses, paths, authority."""
 
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from reverie import context, deliver
-
-
-@pytest.fixture
-def env(tmp_path, monkeypatch):
-    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
-    repo = tmp_path / "payments-api"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    org = tmp_path / "acme-context" / "org"
-    team = tmp_path / "acme-context" / "payments"
-    org.mkdir(parents=True)
-    team.mkdir(parents=True)
-    (repo / ".reverie").mkdir()
-    (repo / ".reverie" / "context.toml").write_text(
-        '[sources]\norg = "../acme-context/org"\nteam = "../acme-context/payments"\n')
-    return repo, org, team
-
-
-def test_parse_rules_guidance_locked_tag():
-    text = ("applies-to: payments-api, billing\n# Eng\n\n## Rules\n\n"
-            "- Never log card numbers {id: no-pii} (locked)\n"
-            "- Use the shared retry helper\n  for network calls\n\n"
-            "## How we deploy\n\n- Deploys go through the staging gate\n")
-    items = context.parse_document(text, "org", "eng.md")
-    assert [i.kind for i in items] == ["rule", "rule", "guidance"]
-    first = items[0]
-    assert first.locked and first.tag == "no-pii" and first.text == "Never log card numbers"
-    assert items[1].text == "Use the shared retry helper for network calls"
-    assert first.applies_to == ("payments-api", "billing")
-    assert first.id == context.item_id("org", "eng.md", first.text)
-
-
-def test_layers_load_and_applies_to(env):
-    repo, org, team = env
-    (org / "all.md").write_text("## Rules\n- Org rule\n")
-    (org / "other.md").write_text("applies-to: billing\n## Rules\n- Not for us\n")
-    (team / "t.md").write_text("applies-to: payments-api\n## Rules\n- Team rule\n")
-    context.add(str(repo), "Repo rule")
-    texts = [(i.layer, i.text) for i in context.load_items(str(repo))]
-    assert texts == [("org", "Org rule"), ("team", "Team rule"), ("repo", "Repo rule")]
-
-
-def test_same_tag_conflict_is_shown_not_dropped(env):
-    repo, org, team = env
-    (org / "r.md").write_text("## Rules\n- Use tabs {id: indent}\n")
-    context.add(str(repo), "Use spaces", tag="indent")
-    res = context.resolve(str(repo))
-    assert [c.winner.text for c in res.conflicts] == ["Use tabs"]
-    assert [i.text for i in res.effective] == ["Use tabs"]
-    assert len(res.items) == 2                       # nothing dropped
-    text = context.render(str(repo))
-    assert "overrides" in text and "Use spaces" in text and "Use tabs" in text
-
-
-def test_locked_org_rule_wins_and_is_flagged(env):
-    repo, org, _ = env
-    (org / "r.md").write_text("## Rules\n- Never log PII {id: pii} (locked)\n")
-    context.add(str(repo), "Logging PII is fine for debugging", tag="pii")
-    res = context.resolve(str(repo))
-    assert res.conflicts[0].locked
-    assert "do not follow the lower one" in context.render(str(repo))
-
-
-def test_judge_conflict_from_state(env):
-    repo, org, _ = env
-    (org / "r.md").write_text("## Rules\n- Always squash merge\n")
-    context.add(str(repo), "Never squash merge")
-    items = context.load_items(str(repo))
-    state = {"conflicts": [{"a": items[0].id, "b": items[1].id, "reason": "opposite"}]}
-    res = context.resolve(str(repo), items, state)
-    assert len(res.conflicts) == 1 and res.conflicts[0].reason == "opposite"
-    assert [i.text for i in res.effective] == ["Always squash merge"]
-
-
-def test_stale_flag_moves_item_to_outdated_group(env):
-    repo, _, _ = env
-    context.add(str(repo), "Use `old_helper` for retries")
-    it = context.load_items(str(repo))[0]
-    context.save_state({"stale": {it.id: {"commit": "abc123456789", "reason": "removed"}}})
-    text = context.render(str(repo))
-    assert "Possibly outdated team context" in text and "abc12345" in text
-    assert "always apply" not in text
-
-
-def test_guidance_is_a_pointer_and_show_works(env):
-    repo, _, _ = env
-    context.add(str(repo), "Deploys go through staging", rule=False)
-    it = context.load_items(str(repo))[0]
-    assert it.kind == "guidance"
-    assert f"reverie show {'<id>'}" in context.render(str(repo))
-    assert "document:" in context.show(str(repo), it.id[:6])
-
-
-def test_add_idempotent_and_sections(env):
-    repo, _, _ = env
-    p1 = context.add(str(repo), "Rule one")
-    context.add(str(repo), "Rule one")
-    context.add(str(repo), "A guide", rule=False, doc="rules")
-    context.add(str(repo), "Rule two")
-    kinds = [(i.kind, i.text) for i in context.load_items(str(repo))]
-    assert kinds == [("rule", "Rule one"), ("guidance", "A guide"), ("rule", "Rule two")]
-    assert p1.read_text().count("Rule one") == 1
-
-
-def test_add_org_without_source_is_a_clear_error(tmp_path, monkeypatch):
-    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
-    repo = tmp_path / "r"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    with pytest.raises(ValueError, match="no org source"):
-        context.add(str(repo), "x", layer="org")
-
-
-def test_startup_text_includes_team_rules_first(env):
-    repo, org, _ = env
-    (org / "r.md").write_text("## Rules\n- Org rule alpha\n")
-    out = deliver.startup_text(str(repo))
-    assert "Org rule alpha" in out
-    assert Path(context.documents(str(repo))[0][1]).exists()
-
-
-def test_render_is_bounded(env):
-    repo, org, _ = env
-    (org / "r.md").write_text("## Rules\n" + "\n".join(f"- rule number {i} " + "x" * 200
-                                                       for i in range(80)))
-    assert len(context.render(str(repo), budget=1500)) < 1700
+from reverie import context, context_check, deliver
 
 
 def _git(repo, *a):
@@ -139,11 +13,253 @@ def _git(repo, *a):
                     *a], check=True, capture_output=True)
 
 
-def test_conflict_judge_flags_and_caches(env):
-    from reverie import context_check
+def _repo(path: Path, email="dev@acme.com", name="Dev") -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    _git(path, "config", "user.email", email)
+    _git(path, "config", "user.name", name)
+    (path / ".reverie").mkdir(exist_ok=True)
+    return path
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "payments-api")
+    org = tmp_path / "acme" / "org"
+    team = tmp_path / "acme" / "payments"
+    org.mkdir(parents=True)
+    team.mkdir(parents=True)
+    (repo / ".reverie" / "context.toml").write_text(
+        '[sources]\norg = "../acme/org"\nteam = "../acme/payments"\n')
+    return repo, org, team
+
+
+def _texts(items):
+    return [i.text for i in items]
+
+
+# --- format ---------------------------------------------------------------
+
+def test_parse_rules_guidance_tags_headers():
+    text = ("applies-to: payments-api, billing\napplies-to-paths: services/billing/**\n"
+            "owner: Legal, ask Dana\n# Eng\n\n## Rules\n\n"
+            "- Never log card numbers {id: no-pii} (locked)\n"
+            "- Use the shared retry helper\n  for network calls\n"
+            "- Ship via the gate {resolves: c-1234}\n\n"
+            "## How we deploy\n\n- Deploys go through the staging gate\n")
+    items = context.parse_document(text, "org", "eng.md", "acme/org")
+    assert [i.kind for i in items] == ["rule", "rule", "rule", "guidance"]
+    first = items[0]
+    assert first.locked and first.tag == "no-pii" and first.text == "Never log card numbers"
+    assert items[1].text == "Use the shared retry helper for network calls"
+    assert items[2].resolves == "c-1234" and not items[2].locked
+    assert first.applies_to == ("payments-api", "billing")
+    assert first.paths == ("services/billing/**",)
+    assert first.owner == "Legal, ask Dana"
+
+
+def test_glob_matching():
+    assert context.glob_match("services/billing/**", "services/billing/a/b.py")
+    assert not context.glob_match("services/billing/**", "services/other/b.py")
+    assert context.glob_match("*.md", "docs/readme.md")
+    assert context.glob_match("/docs/", "docs/x/y.md")
+    assert not context.glob_match("/docs/", "src/docs/y.md")
+
+
+def test_several_orgs_and_teams_are_separate_scopes(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "shared-repo")
+    for d in ("acme/org", "globex/org", "acme/a", "acme/b"):
+        (tmp_path / d).mkdir(parents=True)
+    (repo / ".reverie" / "context.toml").write_text(
+        '[sources]\norg = ["../acme/org", "../globex/org"]\nteam = ["../acme/a", "../acme/b"]\n')
+    for d in ("acme/org", "globex/org", "acme/a", "acme/b"):
+        (tmp_path / d / "r.md").write_text(f"## Rules\n- rule from {d}\n")
+    items = context.load_items(str(repo))
+    assert len(items) == 4 and len({i.scope for i in items}) == 4
+
+
+# --- nested scopes: the narrower answers the wider -------------------------
+
+def test_nested_narrower_overrides_wider_and_both_are_shown(env):
     repo, org, _ = env
-    (org / "r.md").write_text("## Rules\n- Always squash merge\n")
-    context.add(str(repo), "Never squash merge")
+    (org / "r.md").write_text("## Rules\n- Use tabs {id: indent}\n")
+    context.add(str(repo), "Use spaces", tag="indent")
+    res = context.resolve(str(repo))
+    c = res.conflicts[0]
+    assert c.status == "overridden" and c.winner and c.winner.text == "Use spaces"
+    assert _texts(res.effective) == ["Use spaces"] and len(res.items) == 2
+    text = context.render(str(repo))
+    assert "overridden" in text and "Use tabs" in text and "Use spaces" in text
+
+
+def test_wider_lock_beats_narrower(env):
+    repo, org, _ = env
+    (org / "r.md").write_text("## Rules\n- Never log PII {id: pii} (locked)\n")
+    context.add(str(repo), "Logging PII is fine", tag="pii")
+    c = context.resolve(str(repo)).conflicts[0]
+    assert c.status == "locked" and c.winner and c.winner.layer == "org"
+    assert "do not follow the lower one" in context.render(str(repo))
+
+
+# --- sibling scopes: no order, unresolved, agent asks ----------------------
+
+def test_two_teams_in_one_repo_unresolved_and_agent_told_to_ask(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "r")
+    for d in ("co/a", "co/b"):
+        (tmp_path / d).mkdir(parents=True)
+    (repo / ".reverie" / "context.toml").write_text(
+        '[sources]\nteam = ["../co/a", "../co/b"]\n')
+    (tmp_path / "co/a/r.md").write_text("owner: Team A lead\n## Rules\n- Use tabs {id: indent}\n")
+    (tmp_path / "co/b/r.md").write_text("## Rules\n- Use spaces {id: indent}\n")
+    res = context.resolve(str(repo))
+    c = res.conflicts[0]
+    assert c.status == "unresolved" and c.winner is None
+    assert res.effective == []                        # neither applies silently
+    text = context.render(str(repo))
+    assert "UNRESOLVED" in text and "ask the user" in text
+    assert "Team A lead" in text and "reverie context resolve" in text
+
+
+def test_two_orgs_with_conflicting_locks_are_unresolved(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "r")
+    for d in ("acme/org", "globex/org"):
+        (tmp_path / d).mkdir(parents=True)
+    (repo / ".reverie" / "context.toml").write_text(
+        '[sources]\norg = ["../acme/org", "../globex/org"]\n')
+    (tmp_path / "acme/org/r.md").write_text("## Rules\n- Always use REST {id: api} (locked)\n")
+    (tmp_path / "globex/org/r.md").write_text("## Rules\n- Always use gRPC {id: api} (locked)\n")
+    c = context.resolve(str(repo)).conflicts[0]
+    assert c.status == "unresolved" and "two locks" in c.reason
+    assert "ask the user" in context.render(str(repo))
+
+
+def test_resolution_is_remembered_and_settles_the_conflict(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "r")
+    for d in ("acme/org", "globex/org"):
+        (tmp_path / d).mkdir(parents=True)
+    (repo / ".reverie" / "context.toml").write_text(
+        '[sources]\norg = ["../acme/org", "../globex/org"]\n')
+    (tmp_path / "acme/org/r.md").write_text("## Rules\n- Always use REST {id: api} (locked)\n")
+    (tmp_path / "globex/org/r.md").write_text("## Rules\n- Always use gRPC {id: api} (locked)\n")
+    key = context.resolve(str(repo)).conflicts[0].key
+    context.add(str(repo), "Public endpoints use REST, internal ones gRPC", resolves=key)
+    res = context.resolve(str(repo))          # a fresh read: the decision lives in the repo
+    c = res.conflicts[0]
+    assert c.status == "overridden" and c.winner and "internal ones gRPC" in c.winner.text
+    assert "resolved by" in c.reason
+    assert _texts(res.effective) == ["Public endpoints use REST, internal ones gRPC"]
+    assert "UNRESOLVED" not in context.render(str(repo))
+
+
+# --- path scoping ----------------------------------------------------------
+
+def test_path_scoped_rule_applies_only_under_its_path(env):
+    repo, _, _ = env
+    context.add(str(repo), "Amounts are integer cents", paths=("services/billing/**",))
+    items = context.load_items(str(repo))
+    assert items[0].paths == ("services/billing/**",)
+    assert _texts(context.resolve(str(repo), path="services/billing/x.py").effective) \
+        == ["Amounts are integer cents"]
+    assert context.resolve(str(repo), path="services/other/x.py").effective == []
+    text, ids = context.point_text(str(repo), "services/billing/x.py")
+    assert "integer cents" in text and ids
+    assert context.point_text(str(repo), "docs/a.md")[0] == ""
+    # the start block lists it as path-scoped, never as a repo-wide rule
+    start = context.render(str(repo))
+    assert "ONLY to files under the path" in start and "services/billing/**" in start
+
+
+def test_point_of_action_delivers_path_rules(env):
+    repo, _, _ = env
+    context.add(str(repo), "Amounts are integer cents", paths=("services/billing/**",))
+    (repo / "services" / "billing").mkdir(parents=True)
+    f = repo / "services" / "billing" / "a.py"
+    f.write_text("x = 1\n")
+    out = deliver.point_of_action(str(repo), "s1", str(f))
+    assert "integer cents" in out
+    assert "integer cents" not in deliver.point_of_action(str(repo), "s1", str(f))  # once
+
+
+def test_lock_does_not_leak_outside_its_scope(env):
+    repo, _, _ = env
+    # a lock on billing paths neither binds nor conflicts with a rule on other paths
+    # (a sibling team's lock is covered by test_sibling_team_lock_is_not_a_winner)
+    context.add(str(repo), "Use Decimal {id: money}", locked=True, paths=("services/billing/**",))
+    context.add(str(repo), "Use float {id: money}", paths=("services/analytics/**",))
+    res = context.resolve(str(repo))
+    assert res.conflicts == [] and len(res.effective) == 2
+
+
+def test_sibling_team_lock_is_not_a_winner(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "r")
+    for d in ("co/a", "co/b"):
+        (tmp_path / d).mkdir(parents=True)
+    (repo / ".reverie" / "context.toml").write_text('[sources]\nteam = ["../co/a", "../co/b"]\n')
+    (tmp_path / "co/a/r.md").write_text("## Rules\n- Use tabs {id: indent} (locked)\n")
+    (tmp_path / "co/b/r.md").write_text("## Rules\n- Use spaces {id: indent}\n")
+    c = context.resolve(str(repo)).conflicts[0]
+    assert c.status == "unresolved"             # A's lock binds only A's scope
+
+
+# --- authority: anyone contributes, owners accept --------------------------
+
+def test_non_owner_writes_a_proposal_owner_accepts(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "r", email="pm@acme.com", name="Pat")
+    (repo / ".github").mkdir()
+    (repo / ".github" / "CODEOWNERS").write_text(
+        "# owners\n/.reverie/context/ lead@acme.com @eng-leads\n")
+    added = context.add(str(repo), "Error messages never blame the user", why="support asked")
+    assert added.proposal and "proposals" in str(added.path)
+    assert context.load_items(str(repo)) == []          # not in force yet
+    props = context.proposals(str(repo))
+    assert len(props) == 1 and "support asked" in props[0]["why"]
+    assert "pm@acme.com" in props[0]["proposed-by"]
+    with pytest.raises(ValueError, match="only the owners"):
+        context.accept(str(repo), props[0]["slug"])
+    _git(repo, "config", "user.email", "lead@acme.com")
+    doc = context.accept(str(repo), props[0]["slug"])
+    assert _texts(context.load_items(str(repo))) == ["Error messages never blame the user"]
+    assert doc.name == "rules.md" and context.proposals(str(repo)) == []
+
+
+def test_owner_edits_directly_and_unowned_folders_are_open(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "r", email="lead@acme.com")
+    (repo / "CODEOWNERS").write_text(".reverie/context/ lead@acme.com\n")
+    assert not context.add(str(repo), "Owner rule").proposal
+    repo2 = _repo(tmp_path / "r2", email="anyone@x.com")
+    assert not context.add(str(repo2), "Open rule").proposal      # nobody owns it
+
+
+def test_authority_labels_are_display_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "r", email="x@x.com")
+    (repo / "CODEOWNERS").write_text(".reverie/context/ @dana\n")
+    (repo / ".reverie" / "authority").write_text("legal = @dana\n")
+    context.add(str(repo), "Rule")   # not an owner: proposal; add the doc directly for display
+    folder = repo / ".reverie" / "context"
+    (folder / "rules.md").write_text("## Rules\n- A rule\n")
+    it = context.load_items(str(repo))[0]
+    assert context.owner_text(it) == "legal (@dana)"
+
+
+# --- judge-backed checks ---------------------------------------------------
+
+def test_conflict_judge_flags_siblings_and_caches(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "r")
+    for d in ("co/a", "co/b"):
+        (tmp_path / d).mkdir(parents=True)
+    (repo / ".reverie" / "context.toml").write_text('[sources]\nteam = ["../co/a", "../co/b"]\n')
+    (tmp_path / "co/a/r.md").write_text("## Rules\n- Always squash merge\n")
+    (tmp_path / "co/b/r.md").write_text("## Rules\n- Never squash merge\n")
     calls = []
 
     def judge(prompt):
@@ -151,16 +267,16 @@ def test_conflict_judge_flags_and_caches(env):
         return "1: opposite"
 
     out = context_check.find_conflicts(str(repo), judge)
-    assert len(out) == 1 and out[0]["reason"] == "opposite"
+    assert len(out) == 1
+    n = len(calls)
     context_check.find_conflicts(str(repo), judge)
-    assert len(calls) == 1                      # cached by content
+    assert len(calls) == n                              # cached by content
     res = context.resolve(str(repo))
-    assert res.conflicts and res.conflicts[0].winner.layer == "org"
-    assert [i.text for i in res.effective] == ["Always squash merge"]
+    assert len(res.conflicts) == 1 and res.conflicts[0].status == "unresolved"
+    assert "opposite" in res.conflicts[0].reason
 
 
-def test_conflict_judge_none_and_error(env):
-    from reverie import context_check
+def test_conflict_judge_none_error_and_disjoint_paths(env):
     repo, org, _ = env
     (org / "r.md").write_text("## Rules\n- Use black\n")
     context.add(str(repo), "Line length 100")
@@ -168,12 +284,15 @@ def test_conflict_judge_none_and_error(env):
 
     def boom(p):
         raise RuntimeError("x")
-    context.add(str(repo), "Another rule")
     assert context_check.find_conflicts(str(repo), boom) == []
+    # rules on disjoint paths are never even compared
+    context.add(str(repo), "A", paths=("a/**",))
+    context.add(str(repo), "B", paths=("b/**",))
+    a, b = [i for i in context.load_items(str(repo)) if i.paths]
+    assert context.relation(a, b) == "disjoint"
 
 
 def test_shared_doc_staleness_names_file_and_commit(env):
-    from reverie import context_check
     repo, _, _ = env
     (repo / "retry.py").write_text("def old_helper():\n    return 1\n")
     _git(repo, "add", "-A")
@@ -187,3 +306,35 @@ def test_shared_doc_staleness_names_file_and_commit(env):
     assert len(flags) == 1 and flags[0]["file"].endswith("rules.md")
     text = context.render(str(repo))
     assert "Possibly outdated team context" in text and "old_helper was removed" in text
+
+
+# --- delivery --------------------------------------------------------------
+
+def test_guidance_is_a_pointer_and_show_works(env):
+    repo, _, _ = env
+    context.add(str(repo), "Deploys go through staging", rule=False)
+    it = context.load_items(str(repo))[0]
+    assert it.kind == "guidance"
+    assert "reverie show <id>" in context.render(str(repo))
+    assert "document:" in context.show(str(repo), it.id[:6])
+
+
+def test_add_idempotent_sections_and_errors(env, tmp_path):
+    repo, _, _ = env
+    p1 = context.add(str(repo), "Rule one").path
+    context.add(str(repo), "Rule one")
+    context.add(str(repo), "A guide", rule=False, doc="rules")
+    context.add(str(repo), "Rule two")
+    assert [(i.kind, i.text) for i in context.load_items(str(repo))] == [
+        ("rule", "Rule one"), ("guidance", "A guide"), ("rule", "Rule two")]
+    assert p1.read_text().count("Rule one") == 1
+    with pytest.raises(ValueError, match="no org source"):
+        context.add(str(_repo(tmp_path / "bare")), "x", layer="org")
+
+
+def test_startup_text_includes_team_rules_and_is_bounded(env):
+    repo, org, _ = env
+    (org / "r.md").write_text("## Rules\n" + "\n".join(f"- rule number {i} " + "x" * 200
+                                                       for i in range(80)))
+    assert "rule number 0" in deliver.startup_text(str(repo))
+    assert len(context.render(str(repo), budget=1500)) < 1700

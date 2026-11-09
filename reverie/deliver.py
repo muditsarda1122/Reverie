@@ -562,7 +562,24 @@ def point_of_action(cwd: str, session: str, target: str,
     """Plain-text memory for an imminent edit of ``target`` (a path), or ''.
 
     ``extra_text`` is the content about to be written, so a symbol the edit
-    introduces also matches. Never raises."""
+    introduces also matches. Path-scoped team rules for the file come first.
+    Never raises."""
+    try:
+        from . import context as team_context
+        root = spool.repo_root(cwd)
+        absolute = target if os.path.isabs(target) else os.path.join(cwd, target)
+        rel = os.path.relpath(os.path.realpath(absolute), os.path.realpath(root))
+        team, ids = ("", set()) if rel.startswith("..") else \
+            team_context.point_text(root, rel, _already(cwd, session))
+        if ids:
+            _remember(cwd, session, _already(cwd, session) | ids)
+        mem_text = _memory_point(cwd, session, target, extra_text)
+        return "\n\n".join(t for t in (team, mem_text) if t)
+    except Exception:
+        return ""
+
+
+def _memory_point(cwd: str, session: str, target: str, extra_text: str) -> str:
     try:
         root = spool.repo_root(cwd)
         absolute = target if os.path.isabs(target) else os.path.join(cwd, target)

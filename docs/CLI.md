@@ -192,37 +192,64 @@ reverie rules list
 
 ## reverie context
 
-Layered team context: `org > team > repo > personal`. Plain markdown in the repo
-(`.reverie/context/*.md`) and, for org and team, in folders you point at from
-`.reverie/context.toml` (or `~/.reverie/context.toml`):
+Team context as plain markdown, in scopes. A document says where it applies: an
+org, a team, this repo, paths inside it, or you. Reverie has no list of roles.
+Anyone can contribute; who may accept or lock things is whatever your git
+setup already says (CODEOWNERS plus the git identity of whoever runs the command).
+
+Where documents live: `.reverie/context/*.md` (repo), `~/.reverie/context/*.md`
+(you), and folders of `.md` named in `.reverie/context.toml` (or `~/.reverie/context.toml`).
+Several orgs and teams can share one repo:
 
 ```toml
 [sources]
-org  = "../acme-context/org"
-team = "../acme-context/payments"
+org  = ["../acme/org", "../globex/org"]
+team = ["../acme/payments", "../acme/platform"]
 ```
 
-A section headed Rules / Always / Never / Must holds rules, one per bullet; every
-other bullet is guidance, delivered as a pointer (`reverie show <id>`). A bullet
-ending `(locked)` cannot be overridden by a lower layer; `{id: name}` at the end
-names a rule so another layer can answer it. A first line `applies-to: repo-a, repo-b`
-limits a document to those repos (default: every repo that points at its folder).
-Higher layer wins; an overridden rule is shown as a conflict, never dropped. The
-approvers are whoever CODEOWNERS names for those folders; no server is involved.
+Format: a section headed Rules / Always / Never / Must holds rules, one per
+bullet; every other bullet is guidance, delivered as a pointer (`reverie show <id>`).
+A bullet may end with `{id: name}` (so another scope can answer the same rule),
+`{resolves: key}` (a recorded decision) and `(locked)`. Optional lines at the top
+of a document: `applies-to: repo-a, repo-b`, `applies-to-paths: services/billing/**`
+(the rules apply only to files under those paths; the edit hook delivers them
+when you touch such a file), `owner: whom to ask`, `inside: acme` (a team naming
+its org).
+
+How scopes combine: the narrower scope answers the wider (org, then team, then
+repo, then you) unless the wider rule is locked. Sibling scopes (two teams, two
+orgs) have no order; if their rules contradict, the conflict is UNRESOLVED: both
+are shown, neither is applied, and the agent is told to ask you. A lock only
+binds inside its own scope; two locks that contradict are unresolved too.
+Every conflict is listed with both rules, their owners and a status
+(overridden, locked or unresolved); nothing is dropped silently.
 
 ```bash
-reverie context list                                   # every layer, with conflicts and flags
-reverie context add "Never log card numbers"           # repo layer, a rule (no code needed)
-reverie context add --layer org --locked --tag no-pii "Never log card numbers"
+reverie context list                                   # scopes, conflicts, flags
+reverie context add "Error messages never blame the user"      # a rule, repo scope
+reverie context add --layer org --scope acme/org --locked --tag no-pii "Never log card numbers"
+reverie context add --paths "services/billing/**" "Amounts are integer cents"
 reverie context add --guidance --doc deploys "Deploys go through the staging gate"
-reverie context check                                  # judge cross-layer conflicts + staleness
+reverie context add --why "support asked" "Never blame the user"   # becomes a proposal if the folder has owners
+reverie context proposals                              # open proposals
+reverie context accept <name>                          # an owner moves a proposal into its document
+reverie context resolve <conflict-key> "Public APIs use REST, internal ones gRPC"
+reverie context check                                  # judge cross-scope conflicts + staleness
 reverie context check --since v1.2                     # recheck commits since a revision
 ```
 
-`check` calls the model (conflicts: one call per lower-layer rule, cached by
-content; staleness: the diff judge on commits touching a bullet's backticked
-files and symbols). Results are kept in `~/.reverie/context_state.json`, never
-written into the shared documents.
+`add` writes the bullet directly when nobody owns the target document or you are
+one of its owners. Otherwise it writes a proposal file under `proposals/` next to
+the document, to be reviewed like any pull request; an owner runs `accept`.
+`resolve` writes a `{resolves: key}` decision into this repo's context (or a
+proposal for it): it settles the conflict and is remembered because it lives in git.
+An optional `authority` file (`legal = @dana, @sam`) only adds display labels to
+owner names; nothing in Reverie branches on a label.
+
+`check` calls the model (conflicts: one call per rule, cached by content;
+staleness: the diff judge on commits touching a bullet's backticked files and
+symbols). Results are kept in `~/.reverie/context_state.json`, never written into
+the shared documents.
 
 ## reverie show
 
