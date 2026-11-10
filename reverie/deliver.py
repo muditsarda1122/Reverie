@@ -215,7 +215,7 @@ def _rules_files_text(cwd: str) -> str:
     """The user's rules.md files, header boilerplate stripped."""
     from . import rules
     out = []
-    loaded = rules.load(cwd)
+    loaded = rules.load(cwd, hide_shared=True)
     for key, label in (("user", "Your personal rules"),
                        ("repo", "This repo's rules (team)")):
         body = "\n".join(
@@ -247,6 +247,11 @@ def startup_text(cwd: str) -> str:
             finally:
                 conn.close()
         mem = [m for m in mem if is_live(m, root)]
+        from . import context as _ctx
+        shared = _ctx.shared_rule_norms(root)
+        if shared:                       # a rule already in the team document: show it once
+            mem = [m for m in mem if not (m.get("kind") in ("rule", "preference")
+                                          and _ctx.norm(m.get("text") or "") in shared)]
         flagged = [m for m in mem if is_stale_flagged(m)]
         fresh = [m for m in mem if not is_stale_flagged(m)]
         wide = [m for m in fresh if m.get("repo_key") is None

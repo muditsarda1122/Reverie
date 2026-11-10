@@ -33,14 +33,24 @@ def _read(path: Path) -> str:
         return ""
 
 
-def load(cwd: str | Path) -> dict[str, str]:
-    """``{"user": text, "repo": text}`` with empty strings when absent."""
-    return {"user": _read(personal_path()), "repo": _read(repo_path(cwd))}
+def load(cwd: str | Path, *, hide_shared: bool = False) -> dict[str, str]:
+    """``{"user": text, "repo": text}`` with empty strings when absent. With
+    ``hide_shared`` a personal bullet that repeats a team rule in force is left out
+    (delivery only: the file is never edited, and the bullet returns when the team
+    rule goes away)."""
+    user = _read(personal_path())
+    if hide_shared and user:
+        from . import context
+        shared = context.shared_rule_norms(str(repo_root(cwd)))
+        if shared:
+            user = "\n".join(ln for ln in user.splitlines()
+                             if not (ln.startswith("- ") and context.norm(ln[2:]) in shared))
+    return {"user": user, "repo": _read(repo_path(cwd))}
 
 
 def render(cwd: str | Path) -> str:
     """Both files as one block for injection (personal first)."""
-    loaded = load(cwd)
+    loaded = load(cwd, hide_shared=True)
     parts = []
     if loaded["user"].strip():
         parts.append("### Your personal rules\n" + loaded["user"].strip())

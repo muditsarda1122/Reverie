@@ -97,6 +97,12 @@ class Resolved:
     effective: list[CtxItem]
     conflicts: list[Conflict]
     stale: dict[str, dict]
+    hidden: set[str] = field(default_factory=set)   # personal duplicates of a team rule
+
+
+def norm(text: str) -> str:
+    """Comparison form of a rule's text: case, spacing and punctuation ignored."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +532,26 @@ def resolve(root: str, items: list[CtxItem] | None = None, state: dict | None = 
         conflicts.append(c)
         out_ids.update(o.id for o in c.overridden)
     stale = {k: v for k, v in (state.get("stale") or {}).items() if k in by_id}
-    return Resolved(items, [i for i in items if i.id not in out_ids], conflicts, stale)
+    effective = [i for i in items if i.id not in out_ids]
+    # A personal rule that repeats a team rule is hidden at DELIVERY time only (never
+    # deleted). It comes back as soon as the shared rule is removed, overridden or stale.
+    shared = {norm(i.text) for i in effective
+              if i.kind == "rule" and i.layer != "personal" and i.id not in stale}
+    hidden = {i.id for i in effective
+              if i.kind == "rule" and i.layer == "personal" and norm(i.text) in shared}
+    return Resolved(items, [i for i in effective if i.id not in hidden], conflicts, stale,
+                    hidden)
+
+
+def shared_rule_norms(root: str) -> set[str]:
+    """Normalised text of the team/org/repo rules in force here (what a personal copy
+    of the same rule would repeat). Empty on any error."""
+    try:
+        res = resolve(root)
+    except Exception:
+        return set()
+    return {norm(i.text) for i in res.effective
+            if i.kind == "rule" and i.layer != "personal" and i.id not in res.stale}
 
 
 # ---------------------------------------------------------------------------
@@ -741,7 +766,8 @@ def _slug(text: str) -> str:
 
 def add(root: str, text: str, *, layer: str = "repo", rule: bool = True,
         locked: bool = False, tag: str = "", doc: str = "", scope: str = "",
-        paths: tuple[str, ...] = (), resolves: str = "", why: str = "") -> AddResult:
+        paths: tuple[str, ...] = (), resolves: str = "", why: str = "",
+        provenance: dict[str, str] | None = None) -> AddResult:
     """Write a bullet. A direct edit when nobody owns the target document or the
     writer is an owner (CODEOWNERS + git identity); otherwise a PROPOSAL file the
     owners can review like any pull request. Reverie never asks for a job title."""
@@ -768,7 +794,9 @@ def add(root: str, text: str, *, layer: str = "repo", rule: bool = True,
         prop.write_text(
             "# Proposal\n\n" f"document: {stem}.md\n" f"kind: {'rule' if rule else 'guidance'}\n"
             f"paths: {', '.join(paths)}\n" f"proposed-by: {who} <{mail}>\n"
-            f"date: {time.strftime('%Y-%m-%d')}\n" f"why: {why}\n\n{bullet}\n", encoding="utf-8")
+            f"date: {time.strftime('%Y-%m-%d')}\n" f"why: {why}\n"
+            + "".join(f"{k}: {' '.join(str(v).split())}\n" for k, v in (provenance or {}).items())
+            + f"\n{bullet}\n", encoding="utf-8")
         return AddResult(prop, True, owners)
     _append(path, bullet, rule, paths)
     return AddResult(path, False, owners)
@@ -811,3 +839,51 @@ def accept(root: str, slug: str) -> Path:
     _append(doc, prop["bullet"], prop.get("kind", "rule") == "rule", paths)
     prop["path"].unlink()
     return doc
+
+
+def rejected(root: str) -> list[dict]:
+    """Proposals an owner declined, with the reason. They live in ``proposals/rejected/``
+    next to the document (so they are in git history and the proposer can read them) and
+    are never delivered to an agent."""
+    out = []
+    for d in _proposal_dirs(root):
+        for p in sorted((d / "rejected").glob("*.md")):
+            fields: dict[str, str] = {}
+            bullet = ""
+            for ln in _read(p).splitlines():
+                if ln.startswith("- "):
+                    bullet = ln
+                elif ":" in ln and not ln.startswith("#"):
+                    k, v = ln.split(":", 1)
+                    fields.setdefault(k.strip().lower(), v.strip())
+            out.append({"slug": p.stem, "path": p, "bullet": bullet, **fields})
+    return out
+
+
+def bullet_text(bullet: str) -> str:
+    """The rule text of a bullet line, without ``{id}``/``{resolves}``/``(locked)`` marks."""
+    t = re.sub(r"\{(?:id|resolves):[^}]*\}", "", bullet.lstrip("- ").strip())
+    return re.sub(r"\s*\(locked\)\s*$", "", t).strip()
+
+
+def reject(root: str, slug: str, why: str) -> Path:
+    """An owner declines a proposal. The reason is kept in ``proposals/rejected/``."""
+    if not " ".join(why.split()):
+        raise ValueError("say why (--why): the proposer will read it")
+    hits = [p for p in proposals(root) if p["slug"].startswith(slug)]
+    if len(hits) != 1:
+        raise ValueError(f"no single proposal matches {slug!r}")
+    prop = hits[0]
+    doc = prop["path"].parent.parent / (prop.get("document") or "rules.md")
+    if not is_owner(doc):
+        raise ValueError(f"only the owners of {doc.name} can reject: " + ", ".join(owners_of(doc)))
+    who = spool._git(["config", "user.name"], doc.parent) or "unknown"
+    mail = spool._git(["config", "user.email"], doc.parent)
+    dest = prop["path"].parent / "rejected" / prop["path"].name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    body = _read(prop["path"]).rstrip("\n")
+    dest.write_text(f"{body}\n\nrejected-by: {who} <{mail}>\nrejected-on: "
+                    f"{time.strftime('%Y-%m-%d')}\nreason: {' '.join(why.split())}\n",
+                    encoding="utf-8")
+    prop["path"].unlink()
+    return dest
