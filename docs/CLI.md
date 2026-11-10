@@ -236,6 +236,7 @@ reverie context accept <name>                          # an owner moves a propos
 reverie context resolve <conflict-key> "Public APIs use REST, internal ones gRPC"
 reverie context check                                  # judge cross-scope conflicts + staleness
 reverie context check --since v1.2                     # recheck commits since a revision
+reverie context check --if-changed                     # quiet; only if a document or the code changed
 ```
 
 `add` writes the bullet directly when nobody owns the target document or you are
@@ -250,6 +251,20 @@ owner names; nothing in Reverie branches on a label.
 staleness: the diff judge on commits touching a bullet's backticked files and
 symbols). Results are kept in `~/.reverie/context_state.json`, never written into
 the shared documents.
+
+**Detection and the hint are separate.**
+- *Detection* (the judge above) runs only where a model call is allowed, never in a
+  hook: at the end of `context add` and `context accept` (when the document changed),
+  in a detached worker that session start launches when a document's content hash
+  or the repo's HEAD changed since the last run (`context check --if-changed`), and
+  once a day (a full recheck, with the daily merge job's cadence). A missing or
+  failing judge changes nothing: delivery is identical, nothing is recorded as
+  checked, and the next run tries again. Conflicts the judge found are then in the
+  start block as UNRESOLVED before the agent starts.
+- *The hint* is a mitigation, not detection: when more than one org or team source
+  applies, the start block carries one fixed line, "If two rules above seem to
+  contradict, ask before acting." It says nothing about whether a conflict exists;
+  repos with a single source pay no extra context.
 
 ## reverie show
 

@@ -300,6 +300,17 @@ the lab test. The lab run must include: two teams in one repo, two orgs with a
 conflicting lock, a path-scoped rule, a rule written by a non-developer role,
 and a second user inheriting rules (each with a memory-off control).
 
+**Follow-up to lab run 2 (the three gaps).** Run 2 found two open failures: a subtle
+conflict nobody had flagged (codex picked a side silently in 3 of 3) and an unflagged
+stale rule (codex re-added a removed helper in 2 of 3). Fixes, kept as separate
+mechanisms: (1) DETECTION: the conflict judge runs when a document changes (after
+`context add`/`accept`, in a detached session-start worker keyed by a content hash,
+in the daily run); (2) HINT: a fixed line when more than one org/team source applies,
+a nudge that does not detect anything; (3) the staleness pass runs in the same worker
+on new commits. Never in a hook; a failing judge leaves delivery unchanged. Whether
+this fixes the two cells is a measured question: see docs/BENCHMARK.md, follow-up to
+run 2.
+
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
 (stdlib `http.server`, no new dependency). First slice, read-only: repos,

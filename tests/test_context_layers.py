@@ -373,3 +373,149 @@ def test_cli_context_flags_are_on_the_context_parser(env, monkeypatch, capsys):
     assert cli.main(["context", "list"]) == 0
     out = capsys.readouterr().out
     assert "Rule one" in out and "Org rule" in out and "only under src/a/**" in out
+
+
+# --- detection runs off the hook path; the hint is a separate mitigation ---
+
+def _two_teams(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = _repo(tmp_path / "r")
+    for d in ("co/a", "co/b"):
+        (tmp_path / d).mkdir(parents=True)
+    (repo / ".reverie" / "context.toml").write_text('[sources]\nteam = ["../co/a", "../co/b"]\n')
+    (tmp_path / "co/a/r.md").write_text("## Rules\n- Always squash merge\n")
+    (tmp_path / "co/b/r.md").write_text("## Rules\n- Never squash merge\n")
+    _git(repo, "commit", "--allow-empty", "-qm", "init")
+    return repo
+
+
+def _capture_spawns(monkeypatch):
+    """Record detached `reverie context ...` spawns; real git calls pass through."""
+    import subprocess
+    real, spawned = subprocess.Popen, []
+
+    def fake(*a, **k):
+        if "context" in " ".join(map(str, a[0] if isinstance(a[0], list) else [a[0]])):
+            spawned.append(a[0])
+            return None
+        return real(*a, **k)
+    monkeypatch.setattr(subprocess, "Popen", fake)
+    return spawned
+
+
+def test_hint_only_when_more_than_one_org_or_team_source(tmp_path, monkeypatch, env):
+    repo, org, team = env                                  # one org and one team: two sources
+    (org / "r.md").write_text("## Rules\n- Org rule\n")
+    (team / "r.md").write_text("## Rules\n- Team rule\n")
+    assert context.CONTRADICTION_HINT in context.render(str(repo))
+    (team / "r.md").unlink()                               # one source left: no hint, no cost
+    assert context.CONTRADICTION_HINT not in context.render(str(repo))
+    (org / "r.md").unlink()
+    context.add(str(repo), "Repo rule")                    # repo/personal alone never trigger it
+    assert context.CONTRADICTION_HINT not in context.render(str(repo))
+
+
+def test_hint_does_not_detect_anything(tmp_path, monkeypatch):
+    """The hint is a nudge: it appears for sibling teams whether or not they contradict
+    and never creates a conflict record."""
+    repo = _two_teams(tmp_path, monkeypatch)
+    (tmp_path / "co/b/r.md").write_text("## Rules\n- Use black\n")
+    assert context.CONTRADICTION_HINT in context.render(str(repo))
+    assert context.resolve(str(repo)).conflicts == []
+
+
+def test_auto_check_judges_on_change_only_and_survives_a_failing_judge(tmp_path, monkeypatch):
+    repo = _two_teams(tmp_path, monkeypatch)
+    calls = []
+
+    def judge(p):
+        calls.append(p)
+        return "1: opposite"
+    first = context_check.auto_check(str(repo), judge)
+    assert first and first["conflicts"] == 1 and calls
+    n = len(calls)
+    assert context_check.auto_check(str(repo), judge) is None        # nothing changed: free
+    assert len(calls) == n
+    (tmp_path / "co/b/r.md").write_text("## Rules\n- Never squash merge\n- Tag releases\n")
+    assert context_check.auto_check(str(repo), judge) is not None    # a document changed
+    assert len(calls) > n
+    assert context.resolve(str(repo)).conflicts[0].status == "unresolved"
+
+
+def test_failing_judge_changes_nothing_and_is_retried(tmp_path, monkeypatch):
+    repo = _two_teams(tmp_path, monkeypatch)
+    before = deliver.startup_text(str(repo))
+
+    def boom(p):
+        raise RuntimeError("provider down")
+    res = context_check.auto_check(str(repo), boom)
+    assert res and res["judge_errors"] > 0
+    assert deliver.startup_text(str(repo)) == before                  # delivery unchanged
+    assert context.load_state().get("doc_sig", {}).get(str(repo)) is None   # will retry
+    assert context_check.auto_check(str(repo), lambda p: "1: opposite")["conflicts"] == 1
+
+
+def test_failing_judge_does_not_skip_commits_for_staleness(env):
+    repo, _, _ = env
+    (repo / "retry.py").write_text("def old_helper():\n    return 1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "init")
+    context.add(str(repo), "Use `old_helper` in retry.py for all retries")
+    context_check.auto_check(str(repo), lambda p: "NONE")             # baseline at HEAD
+    (repo / "retry.py").write_text("def new_helper():\n    return 2\n")
+    _git(repo, "commit", "-qam", "replace helper")
+
+    def boom(p):
+        raise RuntimeError("down")
+    context_check.auto_check(str(repo), boom)
+    out = context_check.auto_check(str(repo), lambda p: "CONTRADICTED: removed")
+    assert out and out["stale"] == 1                                   # the commit was not lost
+
+
+def test_session_start_never_calls_a_judge(tmp_path, monkeypatch):
+    """The hook only hashes files and spawns a detached worker; a judge that explodes
+    is never reached and the printed block is identical."""
+    from reverie import hooks
+    repo = _two_teams(tmp_path, monkeypatch)
+    monkeypatch.delenv("REVERIE_NO_BACKGROUND", raising=False)
+    spawned = _capture_spawns(monkeypatch)
+
+    def forbidden(*a, **k):
+        raise AssertionError("a model call inside a hook")
+    monkeypatch.setattr(context_check, "_cfg_judge", forbidden)
+    monkeypatch.setattr(context_check, "find_conflicts", forbidden)
+    monkeypatch.setattr(context_check, "check_stale", forbidden)
+    out = []
+    hooks.session_start(str(repo), print_fn=out.append)
+    assert len(spawned) == 1                                  # a detached worker, not a call
+    text = "\n".join(out)
+    assert "Always squash merge" in text and context.CONTRADICTION_HINT in text
+    monkeypatch.setenv("REVERIE_NO_BACKGROUND", "1")
+    out2 = []
+    hooks.session_start(str(repo), print_fn=out2.append)
+    assert "\n".join(out2) == text                                    # spawning changes nothing
+
+
+def test_spawn_skips_when_nothing_changed(tmp_path, monkeypatch):
+    from reverie import hooks
+    repo = _two_teams(tmp_path, monkeypatch)
+    monkeypatch.delenv("REVERIE_NO_BACKGROUND", raising=False)
+    context_check.auto_check(str(repo), lambda p: "NONE")
+    spawned = _capture_spawns(monkeypatch)
+    hooks._spawn_context_check(str(repo))
+    assert len(spawned) == 1                    # first time: the daily full recheck
+    (Path(context.spool.repo_dir(str(repo))) / "context.lock").unlink()
+    hooks._spawn_context_check(str(repo))
+    assert len(spawned) == 1                    # unchanged and checked today: nothing
+
+
+def test_cli_add_and_accept_run_detection(tmp_path, monkeypatch, capsys):
+    from reverie import cli
+    repo = _two_teams(tmp_path, monkeypatch)
+    monkeypatch.delenv("REVERIE_NO_BACKGROUND", raising=False)
+    monkeypatch.chdir(repo)
+    seen = []
+    monkeypatch.setattr(context_check, "auto_check",
+                        lambda root, *a, **k: seen.append(root) or {"conflicts": 1})
+    assert cli.main(["context", "add", "Rule three"]) == 0
+    assert seen and "conflict(s) between scopes" in capsys.readouterr().out
