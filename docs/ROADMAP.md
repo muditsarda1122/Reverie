@@ -357,7 +357,7 @@ shows people use it. Usefulness test before building the editor: do users edit
 rules by hand (`reverie rules` usage), and does a read-only page make them
 trust or fix memory. Version history can reuse git for repo-resident files.
 
-**`reverie ui`, read-only slice: design (not built).** A command, not a daemon. Editing,
+**`reverie ui`, read-only slice: BUILT (design approved with four changes: plain-language home with action items first, no telemetry, hostile/large-data tests, start page equals the CLI text).** Cut from the design: the hooks-installed column on Repos (`reverie status` has it). A command, not a daemon. Editing,
 user-defined layers and version history stay out; this page only shows what is already stored.
 - Process: `reverie ui [--repo PATH] [--port N] [--no-open]` runs `http.server` in the foreground on
   127.0.0.1 (random free port unless `--port`), prints the URL, opens the browser unless `--no-open`,

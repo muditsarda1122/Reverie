@@ -287,6 +287,36 @@ the shared documents.
   contradict, ask before acting." It says nothing about whether a conflict exists;
   repos with a single source pay no extra context.
 
+## reverie ui
+
+A read-only page in your browser. It is a command, not a daemon: it serves on
+`127.0.0.1` until you press Ctrl-C and changes nothing.
+
+```bash
+reverie ui                       # a free port, opens your browser
+reverie ui --port 8765           # a fixed port (says so if it is taken)
+reverie ui --no-open             # print the address only
+reverie ui --repo ~/code/api     # another repo (default: the current directory)
+```
+
+The home page is in plain language and starts with what needs action: conflicts
+between rules that agents are told to ask about, rules that may be outdated, and
+proposals waiting for an owner, each with the command that deals with it. Below
+that are counts of the rules in force and one-click views: **What agents are told**
+(exactly the text a session starts with, the same function the CLI uses), **Team
+context** (scopes, marks, conflicts), **Proposals** (waiting, and turned down with
+the reason), **Memory** (paged, 100 per page) and **Repos**. A repo that is turned off
+shows only that. Looking at the start block is not a delivery and is not counted in
+usage.
+
+Safety and privacy: only GET and HEAD answer (anything else is 405); the brain is opened
+read-only (SQLite may create its own `-wal`/`-shm` files, the database is not
+changed); it binds to `127.0.0.1` and refuses a Host header that is not its own
+address; every value is HTML-escaped and passed through redaction (the start block is
+shown exactly as delivered); no script and no external resource, a strict
+Content-Security-Policy; no access log and no telemetry of any kind. The page never
+reports its own usage.
+
 ## reverie show
 
 Prints one memory item in full (id prefix is enough), with its anchor,
