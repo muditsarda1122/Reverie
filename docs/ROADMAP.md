@@ -98,8 +98,8 @@ Learned from the P0 runs, now on the list:
 5. **Provenance-based capture** DONE. Items record `meta.provenance`
    (`user` | `diff`); an agent-inferred item needs a quote from the user's words
    or the working-tree diff; the agent's own answer is never evidence. The
-   regex guard is gone. Still to add: tool results as a third source (they
-   live in the transcripts), and diff-at-capture-time for imported exchanges.
+   regex guard is gone. Tool results are now a third source (item (e), below); still to add:
+   diff-at-capture-time for imported exchanges.
 6. **Ground at capture** DONE (b11f425). `reverie/anchors.py` checks proposed
    and mentioned files/symbols with `git grep`, drops invented ones, adds the
    defining files. Real run: a symbol-only rule gained its file, the stale
@@ -351,6 +351,7 @@ is real, also run detection on `git pull` (a hook installed by `reverie install`
 ### Smaller items: progress
 - (b) Codex untrusted-hooks warning in `reverie status`: DONE.
 - (d) refresh installed instruction blocks: DONE. `reverie install --refresh-instructions` updates only text that is already installed and stale (the owned `~/.reverie/AGENTS.md`, the marker-delimited block in a harness AGENTS.md); `reverie status` warns; nothing else is touched or created. (`reverie install` itself already refreshed a stale block; what was missing was noticing, and a way to do only that.)
+- (e) tool results as a provenance source: DONE for Claude Code's Stop hook (the live capture reads the real `tool_result` blocks of the last exchange, redacted and capped at 12k chars, head and tail). They can back FACTS (environment, a decision's reason, a negative result) and never a rule or preference (tool output can carry text written by anyone). `REVERIE_PROVENANCE_TOOLS=0` turns it off. Other harnesses and the importers do not pass tool results yet.
 - (c) compound rules: real repro found (above), prompt changed, cost measured: DONE.
 
 ### Local UI (validate first)

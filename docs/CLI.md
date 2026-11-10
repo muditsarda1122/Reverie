@@ -646,3 +646,4 @@ final export failed (nothing removed).
 | `REVERIE_HOME` | relocate the whole `~/.reverie` directory (tests, sandboxes) |
 | `REVERIE_REPO_PATH` + `REVERIE_BRANCH` | override repo/branch detection (both required; used by MCP launches outside a work tree and by tests) |
 | provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_ZEN_API_KEY`) | read from the environment at call time; never written to disk |
+| `REVERIE_PROVENANCE_TOOLS=0` | do not use tool output (test runs, command output) as evidence for a memory item; by default Claude Code's captured exchange includes the real tool results of that exchange (redacted, bounded), which can back facts but never a rule or preference |
