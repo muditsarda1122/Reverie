@@ -130,6 +130,14 @@ Violations are convention violations per task (lower is better); "zero" = tasks 
 | 4. rule scoped to `src/click/billing/**` (one task under it, one outside) | applied under the path; not leaked outside | 0 of 12 violations (no leak either) | 6 of 12 (the under-path task, every time) |
 | 5. rule written by a non-developer through `reverie context add` (proposal, owner `accept`, delivered) | docstring tag | 0 of 6 | 6 of 6 |
 
+Read every row with these limits: one repo (pallets/click), tiny single-function tasks,
+conventions that cannot be guessed (so the effect is large by construction), memory extraction
+off, n = 3 repeats per cell. The control arm kept the rule files on disk, and in two control
+runs Claude opened `.reverie/context/` itself (neither changed the outcome). One codex run (case
+1) reported a file that does not exist; it is unscored and unexplained. The case 2, 3(b) and
+3(c) rows above are complete in the committed file; a copy that showed cut-off cells was a
+paste problem, not the document.
+
 Case 5 tests the contribution path only (a non-owner's `add` became a proposal, which was not in
 force until an owner ran `accept`; the proposal-written and not-in-force checks held in 6/6
 setups). The promotion path (a user's learned rule into a proposal) is not built and is not
