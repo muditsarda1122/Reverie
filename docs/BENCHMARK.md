@@ -260,3 +260,62 @@ in 12 runs across both arms; c6 0 stale-rule uses in 6). Not shown, and stated a
   UNRESOLVED or outdated block can first appear in the NEXT session. Until then only the hint
   helps. I did not measure that first-session window.
 - Same repo, tiny tasks, obvious contradictions, n = 3, two harnesses.
+
+
+## Results, run 3: the promotion path (2026-11-10; itsdangerous, claude + codex)
+
+What was tested: `reverie context propose`, `accept`, `reject --why` and the delivery-time hide of a
+personal duplicate (commits 4baaf0d, 9ccb8ea). Early results, in my tests: one repo (pallets/itsdangerous,
+a fresh clone per cell, a different repo from runs 1 and 2), one tiny task (a `to_snake` function), n = 3
+per cell, claude and codex, 30 runs, 0 provider failures. Spend: claude $1.24, codex 344k tokens (cap $15).
+Each cell had its own clone, folder name and `REVERIE_HOME`s (one for user A, one for user B); the real
+`~/.reverie` was not touched; the model key was withheld from the agents, so memory extraction was off and
+only the proposal/accept path can explain a result. The hidden checker was written and validated on
+reference solutions (followed, not followed, positional, wrong default, wrong behaviour, missing file)
+before any agent ran and was not edited afterwards.
+
+The convention is arbitrary: "give every public function a keyword-only parameter named `dry_run` that
+defaults to False". It appears in no prompt. The agent's task never mentions it.
+
+Setup per cell: user A has the rule in their personal `rules.md`; A runs `reverie context propose`
+(a non-owner, so it becomes a proposal under `.reverie/context/proposals/`, committed); a lead (CODEOWNERS)
+then accepts it, rejects it with a reason, or does neither; user B (no personal rule) works in the same clone.
+
+| arm | who | delivered at start | followed the rule (kw-only `dry_run=False`) | |
+|---|---|---|---|---|
+| before accept | B | nothing (proposal not in force) | claude 0/3, codex 0/3 | pass: not followed |
+| after accept | B | the team rule, once | claude 3/3, codex 3/3 | pass: followed |
+| after accept | A (own agent) | the team rule exactly once (personal copy hidden); 6/6 | claude 3/3, codex 3/3 | pass: not lost for A |
+| rejected | B | nothing; the rejection reason is absent (6/6) | claude 0/3, codex 0/3 | pass: not followed |
+| off (Reverie disabled, same files as "after") | B | nothing | claude 0/3, codex 0/3 | chance rate: 0 of 6 |
+
+The off arm is the true chance rate for an arbitrary convention (0 of 6), so "before accept" and "rejected"
+at 0 of 12 are not an artefact of a convention an agent would add anyway. All 30 runs wrote a working
+`to_snake` (behaviour check 30/30).
+
+**Leak check (proposal files).** The proposal and rejected-proposal files sit inside the clone, where an
+agent could find them. Recorded in every arm whether any agent's log mentions `proposals` or shows the
+proposal content (`proposed-via`, `rejected-by`, the rejection reason): 0 of 30 runs mention `proposals`,
+0 of 30 show proposal content, 0 touched `proposals/rejected`. No before-accept or rejected agent got the
+rule from a proposal file. (Two codex runs, one "after" and one "off", opened `.reverie/context/`; the
+"after" one followed the rule, as did every delivered run; the "off" one did not.)
+
+### Caveats
+- One repo, one tiny task, n = 3 per cell, two harnesses; intervals are wide. The effect is large because
+  the convention cannot be guessed; this shows the path (propose, accept or reject, deliver) works and does
+  not leak, not that agents judge rules well.
+- In the "before" and "rejected" arms the start block was empty, so those arms show "nothing leaks through
+  delivery" more than anything subtle.
+- Not exercised in the lab (unit tests only): the personal rule coming back after the team rule is removed,
+  overridden or flagged outdated; re-proposal with `--again`; a secret being refused.
+- The off arm kept the rule files on disk; one codex off run opened `.reverie/context/` and still did not
+  follow the rule.
+- The model-judged detection worker did not run here (key withheld; no model call is part of this path).
+
+### Problems found on the way
+- A flaky test (`test_check_server_reports_started`) failed once in a full run; it passed alone and in
+  three reruns. Cause not confirmed (my hypothesis: exec of a freshly written script failing under load).
+  The test now runs the fake server through the interpreter with a long timeout and prints the failure
+  detail. The full suite then passed in one full run (1259 passed). One passing full run is not proof the
+  flake is gone.
+- Nothing else broke during this run.
