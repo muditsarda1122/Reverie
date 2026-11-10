@@ -416,6 +416,8 @@ shows people use it. Usefulness test before building the editor: do users edit
 rules by hand (`reverie rules` usage), and does a read-only page make them
 trust or fix memory. Version history can reuse git for repo-resident files.
 
+**Redesign (approved after review): the page is now a team workspace (projects board, per-project tabs for Overview, Rules, Memory, What agents are told, Proposals, Connect; search; guided add/connect screens that show the command). Still read-only; projects open only by opaque id. Real add/connect buttons (a page that writes) are NOT built: a design note on CSRF, Host checks and what may be written comes first.**
+
 **`reverie ui`, read-only slice: BUILT (design approved with four changes: plain-language home with action items first, no telemetry, hostile/large-data tests, start page equals the CLI text).** Cut from the design: the hooks-installed column on Repos (`reverie status` has it). A command, not a daemon. Editing,
 user-defined layers and version history stay out; this page only shows what is already stored.
 - Process: `reverie ui [--repo PATH] [--port N] [--no-open]` runs `http.server` in the foreground on

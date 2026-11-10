@@ -311,15 +311,22 @@ reverie ui --no-open             # print the address only
 reverie ui --repo ~/code/api     # another repo (default: the current directory)
 ```
 
-The home page is in plain language and starts with what needs action: conflicts
-between rules that agents are told to ask about, rules that may be outdated, and
-proposals waiting for an owner, each with the command that deals with it. Below
-that are counts of the rules in force and one-click views: **What agents are told**
-(exactly the text a session starts with, the same function the CLI uses), **Team
-context** (scopes, marks, conflicts), **Proposals** (waiting, and turned down with
-the reason), **Memory** (paged, 100 per page) and **Repos**. A repo that is turned off
-shows only that. Looking at the start block is not a delivery and is not counted in
-usage.
+The page is a small team workspace. **Projects** (the home page) is a board of every repo
+Reverie knows on this machine, sorted into "Needs attention", "All clear" and "Turned off", with
+each project's conflicts, outdated rules, waiting proposals, rules in force and remembered items.
+Opening a project gives tabs: **Overview** (what needs action first, as lanes: conflicts between
+rules agents are told to ask about, rules that may be outdated, proposals waiting for an owner,
+each with the command that deals with it), **Rules** (team context: scopes, marks, conflicts),
+**Memory** (the shared memory grouped by kind, 100 items per page), **What agents are told**
+(exactly the text a session starts with, the same function the CLI uses), **Proposals** (waiting,
+and turned down with the reason) and **Connect** (the steps to set an agent up). The search box
+looks through the team rules and memory of the current project. "Add a rule" and "Add a project"
+are guided screens that show the exact command to run; the page itself never writes. A project
+that is turned off shows only that. Looking at the start block is not a delivery and is not
+counted in usage.
+
+Only repos Reverie already knows about (plus the one `--repo` points at) can be opened, by an
+opaque id; a path in the URL is never read.
 
 Safety and privacy: only GET and HEAD answer (anything else is 405); the brain is opened
 read-only (SQLite may create its own `-wal`/`-shm` files, the database is not

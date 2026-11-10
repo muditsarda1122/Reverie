@@ -82,7 +82,7 @@ To switch provider, run `reverie install --provider anthropic`, or edit the `llm
 | `reverie transcripts` | Import new prompts/answers from the harnesses' own transcripts (also automatic) |
 | `reverie rules` | Show or edit the rules Reverie always applies |
 | `reverie context` | Team context as plain markdown in scopes (org, team, repo, paths, you): the narrower scope answers the wider unless locked, sibling teams that contradict make the agent ask (a background judge finds the conflicts when a document or the code changes; a one-line hint nudges asking), anyone can propose, CODEOWNERS accept, and `propose` turns a rule you taught your agent into a team proposal (owners accept or reject with a reason). Early feature on the branch |
-| `reverie ui` | A read-only page on localhost: what needs action first (conflicts, outdated rules, waiting proposals), then what agents are told, team context, proposals and memory. No telemetry. Early feature on the branch |
+| `reverie ui` | A read-only team workspace on localhost: your projects on one board, and per project what needs action first (conflicts, outdated rules, waiting proposals), team rules, shared memory, what agents are told, and how to connect. Adding is done with the command it shows. No telemetry. Early feature on the branch |
 | `reverie show` | Show one memory item in full |
 | `reverie undo` | Undo an item that was added automatically |
 | `reverie digest` | List what was added recently |
