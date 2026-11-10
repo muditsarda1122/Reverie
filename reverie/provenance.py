@@ -10,7 +10,10 @@ What the agent says about its own work (its final answer, its summary, its
 reasoning) is narration, never a source: the same model that wrote the
 narration would be vouching for itself, and measured runs filled the memory with
 "tests were added but not run yet" and "the user should rotate the key".
-Tool results are the next source to add (they live in the transcripts).
+* real tool output the agent saw (``tool``): the test run, the failing command, the
+  error text. It can support FACTS about the environment, a decision's reason, a negative
+  result; it can never state a rule or a preference (those come from the user), because tool
+  output can carry text written by anyone (a web page, a file, a log).
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from .redact import redact
 DIFF_CAP = 40_000          # chars of diff given to the extractor
 NEW_FILE_CAP = 4_000       # chars read from each new file
 NEW_FILES_MAX = 8
+TOOL_CAP = 12_000          # chars of tool output given to the extractor (head and tail)
 
 
 def working_diff(repo_path: str | Path | None) -> str:
@@ -52,9 +56,29 @@ def working_diff(repo_path: str | Path | None) -> str:
         return ""
 
 
+def tools_enabled() -> bool:
+    return os.environ.get("REVERIE_PROVENANCE_TOOLS", "1") != "0"
+
+
+def tool_text(raw: str) -> str:
+    """Redacted, bounded tool output (the head and the tail, where errors usually are).
+    '' when tool results are switched off. Never raises."""
+    try:
+        if not raw or not tools_enabled():
+            return ""
+        text = redact(raw)
+        if len(text) > TOOL_CAP:
+            half = TOOL_CAP // 2
+            text = text[:half] + "\n[... output truncated ...]\n" + text[-half:]
+        return text
+    except Exception:
+        return ""
+
+
 def evidence_text(interaction: dict) -> str:
     """The only text an agent-inferred item's evidence quote may come from."""
-    return "\n".join(str(interaction.get(k) or "") for k in ("prompt", "diff"))
+    keys = ("prompt", "diff") + (("tool_results",) if tools_enabled() else ())
+    return "\n".join(str(interaction.get(k) or "") for k in keys)
 
 
 def is_enabled() -> bool:

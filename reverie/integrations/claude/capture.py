@@ -32,6 +32,24 @@ from ...repos import resolve_repo
 class Exchange:
     user_request: str
     assistant_reply: str
+    tool_results: str = ""
+
+
+def _tool_result_text(content: object) -> list[str]:
+    """The text of each ``tool_result`` block in one message's content list."""
+    out: list[str] = []
+    if not isinstance(content, list):
+        return out
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") != "tool_result":
+            continue
+        body = item.get("content")
+        if isinstance(body, str):
+            out.append(body)
+        elif isinstance(body, list):
+            out.extend(str(b.get("text")) for b in body
+                       if isinstance(b, dict) and isinstance(b.get("text"), str))
+    return out
 
 
 def _text_from_content(content: object) -> str:
@@ -60,6 +78,7 @@ def read_exchange(path: str | Path,
     """
     last_user = ""
     last_assistant = ""
+    tools: list[str] = []
     try:
         lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -87,6 +106,8 @@ def read_exchange(path: str | Path,
             text = _text_from_content(content)
             if text.strip():
                 last_user = text
+                tools = []                      # a new request starts a new exchange
+            tools += _tool_result_text(content)
         elif role == "assistant":
             text = _text_from_content(content)
             if text.strip():
@@ -95,7 +116,7 @@ def read_exchange(path: str | Path,
         last_assistant = last_assistant_message
     if not last_user.strip():
         return None
-    return Exchange(last_user, last_assistant)
+    return Exchange(last_user, last_assistant, "\n".join(t for t in tools if t.strip()))
 
 
 def _hook_payload() -> dict:
@@ -165,7 +186,8 @@ def _run(args: argparse.Namespace) -> int:
     repo = (args.repo or payload.get("cwd") or os.getcwd())
     branch = _branch_for(repo, args.branch or payload.get("gitBranch"))
     out = core_api.capture_turn(repo, branch, exchange.user_request,
-                                exchange.assistant_reply, timeout=args.timeout)
+                                exchange.assistant_reply, timeout=args.timeout,
+                                tool_results=exchange.tool_results)
     if out.get("status") in ("ok", "skipped", "disabled"):
         from ... import importers  # so the importer does not extract it again
         importers.mark_captured(repo, str(payload.get("session_id") or ""),

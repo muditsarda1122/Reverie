@@ -76,6 +76,11 @@ def format_exchange(interaction: dict) -> str:
     summary = interaction.get("work_summary") or interaction.get("reasoning_trace")
     if summary:
         parts.append(f"AGENT WORK SUMMARY: {summary}")
+    tools = interaction.get("tool_results") if provenance.tools_enabled() else ""
+    if tools:
+        parts.append("TOOL RESULTS (real output the agent saw; evidence for source=agent may be "
+                     "quoted from here for facts, never for rules or preferences):\n"
+                     f"{tools}")
     parts.append(f"AGENT FINAL ANSWER (context only, NOT evidence): "
                  f"{interaction.get('output') or ''}")
     if interaction.get("diff"):
@@ -142,7 +147,14 @@ def validate(raw_item: dict, interaction: dict,
         if not quote_in(evidence, everything):
             return None, "agent-inferred without evidence in the user's words or the diff"
         meta["evidence_quote"] = evidence
-        meta["provenance"] = ("user" if quote_in(evidence, user_msg) else "diff")
+        if quote_in(evidence, user_msg):
+            meta["provenance"] = "user"
+        elif quote_in(evidence, str(interaction.get("diff") or "")):
+            meta["provenance"] = "diff"
+        else:
+            meta["provenance"] = "tool"
+            if kind in ("rule", "preference"):
+                return None, "a tool result cannot state a rule or preference"
     user_wide = False
     if str(raw_item.get("scope")) == "user" and source == "user_said" \
             and kind in _USER_WIDE_KINDS:

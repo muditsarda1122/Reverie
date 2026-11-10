@@ -243,7 +243,7 @@ def is_housekeeping_exchange(user_request: str, assistant_reply: str) -> bool:
 
 def capture_turn(repo_path: str | None, branch: str | None,
                  user_request: str, assistant_reply: str, *,
-                 timeout: float = 20.0, _server=None) -> dict:
+                 timeout: float = 20.0, tool_results: str = "", _server=None) -> dict:
     """Capture one completed exchange into the Session Brain.
 
     Never raises. Only an enabled repo is captured. The exchange is saved to
@@ -279,6 +279,7 @@ def capture_turn(repo_path: str | None, branch: str | None,
             "prompt": user_request,
             "output": assistant_reply,
             "diff": provenance.working_diff(info.repo_path),
+            "tool_results": provenance.tool_text(tool_results),
             "session_context": {
                 "session_id": row["id"],
                 "repo": row["repo_path"],
