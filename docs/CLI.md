@@ -275,6 +275,10 @@ After `accept`, your own copy is not deleted: it is hidden at DELIVERY time whil
 rule is in force, and shown again as soon as that rule is removed, overridden by a narrower
 rule, or flagged outdated.
 
+**Behaviour change:** `context add` (and so `resolve`, and the UI's add form) now refuses text or a
+`--why` that looks like a secret, as `propose` always did: nothing is written, the value is not echoed.
+It used to accept it. `reverie rules add` is unchanged and still does not check.
+
 `resolve` writes a `{resolves: key}` decision into this repo's context (or a
 proposal for it): it settles the conflict and is remembered because it lives in git.
 An optional `authority` file (`legal = @dana, @sam`) only adds display labels to

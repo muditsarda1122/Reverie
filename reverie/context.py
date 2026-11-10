@@ -38,7 +38,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import spool
+from . import redact, spool
 
 LAYERS = ("org", "team", "repo", "personal")          # widest first (default preset)
 RANK = {name: i for i, name in enumerate(LAYERS)}
@@ -776,6 +776,9 @@ def add(root: str, text: str, *, layer: str = "repo", rule: bool = True,
     text = " ".join(text.split())
     if not text:
         raise ValueError("text is empty")
+    if redact.contains_secret(text) or redact.contains_secret(why):
+        raise ValueError("this looks like it contains a secret; nothing was saved. "
+                         "Rewrite it without the value and try again.")
     folder = target_folder(root, layer, scope)
     stem = (doc or ("rules" if rule else "guidance")).removesuffix(".md")
     if paths and not doc:

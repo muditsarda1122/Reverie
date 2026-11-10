@@ -519,3 +519,19 @@ def test_cli_add_and_accept_run_detection(tmp_path, monkeypatch, capsys):
                         lambda root, *a, **k: seen.append(root) or {"conflicts": 1})
     assert cli.main(["context", "add", "Rule three"]) == 0
     assert seen and "conflict(s) between scopes" in capsys.readouterr().out
+
+
+def test_context_add_refuses_a_secret_in_the_cli_and_the_function(env, monkeypatch, capsys):
+    """Behaviour change: `context add` used to accept secrets; only `propose` refused."""
+    from reverie import cli
+    repo, _, _ = env
+    monkeypatch.chdir(repo)
+    key = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    assert cli.main(["context", "add", f"Use token {key} for CI"]) == 2
+    err = capsys.readouterr().err
+    assert "secret" in err and key not in err
+    assert cli.main(["context", "add", "Fine rule", "--why", f"token {key}"]) == 2
+    with pytest.raises(ValueError, match="secret"):
+        context.add(str(repo), f"Use token {key}")
+    assert not (repo / ".reverie" / "context" / "rules.md").exists()
+    assert not list((repo / ".reverie" / "context").glob("proposals/*"))
