@@ -311,6 +311,30 @@ on new commits. Never in a hook; a failing judge leaves delivery unchanged. Whet
 this fixes the two cells is a measured question: both cells passed in the follow-up (n=3, see
 docs/BENCHMARK.md), with the first-session race unmeasured.
 
+**Promotion path (step 2, design; not built).** A rule one person taught their agent
+becomes a PROPOSAL for the team document, reviewed by whoever owns it. Reuses what exists:
+`proposals/` files, CODEOWNERS authority, `reverie context accept`. No new store, no model call.
+- Command: `reverie context propose <rule-id | "text"> [--layer team|org|repo] [--scope S]
+  [--paths G] [--why W]`. The source is one of the user's rules (a bullet in `rules.md`, or a
+  stored memory item of kind rule by id). Nothing leaves the personal scope until the user runs
+  it: no automatic suggestion in v1 (`propose --list` may rank candidates by usage data later).
+- Permission is the same as `context add`: an owner of the target document writes directly
+  (self-approving, like a commit by a maintainer); anyone else writes a proposal file. The
+  approver is whoever CODEOWNERS names, nothing else. New: `reverie context reject <slug> --why`
+  so an approver can decline with a reason (the proposal file is removed; git keeps the history).
+- A proposal carries provenance: the user's own words verbatim, `from:` (personal rule or memory
+  item id), date first stated, and, when usage data exists, how often agents followed or violated
+  it. Text goes through the existing redaction; a rule that contains a secret is refused, not
+  stripped quietly.
+- After accept, the personal copy is not deleted: delivery suppresses a personal rule whose
+  normalised text equals a team rule, so the agent never sees it twice. A rule already present in
+  the target document is refused as a duplicate. Conflict detection runs after accept as it does
+  for `add`.
+- Out of scope: auto-promotion, voting, notifications, a UI (step 3 shows proposals read-only).
+- Lab (fresh repo, memory-off control, checker written first): user A's rule is seeded in A's
+  personal rules; B works in a clone. Arms: before accept (B should NOT get it), after accept (B
+  should follow it), off. Tests also cover redaction, duplicate, reject, owner direct write.
+
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
 (stdlib `http.server`, no new dependency). First slice, read-only: repos,
