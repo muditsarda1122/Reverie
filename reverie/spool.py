@@ -209,6 +209,41 @@ def cutoff_hint(cwd: str | Path, now: float | None = None) -> str:
         return ""
 
 
+def _is_resume_ask(text: str) -> bool:
+    return len(text) < 600 and bool(RESUME_ASK.search(text))
+
+
+def predecessor(records: list[dict], sid: str) -> str | None:
+    """The session ``sid`` continued, or None. A session whose FIRST prompt asks to resume
+    earlier work is a continuation; it continues the newest earlier session (any tool) that had
+    ended before it began and was not itself only a resume request. A heuristic on the log
+    (order and wording), not a recorded link: it never invents a chain without such a prompt."""
+    if not sid:
+        return None
+    infos = {i["session"]: i for i in sessions(records)}
+    me = infos.get(sid)
+    first_prompt = next((r.get("text", "") for r in records
+                         if r.get("session", "") == sid and r["kind"] == "prompt"), "")
+    if me is None or not _is_resume_ask(first_prompt):
+        return None
+    skip = resume_only_sessions(records)
+    before = [i for i in infos.values() if i["session"] not in (sid, "") and i["session"] not in skip
+              and i["last"] and i["last"] <= me["first"]]
+    return max(before, key=lambda i: i["last"])["session"] if before else None
+
+
+def chain_of(records: list[dict], sid: str, limit: int = 6) -> list[str]:
+    """``[oldest, ..., sid]``: the sessions that one piece of work ran through, possibly
+    across tools (started in one, finished in another via `reverie resume`)."""
+    chain = [sid]
+    while len(chain) < limit:
+        prev = predecessor(records, chain[0])
+        if prev is None or prev in chain:
+            break
+        chain.insert(0, prev)
+    return chain
+
+
 def select(records: list[dict], *, session: str | None = None,
            all_sessions: bool = False) -> list[dict]:
     if all_sessions:
@@ -263,6 +298,9 @@ def pick_session(records: list[dict], branch: str) -> tuple[str | None, list[dic
     real = [i for i in allsess if i["session"] not in skip]
     if real and len(real) < len(allsess):
         allsess = real                   # the resume request itself is not a candidate
+    subsumed = {p for i in allsess if (p := predecessor(records, i["session"]))}
+    if subsumed and len(subsumed) < len(allsess):
+        allsess = [i for i in allsess if i["session"] not in subsumed]   # the chain's tail stands for it
     if len(allsess) <= 1:
         return (allsess[0]["session"] if allsess else None), allsess
     on_branch = [i for i in allsess if i["branch"] == branch]
@@ -366,7 +404,20 @@ def render_resume(cwd: str | Path, *, session: str | None = None,
             return render_session_list(
                 allsess, _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd))
         session = chosen
-    records = select(everything, session=session, all_sessions=all_sessions)
+    chain: list[str] = []
+    if not all_sessions:
+        head = session if session is not None else last_session(everything)
+        chain = chain_of(everything, head) if head else []
+    if len(chain) > 1:
+        records = []
+        for n, sid in enumerate(chain):
+            mine = select(everything, session=sid)
+            if n:                         # the "please resume" message is the link, not work
+                ask = next((r for r in mine if r["kind"] == "prompt"), None)
+                mine = [r for r in mine if r is not ask]
+            records += mine
+    else:
+        records = select(everything, session=session, all_sessions=all_sessions)
     records = [{**r, "text": redact(r.get("text", ""))} for r in records]  # render pass
     prompts = [r for r in records if r["kind"] == "prompt"]
     if full_prompt is not None:             # `reverie resume --prompt N`: one prompt, whole
@@ -376,6 +427,12 @@ def render_resume(cwd: str | Path, *, session: str | None = None,
     if compactor is not None:
         prompts = compactor(prompts)
     out = ["# Resuming a previous session", ""]
+    if len(chain) > 1:
+        infos = {i["session"]: i for i in sessions(everything)}
+        legs = " -> ".join(f"{infos[c]['harness'] or '?'} ({infos[c]['prompts'] - (1 if k else 0)} prompt(s))"
+                           for k, c in enumerate(chain) if c in infos)
+        out += [f"This work ran through {len(chain)} sessions, possibly in different tools: {legs}. "
+                "The prompts below are all of them, in order.", ""]
     if rules_text.strip():
         out += ["## Rules (always apply)", rules_text.strip(), ""]
     if prompts:
