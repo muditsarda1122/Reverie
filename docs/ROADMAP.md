@@ -355,6 +355,58 @@ is real, also run detection on `git pull` (a hook installed by `reverie install`
 - (f) session chains across tools: DONE. A session whose first prompt asks to resume continues the newest earlier session that had ended; `reverie resume` shows the whole chain in order with each tool, and the picker no longer asks which of two linked sessions. A heuristic on order and wording; no chain is invented without a resume prompt.
 - (c) compound rules: real repro found (above), prompt changed, cost measured: DONE.
 
+### Usage-ranked delivery (item (a)): design, NOT BUILT, waiting for approval
+It changes what agents are shown, so nothing is built until this is approved.
+
+**What it would change.** Today every capped list is ordered by creation time. Caps bite in four
+places: the rule lines beyond `MAX_WIDE_LINES`/`MAX_RULE_LINES`, the headline index of everything
+else, the "possibly outdated" group, and `query` results. Usage ranking would order ONLY inside
+those lists, so what survives a cap is what agents have actually used.
+
+**What it must never do.** (1) Hide or drop an item: a sunk item moves down, it stays reachable
+(the index line, `reverie show`, `reverie usage`). (2) Touch the user's own standing rules: rules
+the user said (`user_said`, `rules.md`, team documents) are always delivered and never reordered
+below an agent-inferred item. (3) Run a model: the hook only reads counts already stored in
+`meta.usage`. (4) Replace the "challenged" and "possibly outdated" flags, which keep working.
+
+**The score** (per item, from `meta.usage` = counts of USED, IGNORED, IRRELEVANT, CONTRADICTED,
+OVERRIDDEN; n = deliveries judged). An item with fewer than 8 judged deliveries is "unproven" and
+keeps its creation order, ranked ABOVE sunk items and below proven ones (no one is penalised on
+thin data). Proven: USED/n >= 0.5 rises. Sunk: n >= 8 and USED = 0 (IRRELEVANT counts as "not
+about this task", so it only counts when it dominates: IRRELEVANT+IGNORED >= 80% of n) sinks. A
+sunk item re-enters the order after 30 days without a delivery (decay), and any item shown only in
+the index still gets judged when an exchange touches its files.
+
+**The feedback-loop risk, stated up front.** Items shown more get more chances to be USED, so
+ranking by use rewards what was already shown. The unproven band, the 30-day decay and the
+rule above (nothing disappears) are the counter; the before/after below is built to expose it.
+
+**Gate 1: verify the judge first (the open "more than three cases").** A held-out set of 40
+exchanges with labels written by me from the diff BEFORE the judge sees them, spread over all five
+labels. Pass bar: >= 80% agreement on USED vs not-USED, no label with 0 recall, confusion matrix
+published. If it fails, nothing is built on it, and the judge prompt is the work.
+
+**Gate 2: before/after, delivery only (no agent spend).** Seed a repo with 60 items of which 8 are
+the ones the next tasks need; fill `meta.usage` by REPLAYING a recorded history (the 8 used,
+the rest ignored) at three history lengths (5, 15, 40 exchanges). Metric: recall@cap, the share of
+the 8 that survive the startup cap, old order vs usage order, at caps of 1500, 3000 and 6000
+chars. Success: usage order raises recall@cap at the small caps and never lowers the share of the
+user's standing rules delivered (must stay 100%).
+
+**Gate 3: before/after with agents, only if 1 and 2 pass.** A fresh repo, a hidden checker written
+first and validated on reference solutions, tasks whose correct answer depends on an item the OLD
+order cuts at a small cap but the usage order keeps. Arms: old order, usage order, Reverie off.
+Claude and Codex, 3 repeats, a fresh clone, folder and `REVERIE_HOME` per arm, key withheld,
+provider failures counted apart, spend cap proposed at $15. Report violations per task with n and
+spread; a null result (no gain) is reported as a null.
+
+**Rollout.** Behind `deliver.usage_ranking` (config, default OFF) until Gate 3 passes; the UI and
+`reverie usage` show each item's rank reason ("proven: used 6 of 9", "unproven: 3 deliveries",
+"sunk: ignored 12 of 12") so a person can see why an item moved.
+
+**Decisions for you:** (1) agree the thresholds (8 deliveries, 0.5 used, 80% not-relevant, 30 days),
+(2) agree the order of gates, (3) agree the $15 cap for Gate 3.
+
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
 (stdlib `http.server`, no new dependency). First slice, read-only: repos,
