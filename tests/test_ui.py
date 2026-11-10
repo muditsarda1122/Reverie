@@ -1,4 +1,5 @@
-"""`reverie ui`: read-only, escaped, bounded, local, silent."""
+"""`reverie ui`, reading: every GET/HEAD is free of side effects, escaped, bounded, local, silent.
+The write run (add, accept, reject) lives in test_ui_writes.py."""
 
 import hashlib
 import html
@@ -211,9 +212,9 @@ def test_port_in_use_is_reported_not_raised(env):
     assert "cannot listen" in out[0] and "--port" in out[0]
 
 
-# --- read-only, local, silent ---------------------------------------------------------------
+# --- the read-only run: reading changes nothing (the write run is test_ui_writes.py) --------------------------------------------------------------
 
-def test_crawl_changes_nothing_and_only_get_and_head_answer(env, serve, capsys, monkeypatch):
+def test_read_only_run_crawl_changes_nothing_not_even_the_write_urls(env, serve, capsys, monkeypatch):
     tmp_path, repo = env
     _seed(tmp_path, repo)
     conn = _brain(repo, monkeypatch)
@@ -222,10 +223,11 @@ def test_crawl_changes_nothing_and_only_get_and_head_answer(env, serve, capsys, 
     conn.close()
     before = _tree(tmp_path / "home", repo, tmp_path / "co")
     s = serve(repo)
-    for page in PAGES + ["/memory?page=2", "/nope"]:
+    for page in PAGES + ["/memory?page=2", "/nope", "/do/add", "/do/accept", "/do/reject",
+                         "/add?done=forged", "/proposals?done=forged"]:
         req(s, page)
         assert req(s, page, "HEAD")[1] == ""
-    for m in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):
+    for m in ("POST", "PUT", "DELETE", "PATCH", "OPTIONS"):      # POST only answers on /do/*
         status, _, hdr = req(s, "/", m)
         assert status == 405 and hdr["Allow"] == "GET, HEAD", m
     after = _tree(tmp_path / "home", repo, tmp_path / "co")

@@ -1,14 +1,22 @@
-"""`reverie ui`: a read-only local workspace for a team's projects. A command, not a daemon: it
-serves on 127.0.0.1 until Ctrl-C, from the same functions the CLI uses, and changes nothing.
+"""`reverie ui`: a local workspace for a team's projects. A command, not a daemon: it serves on
+127.0.0.1 until Ctrl-C, from the same functions the CLI uses.
 
-* only GET and HEAD answer (everything else is 405); nothing here writes a file; the brain is
-  opened read-only. "Add" and "Connect" are guided screens that show the exact command;
+Reading is free; writing is narrow. Two writes exist, both calling the CLI's own functions (never a
+write path of the UI's own), and both refusing exactly where the CLI refuses:
+  POST /do/add      -> context.add     (a rule or guidance; a proposal if the writer is not an owner)
+  POST /do/accept   -> context.accept  (owners only)
+  POST /do/reject   -> context.reject  (owners only, a reason is required)
+
+* GET and HEAD never change anything (the snapshot test crawls every page, write paths included);
+* every POST needs: a bound Host, a same-origin Origin (or Sec-Fetch-Site: same-origin; neither
+  header means refused), a form body of bounded size, and the per-process random token that the
+  forms carry (no cookie); every write ends in a 303 redirect (post/redirect/get);
 * only the repos Reverie already knows about (plus the one it was started in) can be opened, by an
-  opaque id, never by a path from the URL;
-* bound to 127.0.0.1; a Host header that is not the bound address is refused (DNS rebinding);
+  opaque id, never by a path from the URL or the form;
 * every value is HTML-escaped (shared documents are written by other people) and passed through
-  the existing redaction; a strict Content-Security-Policy; no script, no external resource
-  (system fonts, inline SVG icons, native <details>; search is a plain GET form);
+  the existing redaction; a strict Content-Security-Policy (form-action 'self', no framing); no
+  script, no external resource; a submitted secret is refused and never echoed back;
+* the UI never runs the conflict judge; the detached session-start worker and the daily job do;
 * no telemetry of any kind: the server logs nothing and reports nothing.
 
 Standard library only.
@@ -17,16 +25,24 @@ Standard library only.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import html
+import secrets
 import threading
 import webbrowser
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
 from . import context, deliver, redact, rules, spool
 
 PAGE_SIZE = 100
-CSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'"
+CSP = ("default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; "
+       "frame-ancestors 'none'")
+MAX_BODY = 16 * 1024
+WRITE_PATHS = ("/do/add", "/do/accept", "/do/reject")
+LIMITS = {"text": 1000, "why": 300, "slug": 200, "token": 100, "p": 16, "kind": 16, "target": 120}
 
 # Design: a team workspace. A slim sidebar of projects (the unit people think in), a top bar with
 # the path you are on and search, a project header with tabs, and boards where the work is a set
@@ -189,6 +205,20 @@ color:var(--accent-fg);font-weight:700;font-size:13px;display:grid;place-items:c
 .statline{display:flex;gap:22px;flex-wrap:wrap;margin-top:22px;color:var(--mut);font-size:13.5px}
 .statline b{color:var(--fg);font-size:15px;margin-right:5px}
 
+/* forms and flash */
+.flash{margin:20px 0 0;padding:12px 16px;border-radius:12px;font-weight:550;overflow-wrap:anywhere}
+.flash.ok{background:var(--ok-bg);color:var(--ok-fg)}.flash.bad{background:var(--bad-bg);color:var(--bad-fg)}
+form.f{display:grid;gap:12px;margin-top:12px}
+form.f label{display:grid;gap:5px;font-size:13px;font-weight:600;color:var(--mut)}
+form.f textarea,form.f input[type=text],form.f select{font:inherit;font-size:14px;font-weight:400;color:var(--fg);
+background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:9px 11px;width:100%}
+form.f textarea{min-height:84px;resize:vertical}
+form.f textarea:focus,form.f input:focus,form.f select:focus{outline:2px solid var(--accent);outline-offset:1px}
+.btn.bad{border-color:var(--bad-fg);color:var(--bad-fg);background:var(--bg)}
+button.btn{cursor:pointer;font-family:inherit}
+.who{color:var(--mut);font-size:13px}
+.acts2{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.acts2 form.f{margin:0;flex:1 1 220px}
 @media (max-width:900px){
 .app{grid-template-columns:minmax(0,1fr)}
 .side{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);flex-direction:row;overflow-x:auto;
@@ -367,12 +397,12 @@ def _doc(title: str, side_proj: dict | None, plist: list[dict], active: str, cru
         f'<a class=item href="/"{" aria-current=page" if active == "/" else ""}>{icon("grid")}<span class=t>All projects</span></a>'
         f'<a class=item href="/new"{" aria-current=page" if active == "/new" else ""}>{icon("plus")}<span class=t>Add a project</span></a>'
         f'<div class=sec><span>Projects</span></div>{projs}'
-        f"<div class=foot>{icon('lock', 15)}<span>Read-only. This page never changes anything.</span></div></aside>"
+        f"<div class=foot>{icon('lock', 15)}<span>Local only. It writes only when you press a button, with the CLI's own rules.</span></div></aside>"
         f'<div class=col><div class=top><div class=crumbs>{cr}</div>'
         f'<form class=search action="/search" method=get role=search>{icon("search", 16)}{pid}'
         f'<input name=q type=search placeholder="Search rules and memory" aria-label="Search rules and memory" '
         f'maxlength=120></form></div><main>{inner}'
-        f'<p class=note>Each item shows the command that changes it. This page never does.</p></main></div>'
+        f'<p class=note>Everything here is also a command; the page calls the same functions and refuses what the CLI refuses.</p></main></div>'
         f"</div></body></html>")
 
 
@@ -591,10 +621,31 @@ def context_page(root: str, proj: dict, plist: list[dict]) -> str:
     return frame(proj, plist, d, "/context", body)
 
 
-def proposals_page(root: str, proj: dict, plist: list[dict]) -> str:
+def _decide_forms(proj: dict, st: State | None, p: dict, root: str) -> str:
+    doc = p["path"].parent.parent / (p.get("document") or "rules.md")
+    owners = _safe(lambda: context.owners_of(doc), [])
+    mine = _safe(lambda: context.is_owner(doc), False)
+    who = _safe(lambda: _who(doc.parent, root), "unknown")
+    status = ('<span class="chip ok">You can decide this</span>' if mine else
+              '<span class="chip bad">Not an owner: the CLI would refuse</span>')
+    line = (f"<p class=who>You would act as <b>{esc(who)}</b> (git identity). Owners of {esc(doc.name)}: "
+            f"{esc(', '.join(owners) or 'nobody (anyone may edit)')}. {status}</p>")
+    slug = esc(p["slug"])
+    return (line + '<div class=acts2>'
+            + _form_open(proj, st, "/do/accept") + f'<input type=hidden name=slug value="{slug}">'
+              '<button class="btn pri" type=submit>Accept</button></form>'
+            + _form_open(proj, st, "/do/reject") + f'<input type=hidden name=slug value="{slug}">'
+              f'<label>Reason for turning it down (the proposer will read it)'
+              f'<input type=text name=why maxlength={LIMITS["why"]} required></label>'
+              '<button class="btn bad" type=submit>Reject</button></form></div>')
+
+
+def proposals_page(root: str, proj: dict, plist: list[dict], st: State | None = None,
+                   flash: dict | None = None) -> str:
     d = collect(root)
+    banner = _banner(flash)
     if not d["proposals"] and not d["rejected"]:
-        return frame(proj, plist, d, "/proposals", _empty(
+        return frame(proj, plist, d, "/proposals", banner + _empty(
             "inbox", "No proposals",
             "Anyone can suggest a rule with <code>reverie context add</code>, or turn one of "
             "their own into a proposal with <code>reverie context propose</code>."))
@@ -609,7 +660,7 @@ def proposals_page(root: str, proj: dict, plist: list[dict]) -> str:
             + f"<hr class=rule><div class=meta><span class=who1>{_avatar(by)}{esc(by)}</span>"
               f"<span class=sp>{esc(p.get('date', '?'))}</span></div>"
             + f"<div class=meta style='margin-top:8px'>for {esc(p.get('document', '?'))}</div>"
-            + _cmd(f"reverie context accept {esc(p['slug'])}", label="An owner decides") + "</article>")
+            + _decide_forms(proj, st, p, root) + "</article>")
     gone = []
     for r in d["rejected"]:
         by = str(r.get("rejected-by", "?"))
@@ -618,8 +669,9 @@ def proposals_page(root: str, proj: dict, plist: list[dict]) -> str:
             f"<p>{esc(r.get('reason', ''))}</p><hr class=rule><div class=meta>"
             f"<span class=who1>{_avatar(by)}{esc(by)}</span><span class=sp>{esc(r.get('rejected-on', '?'))}</span></div>"
             "</article>")
-    body = ('<p class=hint>Rules people suggested for the team. Turned-down ones keep their reason, so the '
-            'proposer can see it.</p><div class=board>'
+    body = (banner + '<p class=hint>Rules people suggested for the team. Only an owner of the document can '
+            'accept or turn one down; turned-down ones keep their reason, so the proposer can see it.</p>'
+            '<div class=board>'
             + _lane("Waiting", "a", wait, "Nothing waiting") + _lane("Turned down", "", gone, "Nothing turned down")
             + "</div>")
     return frame(proj, plist, d, "/proposals", body)
@@ -684,20 +736,37 @@ def connect_page(root: str, proj: dict, plist: list[dict]) -> str:
     return frame(proj, plist, None, "/connect", body, title="Connect an agent")
 
 
-def add_page(root: str, proj: dict, plist: list[dict]) -> str:
+def add_page(root: str, proj: dict, plist: list[dict], st: State | None = None,
+             flash: dict | None = None) -> str:
     def way(title: str, text: str, cmd: str) -> str:
         return (f'<article class=card><h3>{esc(title)}</h3><p>{text}</p><code class="cmd big">{cmd}</code></article>')
-    cards = (way("A rule for the whole team", "Goes into the shared rules for this project. Owners see it as a "
-                 "proposal until it is accepted.",
-                 'reverie context add "Always squash merge" --why "keeps history linear"')
-             + way("A rule only you follow", "Stays on your machine and is delivered to your agents.",
-                   'reverie rules add "Money is integer cents"')
+    flash = flash or {}
+    opts = "".join(f'<option value="{esc(v)}">{esc(lab)}</option>' for v, lab in _targets(root))
+    ids = [f"{lab}: {_who(Path(f), root)}" for lab, f in
+           [(f"{lay} {context.scope_name(fo)}", fo) for lay, fos in context.sources(root).items() for fo in fos]]
+    who = (f"<p class=who>You would act as <b>{esc(_safe(lambda: _who(Path(root) / '.reverie' / 'context', root), '?'))}</b> "
+           f"(this repo's git identity). If a CODEOWNERS entry covers the document and you are not an owner, "
+           f"this becomes a proposal the owners review.</p>"
+           + (f"<p class=who>Shared folders use their own git identity: {esc('; '.join(ids))}</p>" if ids else ""))
+    form = (_form_open(proj, st, "/do/add")
+            + f'<label>The rule<textarea name=text maxlength={LIMITS["text"]} required>{esc(flash.get("text", ""))}'
+              f'</textarea></label>'
+              '<label>Kind<select name=kind><option value=rule>Rule (always delivered)</option>'
+              '<option value=guidance>Guidance (delivered when relevant)</option></select></label>'
+              f'<label>Where<select name=target>{opts}</select></label>'
+              f'<label>Why (optional)<input type=text name=why maxlength={LIMITS["why"]} '
+              f'value="{esc(flash.get("why", ""))}"></label>'
+              '<div><button class="btn pri" type=submit>Add</button></div></form>')
+    cards = (f'<article class=card><h3>A rule or guidance for the team</h3>{who}{form}'
+             '<p class=hint>The same as <code>reverie context add</code>. A rule that looks like a secret is refused '
+             'and not kept.</p></article>'
+             + way("A rule only you follow", "Stays on your machine and is delivered to your agents. "
+                   "Still a command.", 'reverie rules add "Money is integer cents"')
              + way("Turn a rule you already use into a team proposal",
-                   "Takes a rule from your own rules or memory and proposes it to the team.",
+                   "Takes a rule from your own rules or memory and proposes it to the team. Still a command.",
                    'reverie context propose "Money is integer cents"'))
     return frame(proj, plist, None, "/add",
-                 f'<p class=hint>The page is read-only, so adding happens in your terminal. Pick one.</p>'
-                 f'<div class=board style="grid-auto-columns:minmax(272px,1fr)">{cards}</div>',
+                 _banner(flash or None) + f'<div class=board style="grid-auto-columns:minmax(272px,1fr)">{cards}</div>',
                  title="Add a rule")
 
 
@@ -732,14 +801,114 @@ def search_page(root: str, proj: dict, plist: list[dict], q: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# writes: the CSRF token, one-shot messages, and the three actions (all through the CLI's functions)
+# ---------------------------------------------------------------------------
+
+class State:
+    """Per-process: the CSRF token and the one-shot messages shown after a write."""
+
+    def __init__(self) -> None:
+        self.token = secrets.token_urlsafe(32)
+        self.lock = threading.RLock()             # one write at a time
+        self._flash: dict[str, dict] = {}
+
+    def put(self, ok: bool, msg: str, **keep: str) -> str:
+        fid = secrets.token_urlsafe(8)
+        with self.lock:
+            while len(self._flash) >= 50:
+                self._flash.pop(next(iter(self._flash)))
+            self._flash[fid] = {"ok": ok, "msg": msg, **keep}
+        return fid
+
+    def take(self, fid: str) -> dict | None:
+        return self._flash.pop(fid, None)
+
+
+def _who(folder: Path, root: str) -> str:
+    """The git identity an action in ``folder`` will use (what the CLI would use)."""
+    cwd = folder if folder.exists() else Path(root)
+    name = spool._git(["config", "user.name"], cwd).strip()
+    mail = spool._git(["config", "user.email"], cwd).strip()
+    if not name and not mail:
+        return "no git identity is set here"
+    return f"{name} <{mail}>" if mail else name
+
+
+def _targets(root: str) -> list[tuple[str, str]]:
+    out = [("repo", f"This project ({Path(root).name}/.reverie/context)")]
+    for layer, folders in context.sources(root).items():
+        out += [(f"{layer}|{context.scope_name(f)}", f"{layer}: {context.scope_name(f)}") for f in folders]
+    return out
+
+
+def _form_open(proj: dict, st: State | None, action: str) -> str:
+    return (f'<form class=f method=post action="{action}"><input type=hidden name=token '
+            f'value="{html.escape(st.token if st else "")}"><input type=hidden name=p value="{esc(proj["id"])}">')
+
+
+def _banner(flash: dict | None) -> str:
+    if not flash:
+        return ""
+    return f'<div class="flash {"ok" if flash["ok"] else "bad"}" role=status>{esc(flash["msg"])}</div>'
+
+
+def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
+    """Run one write through the CLI's functions and return where to redirect. Security checks
+    (Host, Origin, token, size) are done by the handler before this is called."""
+    plist = projects(root)
+    proj = next((x for x in plist if x["id"] == form.get("p", "")), None)
+    if proj is None:
+        return _u("/", None, done=st.put(False, "Refused: that project is not known to Reverie."))
+    target = proj["path"]
+    page = "/add" if path == "/do/add" else "/proposals"
+    back = lambda ok, msg, **keep: _u(page, proj, done=st.put(ok, msg, **keep))   # noqa: E731
+    if is_disabled(target):
+        return back(False, "Refused: Reverie is turned off for this project. Turn it on first.")
+    text, why = form.get("text", ""), form.get("why", "")
+    with st.lock:
+        try:
+            if path == "/do/add":
+                if redact.contains_secret(text) or redact.contains_secret(why):
+                    return back(False, "Refused: this looks like it contains a secret, so nothing was saved. "
+                                       "Remove the value and try again.")
+                choice = form.get("target", "repo")
+                if choice not in dict(_targets(target)):
+                    return back(False, "Refused: that is not a place this project can add to.", text=text, why=why)
+                layer, _, scope = choice.partition("|")
+                added = context.add(target, text, layer=layer, scope=scope,
+                                    rule=form.get("kind", "rule") != "guidance", why=why)
+                if added.proposal:
+                    return back(True, f"Written as a proposal ({added.path.name}). The owners "
+                                      f"({', '.join(added.owners)}) review it; it is not in force yet.")
+                return back(True, f"Added to {added.path.name}. It applies from the next session.")
+            slug = form.get("slug", "")
+            # exact name only: the CLI matches a prefix, and "" is a prefix of every proposal
+            if slug not in {x["slug"] for x in context.proposals(target)}:
+                return back(False, "Refused: that proposal is not waiting any more.")
+            if path == "/do/accept":
+                doc = context.accept(target, slug)
+                return back(True, f"Accepted into {doc.name}. The proposal is gone and the rule is in force.")
+            if redact.contains_secret(why):
+                return back(False, "Refused: the reason looks like it contains a secret, so nothing was "
+                                   "changed. Remove the value and try again.")
+            dest = context.reject(target, slug, why)
+            return back(True, f"Rejected. The reason is kept in proposals/rejected/{dest.name}.")
+        except ValueError as exc:
+            return back(False, f"Refused: {exc}", **({"text": text, "why": why} if path == "/do/add" else {}))
+        except Exception:
+            return back(False, "That did not work, and nothing was changed. The CLI still does.")
+
+
+# ---------------------------------------------------------------------------
 # routing
 # ---------------------------------------------------------------------------
 
-PROJECT_PAGES = {"/project": overview, "/start": start, "/context": context_page,
+PROJECT_PAGES: dict[str, Callable[..., str]] = {"/project": overview, "/start": start, "/context": context_page,
                  "/proposals": proposals_page, "/connect": connect_page, "/add": add_page}
 
 
-def render(root: str, path: str, query: dict[str, list[str]] | None = None) -> tuple[int, str]:
+def render(root: str, path: str, query: dict[str, list[str]] | None = None,
+           st: State | None = None) -> tuple[int, str]:
     try:
         target, proj, plist = _target(root, query)
         if path in ("/", "/repos"):
@@ -758,6 +927,9 @@ def render(root: str, path: str, query: dict[str, list[str]] | None = None) -> t
                 return 200, memory_page(target, proj, plist, page)
             if path == "/search":
                 return 200, search_page(target, proj, plist, ((query or {}).get("q") or [""])[0])
+            if path in ("/add", "/proposals"):
+                flash = st.take(((query or {}).get("done") or [""])[0]) if st else None
+                return 200, PROJECT_PAGES[path](target, proj, plist, st, flash)
             return 200, PROJECT_PAGES[path](target, proj, plist)
         return 404, shell("Not found", 'No such page. <a href="/">Back to all projects</a>', "", "", plist=plist)
     except Exception:
@@ -769,7 +941,10 @@ def render(root: str, path: str, query: dict[str, list[str]] | None = None) -> t
 # the server
 # ---------------------------------------------------------------------------
 
-def make_handler(root: str, allowed_hosts: set[str]):
+def make_handler(root: str, allowed_hosts: set[str], state: State | None = None):
+    st = state or State()
+    origins = {f"http://{h}" for h in allowed_hosts}
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "reverie-ui"
         sys_version = ""
@@ -785,6 +960,7 @@ def make_handler(root: str, allowed_hosts: set[str]):
             self.send_header("Content-Security-Policy", CSP)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Frame-Options", "DENY")
             self.send_header("Cache-Control", "no-store")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
@@ -797,7 +973,7 @@ def make_handler(root: str, allowed_hosts: set[str]):
                 self._reply(403, "forbidden", head)
                 return
             parts = urlsplit(self.path)
-            code, body = render(root, parts.path, parse_qs(parts.query))
+            code, body = render(root, parts.path, parse_qs(parts.query), st)
             self._reply(code, body, head)
 
         def do_GET(self) -> None:
@@ -807,9 +983,47 @@ def make_handler(root: str, allowed_hosts: set[str]):
             self._serve(True)
 
         def _no(self) -> None:
-            self._reply(405, "read-only: only GET and HEAD are served", extra={"Allow": "GET, HEAD"})
+            self._reply(405, "only GET and HEAD are served here", extra={"Allow": "GET, HEAD"})
 
-        do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_TRACE = do_CONNECT = _no
+        def _same_origin(self) -> bool:
+            origin = self.headers.get("Origin")
+            site = (self.headers.get("Sec-Fetch-Site") or "").lower()
+            if origin is not None:
+                return origin.lower() in origins and site in ("", "same-origin")
+            return site == "same-origin"              # neither header: refused
+
+        def do_POST(self) -> None:
+            path = urlsplit(self.path).path
+            try:
+                n = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                n = -1
+            body = b""
+            if 0 <= n <= MAX_BODY:                    # read first, so an early refusal is not a reset
+                body = self.rfile.read(n)
+            if (self.headers.get("Host") or "").lower() not in allowed_hosts:
+                self._reply(403, "forbidden")
+            elif path not in WRITE_PATHS:
+                self._no()
+            elif not self._same_origin():
+                self._reply(403, "forbidden: not a same-origin request")
+            elif n < 0:
+                self._reply(411, "Content-Length required")
+            elif n > MAX_BODY:
+                self._reply(413, "too large")
+            elif (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() \
+                    != "application/x-www-form-urlencoded":
+                self._reply(415, "unsupported content type")
+            else:
+                raw = parse_qs(body.decode("utf-8", "replace"), keep_blank_values=True)
+                form = {k: (v[0] if v else "")[: LIMITS[k]] for k, v in raw.items() if k in LIMITS}
+                if not hmac.compare_digest(form.get("token", "").encode(), st.token.encode()):
+                    self._reply(403, "forbidden: missing or wrong token")
+                else:
+                    where = do_write(root, st, path, form)
+                    self._reply(303, "see other", extra={"Location": where})
+
+        do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_TRACE = do_CONNECT = _no
 
     return Handler
 
@@ -818,7 +1032,9 @@ def make_server(root: str, port: int = 0) -> ThreadingHTTPServer:
     """Bind 127.0.0.1 (never another interface). Raises OSError if the port is taken."""
     server = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
     bound = server.server_address[1]
-    server.RequestHandlerClass = make_handler(root, {f"127.0.0.1:{bound}", f"localhost:{bound}"})
+    state = State()
+    server.ui_state = state                           # type: ignore[attr-defined]
+    server.RequestHandlerClass = make_handler(root, {f"127.0.0.1:{bound}", f"localhost:{bound}"}, state)
     server.daemon_threads = True
     return server
 
@@ -831,7 +1047,7 @@ def serve(root: str, port: int = 0, *, open_browser: bool = True, print_fn=print
                  f"Try another --port, or leave it out to pick a free one.")
         return 2
     url = f"http://127.0.0.1:{server.server_address[1]}/"
-    print_fn(f"Reverie (read-only) at {url}  (Ctrl-C to stop)")
+    print_fn(f"Reverie at {url}  (Ctrl-C to stop; it writes only when you press a button)")
     if open_browser:
         threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
     try:
