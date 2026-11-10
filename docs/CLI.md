@@ -40,6 +40,7 @@ reverie install --dry-run           # print every planned write; change nothing
 reverie install --trust-codex-hooks      # default: approve Reverie's own Codex hooks via Codex's API
 reverie install --no-trust-codex-hooks   # leave Codex hook approval to you (/hooks)
 reverie install --import memory.zip # restore an export on a new machine
+reverie install --refresh-instructions   # update only out-of-date instruction text already installed
 ```
 
 | Flag | Effect |
@@ -50,6 +51,7 @@ reverie install --import memory.zip # restore an export on a new machine
 | `--no-verify` | skip the live provider ping |
 | `--import FILE` | import a brain export during setup (only into an empty brain) |
 | `--dry-run` | print every planned write with its full content; write nothing |
+| `--refresh-instructions` | rewrite only Reverie's instruction text that is already installed and out of date (`~/.reverie/AGENTS.md` and the Reverie block in a harness's AGENTS.md, after the usage policy changed in a newer Reverie); nothing else is touched, a missing block is never created, text outside the block's markers is left alone; combine with `--dry-run` to preview. `reverie status` warns when this is needed |
 
 Exit: `0` configured (or dry run); `1` on `InstallError` — malformed agent
 config (invalid JSON/TOML/YAML), unknown `--only`/`--provider` key. No
@@ -430,6 +432,9 @@ hooks would fire there. The warning says how many are unapproved and to run
 `reverie install` (which approves Reverie's own hooks) or type `/hooks` in Codex.
 The check is read-only (it asks Codex's own app-server, never approves anything),
 gives up after 10 seconds instead of hanging, and says so when it could not check.
+It also warns when the instruction text Reverie installed (`~/.reverie/AGENTS.md`,
+the Reverie block in a harness's AGENTS.md) is out of date after an upgrade, and
+points to `reverie install --refresh-instructions`.
 
 ```bash
 reverie status

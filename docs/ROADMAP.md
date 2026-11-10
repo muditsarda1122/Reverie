@@ -348,6 +348,10 @@ until then only the hint helps. Measure how often the worker loses to the agent.
 is real, also run detection on `git pull` (a hook installed by `reverie install`, opt-in) and at
 `reverie install`.
 
+### Smaller items: progress
+- (b) Codex untrusted-hooks warning in `reverie status`: DONE.
+- (d) refresh installed instruction blocks: DONE. `reverie install --refresh-instructions` updates only text that is already installed and stale (the owned `~/.reverie/AGENTS.md`, the marker-delimited block in a harness AGENTS.md); `reverie status` warns; nothing else is touched or created. (`reverie install` itself already refreshed a stale block; what was missing was noticing, and a way to do only that.)
+
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
 (stdlib `http.server`, no new dependency). First slice, read-only: repos,

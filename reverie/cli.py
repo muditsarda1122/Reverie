@@ -318,6 +318,8 @@ def _cmd_install(args) -> int:
             for p in plist:
                 print(f"  {p.label()}")
         return 0
+    if getattr(args, "refresh_instructions", False):
+        return install.refresh_instructions(dry_run=getattr(args, "dry_run", False))
     try:
         return install.run(
             profile_args=getattr(args, "profile", None),
@@ -396,6 +398,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         "would (default); --no-trust-codex-hooks leaves that to you")
     p.add_argument("--list-profiles", action="store_true",
                    help="list every config directory found for each agent and exit")
+    p.add_argument("--refresh-instructions", action="store_true", dest="refresh_instructions",
+                   help="update only Reverie's already-installed instruction text that is out "
+                        "of date (~/.reverie/AGENTS.md and the Reverie block in a harness's "
+                        "AGENTS.md); nothing else is touched or created")
     p.add_argument("--no-verify", action="store_true")
     p.add_argument("--dry-run", action="store_true")
 

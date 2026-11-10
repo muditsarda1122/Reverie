@@ -509,11 +509,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         from . import repos
-        from .install import report_configured_servers, report_integration_notes
+        from .install import (
+            report_configured_servers,
+            report_instruction_staleness,
+            report_integration_notes,
+        )
         if args.all:
             _print_status_all(brain)
             report_configured_servers()
             report_integration_notes()
+            report_instruction_staleness()
             return 0
         info = _resolve_status_repo(args)
         print(f"Reverie status — {info.repo_path} (branch {info.branch}).")
@@ -529,6 +534,7 @@ def main(argv: list[str] | None = None) -> int:
         # absolute command written to each harness config.
         report_configured_servers()
         report_integration_notes()
+        report_instruction_staleness()
         return 0
     except (SessionError, review_gate.ReviewGateError, BrainError) as exc:
         print(str(exc), file=sys.stderr)

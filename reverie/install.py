@@ -786,6 +786,59 @@ def report_configured_servers(print_fn=print, home: Path | None = None,
     return ok_all
 
 
+def _instruction_drift(home: Path, reverie_home: Path) -> list[PlannedWrite]:
+    """Planned rewrites of Reverie's own instruction text that is ALREADY installed but out of
+    date: the owned ``~/.reverie/AGENTS.md`` and the marker-delimited block in a harness's
+    AGENTS.md. Only action "update" counts: a block or file that does not exist yet is never
+    created here, and nothing else (MCP entries, hooks, config.yaml) is looked at."""
+    drift: list[PlannedWrite] = []
+    for w in _reverie_home_plans(home, reverie_home):
+        if w.path.name == "AGENTS.md" and w.action == "update":
+            drift.append(w)
+    for agent in AGENTS:
+        try:
+            plans = agent.install(home, None, True, reverie_home=reverie_home)
+        except Exception:
+            continue
+        drift += [w for w in plans if w.path.name == "AGENTS.md" and w.action == "update"]
+    unique: dict[str, PlannedWrite] = {}
+    for w in drift:
+        unique.setdefault(str(w.path), w)
+    return list(unique.values())
+
+
+def report_instruction_staleness(print_fn=print, home: Path | None = None,
+                                 reverie_home: Path | None = None) -> bool | None:
+    """``reverie status``: warn when installed instruction text is out of date (the usage
+    policy changed in a newer Reverie). None when nothing is installed or all is current."""
+    home = Path(home) if home else Path.home()
+    rhome = Path(reverie_home) if reverie_home else _default_reverie_home()
+    try:
+        drift = _instruction_drift(home, rhome)
+    except Exception:
+        return None
+    for w in drift:
+        print_fn(f"! {_display(w.path, home)}: Reverie's instructions there are out of date "
+                 "(the usage policy changed). `reverie install --refresh-instructions` "
+                 "updates only that text.")
+    return False if drift else None
+
+
+def refresh_instructions(home: Path | None = None, reverie_home: Path | None = None,
+                         print_fn=print, dry_run: bool = False) -> int:
+    """Rewrite installed-but-stale Reverie instruction text and nothing else. Text outside
+    the markers of a block is untouched; a missing block is not created."""
+    home = Path(home) if home else Path.home()
+    rhome = Path(reverie_home) if reverie_home else _default_reverie_home()
+    drift = _instruction_drift(home, rhome)
+    if not drift:
+        print_fn("Reverie's installed instructions are up to date.")
+        return 0
+    for w in drift:
+        _emit(w, home, dry_run, print_fn)
+    return 0
+
+
 def report_integration_notes(print_fn=print, home: Path | None = None,
                              environ=None) -> bool | None:
     """``reverie status``: let each integration say what needs the user's attention (for
