@@ -25,6 +25,7 @@ Each item:
  "durability": "permanent" | "until_changed" | "short_term"}
 
 Keep one fact in ONE item: a rule together with its reason or incident, a command together with its ports and caveats, a negative result together with what worked instead. Do not split a fact into a rule item plus a separate "why" item.
+But a message that states SEVERAL INDEPENDENT rules (joined by semicolons, commas or "and", or introduced by "same rules as always") becomes ONE ITEM PER RULE, each in the user's own wording, so each can be delivered, merged, corrected or retired on its own. Only a reason stays with its own rule. Example: the user says "Same rules as always: logging not print, type-hint public functions, no new dependency without asking." Output THREE directive items ("Use logging, not print", "Type-hint public functions", "No new dependency without asking"), never one item that lists all three.
 Store a preference only when the user states it, or when the exchange itself shows it (for example the user rejecting or rewriting the same kind of output) and you can quote that. Never infer a preference or intent from how a single request was phrased.
 
 Never store what the agent says about Reverie or its stored memory or rules ("the saved rules say X", "this conflicts with a stored rule"): that restates memory that already exists, and storing it makes memory about memory. If the agent found that code contradicts a stored rule, store nothing about it.
