@@ -227,11 +227,12 @@ def _rules_files_text(cwd: str) -> str:
     return "\n\n".join(out)
 
 
-def startup_text(cwd: str) -> str:
+def startup_text(cwd: str, *, log: bool = True) -> str:
     """Everything an agent should know at the start of a session, within
     the configured cap (``deliver.startup_chars``, default 8000): the user's rules, rules stated in earlier sessions
     (stale ones set apart), and the headline index of everything else.
-    '' when disabled or empty. Never raises; read-only."""
+    '' when disabled or empty. Never raises; read-only. ``log=False`` is for viewers (the
+    UI): looking at the block is not a delivery and must not enter the usage log."""
     try:
         cap = startup_cap()
         root = spool.repo_root(cwd)
@@ -305,8 +306,9 @@ def startup_text(cwd: str) -> str:
         if index:
             parts.append(index)
         text = "\n\n".join(parts)
-        usage.log_delivery(cwd, "start", [m["id"] for m in wide + repo_rules + flagged]
-                           + [m["id"] for m in rest[:limit]])
+        if log:
+            usage.log_delivery(cwd, "start", [m["id"] for m in wide + repo_rules + flagged]
+                               + [m["id"] for m in rest[:limit]])
         if len(text) > cap:
             text = text[: cap - 80].rstrip() + (
                 "\n(…truncated; `reverie rules list` and `reverie digest` show the rest)")

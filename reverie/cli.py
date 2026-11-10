@@ -544,6 +544,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         "last run (what the detached session-start worker runs)")
     p.add_argument("--repo", default=None,
                    help="repo path (default: current directory)")
+    p = sub.add_parser("ui", help="read-only local page: what agents are told, team context, "
+                       "proposals, memory (stops on Ctrl-C)")
+    p.add_argument("--repo", default=None, help="repo path (default: current directory)")
+    p.add_argument("--port", type=int, default=0,
+                   help="port on 127.0.0.1 (default: a free one)")
+    p.add_argument("--no-open", action="store_true", dest="no_open",
+                   help="print the address but do not open a browser")
     sub.add_parser("capture-turn", help="capture the completed exchange "
                    "(invoked by the installed hook; reads hook JSON on "
                    "stdin)")
@@ -553,7 +560,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install", "resume", "transcripts", "merge", "usage", "rules", "show", "undo", "digest", "stale", "promote", "context")
+               "capture-turn", "install", "resume", "transcripts", "merge", "usage", "rules", "show", "undo", "digest", "stale", "promote", "context", "ui")
 
 
 def _unknown_command(word: str) -> int:
@@ -647,6 +654,9 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_rules(args)
     if args.command == "context":
         return _cmd_context(args)
+    if args.command == "ui":
+        from . import spool, ui
+        return ui.serve(spool.repo_root(args.repo or "."), args.port, open_browser=not args.no_open)
     if args.command == "usage":
         from . import deliver, items, spool, usage
         root = spool.repo_root(args.repo or ".")
