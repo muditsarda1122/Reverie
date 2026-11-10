@@ -357,6 +357,35 @@ shows people use it. Usefulness test before building the editor: do users edit
 rules by hand (`reverie rules` usage), and does a read-only page make them
 trust or fix memory. Version history can reuse git for repo-resident files.
 
+**`reverie ui`, read-only slice: design (not built).** A command, not a daemon. Editing,
+user-defined layers and version history stay out; this page only shows what is already stored.
+- Process: `reverie ui [--repo PATH] [--port N] [--no-open]` runs `http.server` in the foreground on
+  127.0.0.1 (random free port unless `--port`), prints the URL, opens the browser unless `--no-open`,
+  stops on Ctrl-C. Stdlib only, no new dependency, no external fonts or scripts (works offline);
+  pages are server-rendered HTML with inline CSS and no JavaScript, so there is nothing to attack
+  or to break.
+- Pages (each a plain GET, all built from functions that already exist): **Start block** (the exact
+  text an agent gets at session start for this repo, with its size and the disabled state);
+  **Team context** (scopes and documents, rules with locked, path-scoped and "hidden duplicate"
+  marks, conflicts with status, owners and the possibly-outdated flags, the contradiction hint);
+  **Proposals** (open ones with provenance and `why`, rejected ones with reason, who and when);
+  **Memory** (items by kind with source, status, grounding, usage counts, stale and challenged
+  flags; agent-inferred vs user-said); **Repos** (enabled or disabled, hooks installed). Every row
+  shows the command that changes it (`reverie context accept ...`), because editing is not here.
+- Read-only is enforced, not promised: only GET and HEAD answer (everything else is 405); no handler
+  writes a file or opens the brain read-write (memory is opened `readonly`); a test snapshots
+  `REVERIE_HOME` and the repo before and after a crawl of every page and requires them identical.
+- Safety: bind 127.0.0.1 only; reject a Host header that is not the bound address (DNS rebinding);
+  escape every value (documents are written by other people); a strict Content-Security-Policy
+  (`default-src 'none'; style-src 'unsafe-inline'`); text passes through the existing redaction
+  before display; a disabled repo shows only "disabled" and no content, as delivery does.
+- Tests: serve on port 0 in a thread; every page returns 200 and contains seeded data; non-GET is
+  405; wrong Host is 403; a hostile rule text (`<script>`) is escaped; the no-writes snapshot test;
+  a disabled repo leaks nothing; CLI docs/README tests cover the new flags and command.
+- Validation before more: this is a read-only look, so the lab is not an agent run. Instead a
+  manual walkthrough in a browser on the run 3 repo (screenshots of each page) and, if you use it,
+  whether it changes what you fix by hand. No agent spend.
+
 ### Later (accepted as deferred)
 - **Cursor hooks**: parked until there is quota to verify prompt/stop/context
   injection (checklist in `docs/SUPPORTED_HARNESSES.md`). Importer + MCP cover Cursor now.
