@@ -68,3 +68,39 @@ def test_removed_commands_are_not_documented_as_current():
             for gone in ("ec-start", "ec-stop", "ec-status", "ec-retry",
                          "ec-repair"):
                 assert gone not in line, f"stale command heading: {line!r}"
+
+
+def _section(name: str) -> str:
+    """The docs/CLI.md text under ``## reverie <name>`` (and ``## reverie <name>: ...``
+    sub-sections), each up to the next ``## `` heading."""
+    out = []
+    for part in CLI_DOC.split("\n## "):
+        head = (part.splitlines() or [""])[0].strip().lstrip("# ")
+        if head == f"reverie {name}" or head.startswith(f"reverie {name}:"):
+            out.append(part)
+    return "\n".join(out)
+
+
+def test_each_flag_is_documented_under_its_own_subcommand():
+    """Run 2 bug: --why/--paths/--scope were registered on the `stale` parser but
+    documented under `context`, and the global check above passed. A flag must
+    appear in the section of the subcommand whose parser defines it."""
+    wrong = []
+    for name, flags in _subcommands(cli._build_parser()).items():
+        text = _section(name)
+        wrong += [f"reverie {name} {f}" for f in flags if f != "--repo" and f not in text]
+    assert wrong == [], f"flags missing from their own subcommand's section: {wrong}"
+
+
+def test_every_documented_context_flag_exists_on_the_real_parser():
+    """The other direction, and an actual parse: every flag the context section
+    shows must be accepted by `reverie context`, and `context add` must parse."""
+    import re
+    subs = _subcommands(cli._build_parser())
+    shown = set(re.findall(r"`?(--[a-z][a-z-]+)", _section("context")))
+    unknown = sorted(f for f in shown if f not in subs["context"])
+    assert unknown == [], f"documented under `reverie context` but not on its parser: {unknown}"
+    ns = cli._build_parser().parse_args(
+        ["context", "add", "a rule", "--layer", "team", "--scope", "t", "--paths", "src/**",
+         "--why", "because", "--locked", "--tag", "x", "--doc", "d", "--guidance"])
+    assert ns.scope == "t" and ns.paths == "src/**" and ns.why == "because"
