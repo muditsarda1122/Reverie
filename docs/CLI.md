@@ -233,6 +233,10 @@ reverie context add --guidance --doc deploys "Deploys go through the staging gat
 reverie context add --why "support asked" "Never blame the user"   # becomes a proposal if the folder has owners
 reverie context proposals                              # open proposals
 reverie context accept <name>                          # an owner moves a proposal into its document
+reverie context reject <name> --why "Ledgers use Decimal"   # an owner declines; the reason is kept
+reverie context propose "integer cents"                # one of YOUR rules -> a proposal for the team (default --layer team)
+reverie context propose a1b2c3d4 --layer org --scope acme/org --why "bit us twice"   # a memory rule by id
+reverie context propose "integer cents" --again --why "ledgers changed"    # a rule that was rejected before
 reverie context resolve <conflict-key> "Public APIs use REST, internal ones gRPC"
 reverie context check                                  # judge cross-scope conflicts + staleness
 reverie context check --since v1.2                     # recheck commits since a revision
@@ -242,6 +246,23 @@ reverie context check --if-changed                     # quiet; only if a docume
 `add` writes the bullet directly when nobody owns the target document or you are
 one of its owners. Otherwise it writes a proposal file under `proposals/` next to
 the document, to be reviewed like any pull request; an owner runs `accept`.
+`propose` is the promotion path: a rule you taught your agent (a bullet of
+`~/.reverie/rules.md` by its text or a unique fragment, a rule you stated that is stored
+as a memory item by id, or a personal context rule by id; agent-inferred items cannot be
+promoted) becomes a proposal for a team, org or repo document. Nothing leaves your
+personal scope until you run it. It follows the same permission as `add`: an owner of the
+target writes directly (self-approving), anyone else writes a proposal for the owners. The
+proposal carries your words verbatim, where the rule came from, the date, your usage
+counts when they exist, and your `--why`. A rule that looks like a secret is refused, not
+stripped; one already in a document or already proposed is refused as a duplicate.
+`reject` (owners only, `--why` required) moves the proposal to `proposals/rejected/` with
+the reason, who and when: it stays in git history and `context proposals` shows it to the
+proposer. It is never delivered to an agent. `propose` on a rule that was rejected refuses
+and prints the reason; `--again --why "what changed"` is the only way to re-propose it.
+After `accept`, your own copy is not deleted: it is hidden at DELIVERY time while the team
+rule is in force, and shown again as soon as that rule is removed, overridden by a narrower
+rule, or flagged outdated.
+
 `resolve` writes a `{resolves: key}` decision into this repo's context (or a
 proposal for it): it settles the conflict and is remembered because it lives in git.
 An optional `authority` file (`legal = @dana, @sam`) only adds display labels to

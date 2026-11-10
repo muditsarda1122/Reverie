@@ -311,7 +311,7 @@ on new commits. Never in a hook; a failing judge leaves delivery unchanged. Whet
 this fixes the two cells is a measured question: both cells passed in the follow-up (n=3, see
 docs/BENCHMARK.md), with the first-session race unmeasured.
 
-**Promotion path (step 2, design; not built).** A rule one person taught their agent
+**Promotion path (step 2, BUILT; approved with three changes below).** A rule one person taught their agent
 becomes a PROPOSAL for the team document, reviewed by whoever owns it. Reuses what exists:
 `proposals/` files, CODEOWNERS authority, `reverie context accept`. No new store, no model call.
 - Command: `reverie context propose <rule-id | "text"> [--layer team|org|repo] [--scope S]
@@ -330,10 +330,23 @@ becomes a PROPOSAL for the team document, reviewed by whoever owns it. Reuses wh
   normalised text equals a team rule, so the agent never sees it twice. A rule already present in
   the target document is refused as a duplicate. Conflict detection runs after accept as it does
   for `add`.
+- Approved changes: (1) a duplicate personal rule is hidden at DELIVERY time only, never deleted,
+  and comes back when the team rule is removed, overridden or flagged outdated (tested);
+  (2) `reject --why` keeps the reason in `proposals/rejected/` (git history, visible to the
+  proposer, never delivered); `propose` refuses a rule that was rejected and prints the reason,
+  `--again --why` is the only way to re-propose; (3) the lab has a fourth arm, "rejected": B must
+  not get the rule and the reason must not appear in B's context.
 - Out of scope: auto-promotion, voting, notifications, a UI (step 3 shows proposals read-only).
-- Lab (fresh repo, memory-off control, checker written first): user A's rule is seeded in A's
+- Lab (fresh repo, memory-off control, checker written first, cap $15): user A's rule is seeded in A's
   personal rules; B works in a clone. Arms: before accept (B should NOT get it), after accept (B
-  should follow it), off. Tests also cover redaction, duplicate, reject, owner direct write.
+  should follow it), rejected (B must not get it, reason absent), off. Tests also cover redaction, duplicate, reject, owner direct write.
+
+**Open item: the first-session race (measure, do not build yet).** Detection runs in a detached
+worker, so after a document or commit changes the agent's FIRST session may start before the
+worker finishes: the UNRESOLVED or outdated block then appears only in the next session, and
+until then only the hint helps. Measure how often the worker loses to the agent. If the window
+is real, also run detection on `git pull` (a hook installed by `reverie install`, opt-in) and at
+`reverie install`.
 
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
