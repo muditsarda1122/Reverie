@@ -13,7 +13,7 @@ import pytest
 
 from reverie import cli, context, deliver, hooks, items, rules, ui
 
-PAGES = ["/", "/start", "/context", "/proposals", "/memory", "/repos"]
+PAGES = ["/", "/project", "/start", "/context", "/proposals", "/memory", "/connect", "/add", "/new", "/search?q=squash"]
 
 
 def _git(repo, *a):
@@ -107,15 +107,15 @@ def test_home_is_plain_language_with_action_items_first(env, serve):
     tmp_path, repo = env
     _seed(tmp_path, repo)
     s = serve(repo)
-    status, body, _ = req(s, "/")
+    status, body, _ = req(s, "/project")
     assert status == 200
     for phrase in ("Rules in force", "Conflicts to settle", "Possibly outdated", "Proposals waiting"):
         assert phrase in body
     assert re.search(r"<b>1</b>Conflicts to settle", body)
     assert re.search(r"<b>1</b>Possibly outdated", body)
     assert re.search(r"<b>1</b>Proposals waiting", body)
-    assert body.index("Needs your action") < body.index("Look closer")
-    assert body.index("Two rules disagree") < body.index("Look closer")
+    assert body.index("Needs your action") < body.index("Two rules disagree")
+    assert body.index("<b>1</b>Rules in force") < body.index("Needs your action")
     assert "A proposal is waiting" in body and "reverie context accept" in body
     assert ">Possibly outdated</span>" in body and "old_helper was removed" in body
     assert "Nothing needs your action" not in body
@@ -124,7 +124,7 @@ def test_home_is_plain_language_with_action_items_first(env, serve):
 def test_home_when_nothing_needs_action(env, serve):
     _, repo = env
     rules.add("Money is integer cents", level="user")
-    _, body, _ = req(serve(repo), "/")
+    _, body, _ = req(serve(repo), "/project")
     assert "Nothing needs your action right now." in body and re.search(r"<b>1</b>Rules in force", body)
 
 
@@ -165,7 +165,7 @@ def test_memory_500_items_is_paged_and_bounded(env, serve, monkeypatch):
     s = serve(repo)
     _, body, _ = req(s, "/memory")
     assert "500 item(s)" in body and "Page 1 of 5" in body
-    assert body.count("<tr class=item>") == ui.PAGE_SIZE and len(body) < 120_000
+    assert body.count("<article class=card>") == ui.PAGE_SIZE and len(body) < 120_000
     assert "Page 5 of 5" in req(s, "/memory?page=5")[1]
     assert "Page 5 of 5" in req(s, "/memory?page=999")[1]        # clamped
     assert "Page 1 of 5" in req(s, "/memory?page=abc")[1]        # junk ignored
@@ -176,8 +176,10 @@ def test_every_page_has_an_empty_state(env, serve):
     _, repo = env                                    # no .reverie dir, no brain, no rules
     assert not (repo / ".reverie").exists()
     s = serve(repo)
-    want = {"/": "Nothing needs your action", "/start": "Nothing.", "/context": "No team context",
-            "/proposals": "No proposals", "/memory": "Nothing remembered", "/repos": "No repo is known"}
+    want = {"/project": "Nothing needs your action", "/start": "Nothing.", "/context": "No team context",
+            "/proposals": "No proposals", "/memory": "Nothing remembered", "/": "Projects",
+            "/connect": "reverie install", "/add": "reverie context add", "/new": "reverie enable",
+            "/search?q=": "Type something to search"}
     for page, text in want.items():
         status, body, _ = req(s, page)
         assert status == 200 and text in body, page
@@ -190,7 +192,7 @@ def test_disabled_repo_shows_only_that_it_is_off(env, serve, monkeypatch):
     monkeypatch.chdir(repo)
     assert cli.main(["disable"]) == 0
     s = serve(repo)
-    for page in ("/", "/start", "/context", "/proposals", "/memory"):
+    for page in ("/", "/project", "/start", "/context", "/proposals", "/memory", "/search?q=squash"):
         _, body, _ = req(s, page)
         assert "turned off for this repo" in body, page
         assert "squash merge" not in body and "integer cents" not in body and "Prefer small PRs" not in body
@@ -284,3 +286,18 @@ def test_viewing_the_start_block_is_not_a_delivery(env, serve, monkeypatch):
     assert not log.exists()
     deliver.startup_text(str(repo))                  # a real delivery does log
     assert log.exists()
+
+
+def test_only_known_projects_open_and_never_by_path(env, serve, monkeypatch):
+    tmp_path, repo = env
+    _seed(tmp_path, repo)
+    other = _repo(tmp_path / "other")
+    (other / ".reverie").mkdir()
+    (other / ".reverie" / "rules.md").write_text("- SECRET-OTHER-REPO-RULE\n")
+    s = serve(repo)
+    for url in (f"/project?p={other}", "/project?p=../../etc", f"/memory?p={other}", "/context?p=deadbeef"):
+        status, body, _ = req(s, url)
+        assert status == 200 and "SECRET-OTHER-REPO-RULE" not in body
+        assert "svc" in body                              # fell back to the repo it was started in
+    ids = re.findall(r'href="/project\?p=([0-9a-f]{8})"', req(s, "/")[1])
+    assert ids and len(set(ids)) == 1                      # one known project, never the other repo
