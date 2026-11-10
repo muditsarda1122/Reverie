@@ -127,3 +127,65 @@ def test_cli_flag_defaults_on(monkeypatch):
     assert seen["trust_codex_hooks"] is True
     cli.main(["install", "--dry-run", "--no-trust-codex-hooks"])
     assert seen["trust_codex_hooks"] is False
+
+
+# --- `reverie status` warns when Reverie's Codex hooks are installed but not approved ---------
+
+def _codex_home(tmp_path, with_hooks=True):
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "config.toml").write_text(
+        'hooks = true\n[[hooks.SessionStart]]\ncommand = "x -m reverie.integrations.codex.shim start"\n'
+        if with_hooks else "[features]\nhooks = true\n")
+    return home
+
+
+def test_status_warns_when_hooks_are_installed_but_not_approved(tmp_path):
+    home = _codex_home(tmp_path)
+    agent = next(a for a in install.AGENTS if a.key == "codex")
+    notes = agent.status_notes(home, {}, status_fn=lambda h, c, b: {"a": "untrusted", "b": "trusted",
+                                                                      "c": "untrusted"})
+    assert len(notes) == 1 and notes[0][0] is False
+    assert "2 of 3" in notes[0][1] and "silently" in notes[0][1] and "reverie install" in notes[0][1]
+
+
+def test_status_says_approved_when_all_trusted_and_is_silent_without_hooks(tmp_path):
+    agent = next(a for a in install.AGENTS if a.key == "codex")
+    ok = agent.status_notes(_codex_home(tmp_path), {}, status_fn=lambda h, c, b: {"a": "trusted"})
+    assert ok == [(True, ok[0][1])] and "all 1 approved" in ok[0][1]
+    quiet = tmp_path / "other"
+    assert agent.status_notes(_codex_home(quiet, with_hooks=False), {},
+                              status_fn=lambda h, c, b: {"a": "untrusted"}) == []
+    assert agent.status_notes(quiet / "nohome", {}, status_fn=lambda h, c, b: {}) == []
+
+
+def test_status_never_hangs_or_approves_and_says_when_it_cannot_check(tmp_path):
+    import threading
+    agent = next(a for a in install.AGENTS if a.key == "codex")
+    home = _codex_home(tmp_path)
+    notes = agent.status_notes(home, {}, status_fn=lambda h, c, b: None)       # codex missing
+    assert len(notes) == 1 and notes[0][0] is True and "could not be checked" in notes[0][1]
+    gate = threading.Event()
+    t0 = __import__("time").time()
+    out = trust.untrusted_hooks(home / ".codex", timeout=0.3,
+                                status_fn=lambda h, c, b: gate.wait(30) or {})    # a stuck codex
+    gate.set()
+    assert out is None and __import__("time").time() - t0 < 5
+    calls = []
+    trust.untrusted_hooks(home / ".codex", status_fn=lambda h, c, b: calls.append(1) or {})
+    assert "config/batchWrite" not in str(calls)                                  # read-only
+
+
+def test_status_notes_are_skipped_when_tests_forbid_starting_codex(tmp_path):
+    agent = next(a for a in install.AGENTS if a.key == "codex")
+    assert agent.status_notes(_codex_home(tmp_path), {"REVERIE_NO_CODEX_TRUST": "1"},
+                              status_fn=lambda h, c, b: {"a": "untrusted"}) == []
+
+
+def test_report_integration_notes_prints_and_returns_false_on_a_warning(tmp_path, monkeypatch):
+    home = _codex_home(tmp_path)
+    monkeypatch.delenv("REVERIE_NO_CODEX_TRUST", raising=False)
+    monkeypatch.setattr(trust, "reverie_hook_status", lambda h, c=None, b="codex": {"a": "untrusted"})
+    out: list[str] = []
+    assert install.report_integration_notes(out.append, home, environ={}) is False
+    assert any("NOT approved" in ln for ln in out)

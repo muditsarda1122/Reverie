@@ -424,7 +424,12 @@ session is reported. Timestamps show local time with the UTC offset. Also
 emitted by the `summary` MCP tool. Additionally checks that the server
 command written to each harness config still exists — a moved or deleted
 virtualenv breaks the absolute path, and the report then says to run
-`reverie install` again.
+`reverie install` again. It also warns when Reverie's Codex hooks are installed
+but not approved: Codex skips an unapproved hook silently, so none of Reverie's
+hooks would fire there. The warning says how many are unapproved and to run
+`reverie install` (which approves Reverie's own hooks) or type `/hooks` in Codex.
+The check is read-only (it asks Codex's own app-server, never approves anything),
+gives up after 10 seconds instead of hanging, and says so when it could not check.
 
 ```bash
 reverie status

@@ -29,7 +29,7 @@ CSS = """
 @media (prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8eaed;--mut:#9aa3ae;--line:#2c3138;--card:#1c2025;--warn:#f0b35a;--warnbg:#2a2113;--ok:#6cc08f;--link:#7db4f0}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
 main,header{max-width:60rem;margin:0 auto;padding:0 16px}header{padding-top:16px}
-nav a{margin-right:14px;color:var(--link);text-decoration:none}nav a.on{font-weight:700;text-decoration:underline}
+a{color:var(--link)}nav a{margin-right:14px;text-decoration:none}nav a.on{font-weight:700;text-decoration:underline}
 h1{font-size:1.5rem;margin:.8em 0 .3em}h2{font-size:1.1rem;margin:1.6em 0 .4em}p.mut,.mut{color:var(--mut)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:8px 0;overflow-wrap:anywhere}
 .warn{background:var(--warnbg);border-color:var(--warn)}.warn b{color:var(--warn)}

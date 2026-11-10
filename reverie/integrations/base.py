@@ -43,6 +43,11 @@ class Integration:
         it. -> (ok, detail), or None when the harness has no such step."""
         return None
 
+    def status_notes(self, home: Path, environ) -> list[tuple[bool, str]]:
+        """Optional, read-only: lines for `reverie status` as (ok, text); ok=False is a
+        warning (something installed that the harness will not run)."""
+        return []
+
     def detect(self, home: Path, which=shutil.which) -> bool:
         """Whether this harness is installed on the machine."""
         marker = getattr(self, "marker", None)

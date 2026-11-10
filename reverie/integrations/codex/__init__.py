@@ -372,6 +372,40 @@ class CodexIntegration(Integration):
                       "(the same thing /hooks does)" if n
                       else "Reverie's hooks were already approved")
 
+    def status_notes(self, home: Path, environ, status_fn=None) -> list[tuple[bool, str]]:
+        """Codex runs a hook only once it is approved and skips an unapproved one
+        SILENTLY, so a user can believe Reverie works there when none of its hooks fire.
+        Warn when Reverie's hooks are installed in a Codex home but not approved.
+        Nothing is said when Codex has no Reverie hooks. Never approves anything."""
+        if environ.get("REVERIE_NO_CODEX_TRUST"):          # tests never start codex
+            return []
+        from . import trust
+        homes = [p.path for p in profiles.discover(home, environ).get("codex", [])]
+        homes.append(profiles.codex_dir(home, environ))
+        out: list[tuple[bool, str]] = []
+        seen: set[str] = set()
+        for codex_home in homes:
+            if str(codex_home) in seen or not trust.hooks_installed(codex_home):
+                continue
+            seen.add(str(codex_home))
+            counts = trust.untrusted_hooks(codex_home, status_fn=status_fn)
+            if counts is None:
+                out.append((True, f"Codex hooks ({codex_home}): installed, but approval could "
+                                  "not be checked (is `codex` available?)."))
+                continue
+            bad, total = counts
+            if total == 0:
+                continue
+            if bad:
+                out.append((False, f"! Codex hooks ({codex_home}): {bad} of {total} Reverie "
+                                   "hook(s) are NOT approved. Codex skips unapproved hooks "
+                                   "silently, so Reverie's session-start rules, capture and "
+                                   "edit-time rules do not run there. Run `reverie install` "
+                                   "(it approves Reverie's own hooks) or type /hooks in Codex."))
+            else:
+                out.append((True, f"Codex hooks ({codex_home}): all {total} approved."))
+        return out
+
     def install(self, home: Path, reverie_bin: str | None = None,
                 dry_run: bool = False, *,
                 reverie_home: Path | None = None,

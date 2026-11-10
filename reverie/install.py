@@ -786,6 +786,25 @@ def report_configured_servers(print_fn=print, home: Path | None = None,
     return ok_all
 
 
+def report_integration_notes(print_fn=print, home: Path | None = None,
+                             environ=None) -> bool | None:
+    """``reverie status``: let each integration say what needs the user's attention (for
+    example hooks that are installed but that the harness will not run). Read-only.
+    Returns False when any integration printed a warning, True when all were fine,
+    None when nothing was said."""
+    env = os.environ if environ is None else environ
+    result: bool | None = None
+    for agent in AGENTS:
+        try:
+            notes = agent.status_notes(Path(home) if home else Path.home(), env)
+        except Exception:
+            notes = []
+        for ok, line in notes:
+            print_fn(line)
+            result = (result is not False) and ok
+    return result
+
+
 #: Integration lookup for the installer's --only validation and status.
 _AGENTS_BY_KEY = {agent.key: agent for agent in AGENTS}
 

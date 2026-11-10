@@ -24,7 +24,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__all__ = ["TrustReport", "trust_reverie_hooks", "reverie_hook_status", "is_reverie_hook"]
+__all__ = ["TrustReport", "trust_reverie_hooks", "reverie_hook_status", "is_reverie_hook",
+           "hooks_installed", "untrusted_hooks"]
 
 _MARKERS = ("reverie.integrations.codex.shim", "reverie-codex-hook")
 _TIMEOUT = 20.0
@@ -158,3 +159,37 @@ def trust_reverie_hooks(codex_home: Path, cwd: Path | None = None,
         return TrustReport(False, message=str(exc))
     finally:
         rpc.close()
+
+
+def hooks_installed(codex_home: Path) -> bool:
+    """Cheap, no process: does this Codex home's config.toml name Reverie's hook shim?"""
+    try:
+        text = (Path(codex_home) / "config.toml").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(m in text for m in _MARKERS)
+
+
+def untrusted_hooks(codex_home: Path, cwd: Path | None = None, codex_bin: str = "codex",
+                    timeout: float = 10.0, status_fn=None) -> tuple[int, int] | None:
+    """``(untrusted, total)`` for Reverie's hooks in this Codex home, or None when it cannot
+    be known (Codex missing, its app-server unavailable, or no answer within ``timeout``
+    seconds: a status command must never hang on a stuck Codex). Read-only: it never
+    approves anything. ``status_fn`` is injectable for tests."""
+    import threading
+    box: list[dict[str, str] | None] = []
+    fn = status_fn or reverie_hook_status
+
+    def go() -> None:
+        try:
+            box.append(fn(Path(codex_home), cwd, codex_bin))
+        except Exception:
+            box.append(None)
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive() or not box or box[0] is None:
+        return None
+    states = box[0]
+    return sum(1 for v in states.values() if v != "trusted"), len(states)

@@ -157,8 +157,8 @@ approves Reverie's OWN three hooks by default, through Codex's app-server:
 Reverie never computes a hash and never approves a hook it did not write
 (`reverie/integrations/codex/trust.py`). `--no-trust-codex-hooks` leaves approval
 to the user (`/hooks`). Verified headless: install -> `codex exec` -> hooks fire
--> prompt and answer in the log. Still open: `reverie status` warning when hooks
-are installed but not approved (read-only `reverie_hook_status` exists).
+-> prompt and answer in the log. `reverie status` now warns when hooks are installed but not approved
+(read-only, 10 s timeout, DONE).
 Note: any change to the hook command changes the hash, so re-run `reverie install`.
 
 ### Cursor without a subscription
