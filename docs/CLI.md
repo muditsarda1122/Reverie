@@ -178,6 +178,16 @@ reverie resume --latest         # skip the picker, take the most recent session
 reverie resume --prompt 3       # prompt 3 of the session in full (the card trims long ones)
 ```
 
+Chains across tools: when work was started in one tool and finished in another
+(the second session's first prompt asks to resume, for example "my session got cut
+off, run `reverie resume`"), the card links them. It continues the newest earlier
+session that had already ended, in any tool, and shows all of their prompts in
+order with the tool of each, under a line naming the chain. The "please resume"
+message itself is the link, not work, so it is left out. Without such a prompt
+nothing is linked (a heuristic on the log's order and wording, never an invented
+chain); `--session <id>` of the first session shows only that one, and `--all`
+still shows everything.
+
 Exit: `0` always.
 
 ## reverie rules

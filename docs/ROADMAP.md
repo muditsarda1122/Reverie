@@ -119,8 +119,8 @@ Learned from the P0 runs, now on the list:
 10. **Resume card** DONE (this commit). Bounded (~2K chars last prompt, 6K for the
     rest), buried constraints kept, per-prompt tool label, `--prompt N` for the whole
     text, secrets as a note. Cut-off sessions are announced by MCP `summary` (works with
-    no shell/PATH and no hooks) and `summary resume:true` returns the card. Open: link
-    chains of sessions across tools, an LLM rewrite of the card.
+    no shell/PATH and no hooks) and `summary resume:true` returns the card. Chains of
+    sessions across tools are now linked (item (f)); open: an LLM rewrite of the card.
 
 ### P2: install experience
 11. **Profile discovery** DONE: `reverie/profiles.py`, `reverie install
@@ -352,6 +352,7 @@ is real, also run detection on `git pull` (a hook installed by `reverie install`
 - (b) Codex untrusted-hooks warning in `reverie status`: DONE.
 - (d) refresh installed instruction blocks: DONE. `reverie install --refresh-instructions` updates only text that is already installed and stale (the owned `~/.reverie/AGENTS.md`, the marker-delimited block in a harness AGENTS.md); `reverie status` warns; nothing else is touched or created. (`reverie install` itself already refreshed a stale block; what was missing was noticing, and a way to do only that.)
 - (e) tool results as a provenance source: DONE for Claude Code's Stop hook (the live capture reads the real `tool_result` blocks of the last exchange, redacted and capped at 12k chars, head and tail). They can back FACTS (environment, a decision's reason, a negative result) and never a rule or preference (tool output can carry text written by anyone). `REVERIE_PROVENANCE_TOOLS=0` turns it off. Other harnesses and the importers do not pass tool results yet.
+- (f) session chains across tools: DONE. A session whose first prompt asks to resume continues the newest earlier session that had ended; `reverie resume` shows the whole chain in order with each tool, and the picker no longer asks which of two linked sessions. A heuristic on order and wording; no chain is invented without a resume prompt.
 - (c) compound rules: real repro found (above), prompt changed, cost measured: DONE.
 
 ### Local UI (validate first)
