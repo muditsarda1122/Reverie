@@ -117,7 +117,7 @@ def test_home_is_plain_language_with_action_items_first(env, serve):
     assert body.index("Needs your action") < body.index("Look closer")
     assert body.index("Two rules disagree") < body.index("Look closer")
     assert "A proposal is waiting" in body and "reverie context accept" in body
-    assert "Possibly outdated." in body and "old_helper was removed" in body
+    assert ">Possibly outdated</span>" in body and "old_helper was removed" in body
     assert "Nothing needs your action" not in body
 
 
@@ -165,7 +165,7 @@ def test_memory_500_items_is_paged_and_bounded(env, serve, monkeypatch):
     s = serve(repo)
     _, body, _ = req(s, "/memory")
     assert "500 item(s)" in body and "Page 1 of 5" in body
-    assert body.count("<tr><td>rule</td>") == ui.PAGE_SIZE and len(body) < 120_000
+    assert body.count("<tr class=item>") == ui.PAGE_SIZE and len(body) < 120_000
     assert "Page 5 of 5" in req(s, "/memory?page=5")[1]
     assert "Page 5 of 5" in req(s, "/memory?page=999")[1]        # clamped
     assert "Page 1 of 5" in req(s, "/memory?page=abc")[1]        # junk ignored
