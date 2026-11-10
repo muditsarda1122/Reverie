@@ -416,9 +416,11 @@ shows people use it. Usefulness test before building the editor: do users edit
 rules by hand (`reverie rules` usage), and does a read-only page make them
 trust or fix memory. Version history can reuse git for repo-resident files.
 
-**Redesign (approved after review): the page is now a team workspace (projects board, per-project tabs for Overview, Rules, Memory, What agents are told, Proposals, Connect; search; guided add/connect screens that show the command). Still read-only; projects open only by opaque id. Real add/connect buttons (a page that writes) are NOT built: a design note on CSRF, Host checks and what may be written comes first.**
+**Redesign (approved after review): the page is now a team workspace (projects board, per-project tabs for Overview, Rules, Memory, What agents are told, Proposals, Connect; search; guided add/connect screens that show the command). Still read-only; projects open only by opaque id. Writes: see "UI write actions" above (add a rule, accept, reject are built; add-a-project and connect are not).**
 
-### UI write actions: design note (2026-11-10), NOT BUILT, waiting for approval
+### UI write actions: slice one BUILT (2026-11-10; design note below, approved with four decisions)
+Built exactly as written: add a rule/guidance (`context.add`) and accept/reject (`context.accept`/`context.reject`), nothing else. Approved decisions: (1) that slice; (2) `context add` refuses secrets (done, CLI behaviour change documented; `rules add` untouched); (3) the UI never runs the judge; (4) a POST with neither Origin nor Sec-Fetch-Site is refused. Additions: the accept/reject and add screens show the git identity the action will use. Two things found while building: the CLI matches proposals by prefix and `""` is a prefix of every proposal, so the UI requires the exact proposal name (the CLI itself still accepts `reverie context accept` with no name when one proposal waits; not changed here); and the UI also refuses a secret in a reject reason (the CLI does not check that). Tests: `tests/test_ui_writes.py` (28) and the read-only crawl in `tests/test_ui.py`. Still unbuilt: personal rules, repo on/off, propose-from-memory, real add-a-project/connect buttons.
+
 Today the page is read-only (GET/HEAD only; everything else 405). This note says which writes become
 real and how they are made safe. Nothing below is built until you approve it.
 

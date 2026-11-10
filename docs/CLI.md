@@ -305,8 +305,9 @@ the shared documents.
 
 ## reverie ui
 
-A read-only page in your browser. It is a command, not a daemon: it serves on
-`127.0.0.1` until you press Ctrl-C and changes nothing.
+A page in your browser. It is a command, not a daemon: it serves on `127.0.0.1` until you press
+Ctrl-C. Reading changes nothing. Three buttons write, and only through the CLI's own functions
+(see "Writing from the page" below).
 
 ```bash
 reverie ui                       # a free port, opens your browser
@@ -324,20 +325,55 @@ each with the command that deals with it), **Rules** (team context: scopes, mark
 **Memory** (the shared memory grouped by kind, 100 items per page), **What agents are told**
 (exactly the text a session starts with, the same function the CLI uses), **Proposals** (waiting,
 and turned down with the reason) and **Connect** (the steps to set an agent up). The search box
-looks through the team rules and memory of the current project. "Add a rule" and "Add a project"
-are guided screens that show the exact command to run; the page itself never writes. A project
-that is turned off shows only that. Looking at the start block is not a delivery and is not
+looks through the team rules and memory of the current project. "Add a project" and "Connect"
+are guided screens that show the exact command to run. A project that is turned off shows only
+that, and refuses writes. Looking at the start block is not a delivery and is not
 counted in usage.
 
 Only repos Reverie already knows about (plus the one `--repo` points at) can be opened, by an
 opaque id; a path in the URL is never read.
 
-Safety and privacy: only GET and HEAD answer (anything else is 405); the brain is opened
-read-only (SQLite may create its own `-wal`/`-shm` files, the database is not
-changed); it binds to `127.0.0.1` and refuses a Host header that is not its own
-address; every value is HTML-escaped and passed through redaction (the start block is
-shown exactly as delivered); no script and no external resource, a strict
-Content-Security-Policy; no access log and no telemetry of any kind. The page never
+### Writing from the page
+
+Slice one is three buttons, nothing else:
+
+| Button | Calls | Same as |
+|---|---|---|
+| **Add** (project, "Add a rule") | `context.add` | `reverie context add` |
+| **Accept** (Proposals tab) | `context.accept` | `reverie context accept <name>` |
+| **Reject** (Proposals tab, a reason is required) | `context.reject` | `reverie context reject <name> --why ...` |
+
+The page has no write code of its own, so it refuses exactly where the CLI refuses. Add writes a
+rule or guidance straight into the document when nobody owns it or you are an owner (CODEOWNERS plus
+your git identity), and otherwise writes a proposal for the owners; the message after the write says
+which. Accept and reject are owner-only; a non-owner gets the CLI's refusal ("only the owners of
+rules.md can accept: ..."). Each screen shows the git identity the action will use and the owners of
+the document. Personal rules, turning a repo on or off, proposing from memory, adding a project and
+connecting an agent stay commands.
+
+- **Secrets:** text or a reason that looks like a secret is refused (nothing is written) and is never
+  shown again: the form comes back with that field empty, and the value is never in a URL. Other
+  refusals keep what you typed. (`context add` now refuses secrets on the CLI too; see above.)
+- **After a write:** the server answers `303` and the browser loads a normal page showing one message
+  ("Added to rules.md", "Written as a proposal ... the owners review it", "Refused: ..."). The message
+  is shown once; refreshing repeats nothing.
+- **The judge:** the page never runs it. Conflict checks stay with the detached session-start worker
+  and the daily job, which notice a changed document by its content hash.
+- **Safety of a POST:** the Host must be the bound address (DNS rebinding); `Origin` must be this
+  page's own origin, or `Sec-Fetch-Site: same-origin` when there is no `Origin`; a request with neither
+  header is refused, as is `cross-site`, `same-site` or `none`; the body must be a url-encoded form of
+  at most 16 KB; every form carries a random per-process token (no cookie) that is checked on every
+  POST. Anything else is 403, 405, 411, 413 or 415 and changes nothing. Writes are POST only, at
+  `/do/add`, `/do/accept` and `/do/reject`; a GET there is a 404. The project is the opaque id,
+  re-checked on every POST; a proposal is named by its exact name. The page cannot be framed
+  (`frame-ancestors 'none'`) and forms may only post to itself (`form-action 'self'`).
+
+Safety and privacy: GET and HEAD never change anything (a test crawls every page and write URL and
+compares the repo and `REVERIE_HOME` byte for byte); the brain is opened read-only (SQLite may
+create its own `-wal`/`-shm` files, the database is not changed); it binds to `127.0.0.1` and
+refuses a Host header that is not its own address; every value is HTML-escaped and passed through
+redaction (the start block is shown exactly as delivered); no script and no external resource, a
+strict Content-Security-Policy; no access log and no telemetry of any kind. The page never
 reports its own usage.
 
 ## reverie show
