@@ -418,6 +418,103 @@ trust or fix memory. Version history can reuse git for repo-resident files.
 
 **Redesign (approved after review): the page is now a team workspace (projects board, per-project tabs for Overview, Rules, Memory, What agents are told, Proposals, Connect; search; guided add/connect screens that show the command). Still read-only; projects open only by opaque id. Real add/connect buttons (a page that writes) are NOT built: a design note on CSRF, Host checks and what may be written comes first.**
 
+### UI write actions: design note (2026-11-10), NOT BUILT, waiting for approval
+Today the page is read-only (GET/HEAD only; everything else 405). This note says which writes become
+real and how they are made safe. Nothing below is built until you approve it.
+
+**Which actions (candidates, with the CLI function each must call)**
+| Action | CLI function | Notes |
+|---|---|---|
+| Add a team rule or proposal | `context.add` (layer repo/team/org) | direct edit if no CODEOWNERS covers the document or the writer owns it, otherwise a proposal file; the UI shows which happened |
+| Propose a personal rule to the team | `context_propose.propose` | needs a rule id from memory; larger form, later |
+| Add a personal rule | `rules.add(level="user")` | writes under `REVERIE_HOME`, no authority question |
+| Turn a repo on/off | `repos.set_repo_state` (what `reverie enable/disable` call) | writes the brain; the only write outside the repo files |
+| Accept / reject a proposal | `context.accept` / `context.reject(why)` | owner only; reject needs a reason |
+
+**Recommended slice one (smallest useful set): two actions.**
+1. **Add a rule or guidance to the team context** (`context.add`) from the existing `/add` screen. It covers
+   both "add a team rule" and "add a proposal", because the CLI function decides which, from CODEOWNERS and
+   git identity.
+2. **Accept / reject a proposal** (`context.accept`, `context.reject`) from the Proposals tab. This closes the
+   loop: a non-owner's proposal can be settled where it is read.
+
+Deferred: personal rules (low value, already one command), repo on/off (writes the brain, a different
+risk class, one command), propose-from-memory (needs a picker), `/new` and `/connect` (they install and
+register things on disk; they stay command screens). If you want one more after slice one, repo on/off
+is the cheapest.
+
+**Authority: one write path, the CLI's.** The UI imports and calls the same functions and catches the same
+`ValueError` the CLI prints. It has no write code of its own: no path building, no file writes, no
+ownership check of its own. `context.add` writes a proposal when the git identity is not an owner;
+`accept`/`reject` raise "only the owners of X can accept" and the UI shows that text as a refusal.
+Identity is the git config of the repo the server was started in, exactly as for the CLI, so the page
+grants nothing the person could not do in their terminal. The server is the person's own process on their
+own machine; the threat is other web pages and other local processes, not other users.
+One gap found while reading the code: only `context_propose.propose` refuses secrets today;
+`context.add` and `rules.add` accept them. The UI will refuse in its own form handler with the same
+`redact.contains_secret` check, and (proposed, small, separate commit) the same check moves into
+`context.add` so the CLI refuses too and the two cannot drift. Needs your yes, because it changes CLI behaviour.
+
+**Threat model and controls**
+- **CSRF:** a random 256-bit token (`secrets.token_urlsafe`) made once per process, put in a hidden field
+  of every form, compared with `hmac.compare_digest` on every POST. Missing or wrong: 403, nothing written.
+  No cookie, so there is no ambient credential for a foreign page to ride.
+- **Origin:** a POST must carry `Origin` equal to `http://<bound host:port>` (or `Sec-Fetch-Site: same-origin`
+  when `Origin` is absent); `Sec-Fetch-Site: cross-site` or `same-site` is refused outright. No Origin and no
+  Sec-Fetch-Site: refused (browsers always send one on form posts; a non-browser caller must send the right one).
+- **DNS rebinding:** the existing Host allow-list check runs first on every method, POST included.
+- **No cross-origin form posts:** CSP gains nothing new except what exists: `form-action 'self'`, plus
+  `frame-ancestors 'none'` and `X-Frame-Options: DENY` (clickjacking, new with real buttons).
+- **POST only for writes; GET has no side effects.** Writes live at fixed paths (`/do/add`,
+  `/do/accept`, `/do/reject`). A GET to those paths is a 405 or a plain redirect to the form; every GET page
+  stays pure. A test snapshots the filesystem around a GET crawl including those paths.
+- **Content-Type and size:** only `application/x-www-form-urlencoded`; body capped (16 KB, 413 above);
+  `Content-Length` required; unknown fields ignored; every field length-capped.
+- **No JavaScript.** Plain forms and a redirect are enough; scripts would force loosening the CSP
+  (`script-src`) for no gain.
+- **Projects:** the target project is the opaque id already used for reading, re-resolved on every POST
+  against the known list; never a path from the form. Proposals are named by slug and re-looked-up by
+  `context.proposals` inside `accept/reject`, so a slug cannot escape the proposals folder (the CLI
+  function only matches existing slugs by prefix).
+- **Hostile text:** form values go through the same escape and redaction at render as everything else; the
+  stored text is what the CLI would store (`context.add` normalises whitespace; `_bullet` keeps it on one line).
+
+**Secrets:** a submission containing a secret is refused with a fixed message ("looks like it contains a
+secret; nothing was saved. Remove the value and try again"). The refusal page re-shows the form with the
+text field EMPTY, never the submitted text, so a secret is not echoed back, not logged (the server logs
+nothing) and not kept in a redirect URL. Non-secret errors may keep the text so the person need not retype.
+
+**Failure handling and what the page shows (post/redirect/get)**
+Every write ends in `303 See Other` to a GET page; the browser never holds a POST that a refresh could
+repeat. The outcome travels as a one-shot flash, not in the URL: the server keeps a single in-memory
+message keyed by a random id in the redirect query (`?done=<id>`), shown once and then forgotten. The
+message states the truth: "Added to rules.md" / "Written as a proposal; the owners (...) review it" /
+"Accepted into ..." / "Rejected; the reason is kept in ..." / "Refused: only the owners of rules.md can accept: ...".
+Refusals redirect too (to the same form, with the flash), so there is one code path. An exception inside
+a CLI function shows "That did not work; the CLI still does", and nothing partial remains because the CLI
+writes through temp file plus `os.replace`.
+Running the judge: the CLI runs `_context_detect` after add/accept (a best-effort judge call in a command). The UI
+does NOT call a model in the request: conflict detection is left to the existing detached session-start
+worker and the daily job, which already pick up a changed document by its content hash.
+
+**Tests (split of the existing snapshot test)**
+- Read-only run: crawl every page and every write path with GET/HEAD; `REVERIE_HOME` and the repo are
+  byte-identical afterwards (the current test, now also covering the write URLs).
+- Write run: with a valid token and Origin, one POST changes exactly the intended file (and nothing else in
+  `REVERIE_HOME` or the repo, apart from the documented proposal file or its move).
+- Refusals, each asserting no file changed: forged Origin; `Sec-Fetch-Site: cross-site`; missing token;
+  wrong token; wrong Host; GET on a write path; wrong Content-Type; oversize body; unknown project id;
+  secret in text (and the response body does not contain it); hostile text stored and then rendered escaped;
+  a non-owner accepting or rejecting (refused with the CLI's message, proposal still there); owner accepting
+  (proposal gone, rule in the document); reject without a reason; refresh after the redirect does not repeat the write.
+- Parity: for each action, the UI result equals the CLI result on an identical fixture.
+- ruff, mypy and the full suite stay green; docs/CLI.md and README updated with the build.
+
+**Decisions for you:** (1) slice one = add-to-team-context plus accept/reject, or a different set;
+(2) OK to move the secret refusal into `context.add` so the CLI refuses too; (3) OK that the UI never
+runs the judge (it is left to the worker); (4) the Origin rule above (refuse when both Origin and
+Sec-Fetch-Site are missing).
+
 **`reverie ui`, read-only slice: BUILT (design approved with four changes: plain-language home with action items first, no telemetry, hostile/large-data tests, start page equals the CLI text).** Cut from the design: the hooks-installed column on Repos (`reverie status` has it). A command, not a daemon. Editing,
 user-defined layers and version history stay out; this page only shows what is already stored.
 - Process: `reverie ui [--repo PATH] [--port N] [--no-open]` runs `http.server` in the foreground on
