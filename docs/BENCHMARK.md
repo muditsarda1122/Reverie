@@ -319,3 +319,27 @@ rule from a proposal file. (Two codex runs, one "after" and one "off", opened `.
   detail. The full suite then passed in one full run (1259 passed). One passing full run is not proof the
   flake is gone.
 - Nothing else broke during this run.
+
+
+## Compound rules: a real repro, a prompt change, its cost (2026-11-10)
+
+Open item since the dedupe work: the extractor sometimes stored ONE item stating several rules, which
+cannot be merged with the same rules stated separately elsewhere and is retired or flagged as a whole.
+Roadmap: "find a real repro (the scrapy case) before any change". Repro: the real typed extractor
+(`extract_candidates`, the product's model and prompt) run on the six real user messages of the earlier
+scrapy lab run D1, each stating the same three house rules (logging not print, type hints, ask before a
+dependency) in different words; 5 repeats per message, 30 runs, 0 errors.
+- Before: 6 of 30 runs produced a compound item. One message ("Same rules as always: logging not print,
+  type-hint public functions, no new dependency without asking.") produced exactly one compound item in
+  5 of 5 runs; another once. The messages with a clear "Rules for this repo:" list were already split.
+- Change: one sentence plus one example in `reverie/prompts/typed_extractor.md` (several independent
+  rules in a message become one item each; a reason still stays with its own rule). A sentence alone moved
+  it from 6 to 5 compound runs and did nothing for the terse case; the example fixed it.
+- After: 0 of 30 runs compound (that message: 3 rule items in 5 of 5).
+- Cost, measured on 3 single-rule-with-reason messages and 2 clean multi-rule messages (5 repeats each):
+  single rules kept as ONE item 15/15 before vs 14/15 after (an earlier 3-repeat run of the new prompt: 7/9);
+  clean multi-rule messages split 10/10 both. So the change over-splits a single rule with a reason
+  about 3 times in 24 runs (0 in 24 before). The over-split parts are still true rules; the harm is a
+  reason separated from its rule. Small n, one model: in my tests only.
+- No deterministic splitter was added: the prompt change fixed the repro, and a splitter at delivery
+  stays the fallback if the over-split rate matters. Repro scripts: `~/reverie-lab/compound/`.

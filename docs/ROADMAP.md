@@ -351,6 +351,7 @@ is real, also run detection on `git pull` (a hook installed by `reverie install`
 ### Smaller items: progress
 - (b) Codex untrusted-hooks warning in `reverie status`: DONE.
 - (d) refresh installed instruction blocks: DONE. `reverie install --refresh-instructions` updates only text that is already installed and stale (the owned `~/.reverie/AGENTS.md`, the marker-delimited block in a harness AGENTS.md); `reverie status` warns; nothing else is touched or created. (`reverie install` itself already refreshed a stale block; what was missing was noticing, and a way to do only that.)
+- (c) compound rules: real repro found (above), prompt changed, cost measured: DONE.
 
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
@@ -393,10 +394,10 @@ user-defined layers and version history stay out; this page only shows what is a
 ### Later (accepted as deferred)
 - **Cursor hooks**: parked until there is quota to verify prompt/stop/context
   injection (checklist in `docs/SUPPORTED_HARNESSES.md`). Importer + MCP cover Cursor now.
-- **Compound rules**: on 3 fresh multi-rule messages the extractor already split
-  them (3, 1, 3 items), so a prompt change showed no gain and was not shipped. Needs
-  a real repro (the scrapy case) before any change; a deterministic splitter at
-  delivery is the fallback.
+- **Compound rules**: REPRODUCED and changed (see docs/BENCHMARK.md, "Compound rules"): 6 of 30
+  real extractor runs on the scrapy D1 messages gave a compound item; a prompt sentence plus an
+  example brought that to 0 of 30, at the cost of ~3 over-split single rules in 24 runs. A
+  deterministic splitter at delivery stays the fallback if that cost matters.
 Team layer, multi-agent board, cross-machine sync (the paid cloud tier),
 UI, git-history mining. Retention/pruning of the derived log.
 
