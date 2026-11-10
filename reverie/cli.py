@@ -130,7 +130,7 @@ def _cmd_context(args) -> int:
         text = " ".join(args.text[1:] if args.action == "resolve" else args.text)
         paths = tuple(x.strip() for x in (args.paths or "").split(",") if x.strip())
         try:
-            added = context.add(root, text, layer=args.layer, rule=not args.guidance,
+            added = context.add(root, text, layer=args.layer or "repo", rule=not args.guidance,
                               locked=args.locked, tag=args.tag or "", doc=args.doc or "",
                               scope=args.scope or "", paths=paths, why=args.why or "",
                               resolves=args.text[0] if args.action == "resolve" else "")
@@ -146,6 +146,34 @@ def _cmd_context(args) -> int:
             print(f"Added to {added.path}")
             _context_detect(root)
         return 0
+    if args.action == "propose":
+        from . import context_propose
+        paths = tuple(x.strip() for x in (args.paths or "").split(",") if x.strip())
+        try:
+            got = context_propose.propose(root, " ".join(args.text), layer=args.layer or "team",
+                                          scope=args.scope or "", paths=paths, why=args.why or "",
+                                          again=args.again, doc=args.doc or "")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        ar = got.result
+        if ar.proposal:
+            print(f"Proposed: {ar.path}\nThe owners ({', '.join(ar.owners)}) review it like any "
+                  f"pull request; an owner runs `reverie context accept <name>` or "
+                  f"`reverie context reject <name> --why ...`.")
+        else:
+            print(f"You own that document, so the rule was added directly: {ar.path}")
+            _context_detect(root)
+        print("Your own copy stays; it is simply not shown again while the team rule is in force.")
+        return 0
+    if args.action == "reject":
+        try:
+            dest = context.reject(root, args.text[0] if args.text else "", args.why or "")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(f"Rejected; the reason is kept in {dest}")
+        return 0
     if args.action == "proposals":
         found = context.proposals(root)
         if not found:
@@ -153,6 +181,9 @@ def _cmd_context(args) -> int:
         for p in found:
             print(f"{p['slug']}: {p['bullet']}  (by {p.get('proposed-by', '?')}, "
                   f"for {p.get('document', '?')})")
+        for rj in context.rejected(root):
+            print(f"rejected {rj.get('rejected-on', '?')} {rj['slug']}: {rj['bullet']}  "
+                  f"-> {rj.get('reason', '')}")
         return 0
     if args.action == "accept":
         try:
@@ -484,10 +515,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="repo path (default: current directory)")
     p = sub.add_parser("context", help="layered team context (org > team > repo "
                        "> personal), plain markdown in the repo")
-    p.add_argument("action", choices=["list", "add", "check", "proposals", "accept", "resolve"])
+    p.add_argument("action", choices=["list", "add", "check", "proposals", "accept", "reject", "propose",
+                                         "resolve"])
     p.add_argument("text", nargs="*", help="the rule or guidance text (add)")
-    p.add_argument("--layer", choices=["org", "team", "repo", "personal"], default="repo",
-                   help="which layer's folder to write to (add; default repo)")
+    p.add_argument("--layer", choices=["org", "team", "repo", "personal"], default=None,
+                   help="which layer's folder to write to (add: default repo; propose: default team)")
     p.add_argument("--guidance", action="store_true",
                    help="add as guidance (delivered as a pointer) instead of a rule (add)")
     p.add_argument("--locked", action="store_true",
@@ -499,7 +531,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--paths", default=None,
                    help="comma-separated globs: the rule applies only under these paths (add)")
     p.add_argument("--why", default=None,
-                   help="why, written into the proposal for the owners (add)")
+                   help="why, written into the proposal for the owners (add, propose); "
+                        "the reason an owner gives (reject)")
+    p.add_argument("--again", action="store_true",
+                   help="propose a rule that was rejected before, with --why saying what changed")
     p.add_argument("--since", default=None,
                    help="check: recheck commits since this revision (default: last check)")
     p.add_argument("--doc", default=None,
