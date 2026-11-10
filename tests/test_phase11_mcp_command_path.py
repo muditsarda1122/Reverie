@@ -173,9 +173,13 @@ def test_server_command_module_fallback(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_check_server_reports_started(tmp_path):
+    # Run the fake server through the interpreter instead of exec'ing the freshly written
+    # file: under a loaded full-suite run, exec of a just-written script can fail with
+    # "Text file busy" (a concurrent fork still holds the write fd). The ready signal is
+    # still the server's own initialize reply; the generous timeout only bounds a hang.
     script = write_fake_server(tmp_path / "bin" / "reverie-mcp")
-    ok, detail = install.check_server(str(script), [], {}, timeout=10)
-    assert ok is True
+    ok, detail = install.check_server(sys.executable, [str(script)], {}, timeout=60)
+    assert ok is True, detail
     assert "server started (reverie)" in detail
 
 
