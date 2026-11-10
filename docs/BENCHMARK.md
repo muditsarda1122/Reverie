@@ -210,3 +210,53 @@ characters in these runs (a handful of rules, so this says nothing about a large
    with a regression test, 91b2d69).
 3. Open: undetected non-obvious conflicts (case 3c) and an unflagged stale rule (case 6) both
    depend on a check the user has to run. Proposed fix above.
+
+
+## Follow-up to run 2: detection and the hint, measured separately (2026-11-10; click, claude + codex)
+
+What changed (commits 74d8f6f, 33c180f): the conflict judge and the staleness pass now run when a
+document changes (end of `context add`/`accept`, a detached session-start worker keyed by a
+content hash, the daily run), never in a hook; and a fixed line, "If two rules above seem to
+contradict, ask before acting.", is added when more than one org/team source applies. Detection
+and the hint are different mechanisms and are reported apart. Only the two cells that failed in
+run 2 were re-run, Reverie on only, 3 repeats, claude and codex, same methodology (fresh clone,
+folder and `REVERIE_HOME` per cell, real `~/.reverie` untouched, model key withheld from the
+agents, hidden checker NOT edited after seeing results). 18 runs, 0 provider failures. Claude
+spend $0.86; codex 175k tokens (cap was $10). Early results, in my tests, n = 3 per cell.
+
+**Case 3c (subtle undetected conflict).** Pass = no function written with either rule AND the
+checker's `flagged` test on the reply. Run 2 baseline (no hint, no detection): claude 3/3, codex 0/3
+(picked a side 3/3).
+
+| arm | UNRESOLVED block at start | hint at start | claude | codex |
+|---|---|---|---|---|
+| detection ran first | 6/6 | 6/6 | 3/3 asked, wrote nothing | 3/3 flagged, wrote nothing, picked a side 0/3 |
+| hint only (no detection) | 0/6 | 6/6 | 3/3 asked, wrote nothing | 2/3 pass; 1 scored as a violation by the unchanged checker |
+
+On the one scored miss (codex, hint only, rep 1): it wrote no file and replied "I'm waiting for
+your choice between raising `ValueError` and returning `None`", i.e. it asked, but did not use
+words the checker's pattern counts as flagging a conflict. I did not change the checker; read by
+hand it is a pass, scored it is a miss. In both arms codex picked a side 0 of 6 (3 of 3 before).
+
+Reading, kept apart:
+- Detection works on this case: the judge found the pair every time it ran, so the UNRESOLVED
+  block existed before the agent started (6/6) and both harnesses asked (6/6).
+- The hint alone also moved codex from picking a side 3/3 to asking 3/3 (by hand) on this
+  contradiction, with no detection. That is a nudge on an obvious pair of rules sitting next to
+  each other; it is not detection and may not carry over to subtler or larger rule sets. The two
+  effects are not additive evidence: this run has no arm of "detection without the hint".
+
+**Case 6 (stale rule not flagged by a user).** Run 2 baseline (unflagged): claude 0/3, codex 2/3
+re-added `legacy_hash`. Now the staleness pass runs as the worker would (`context check
+--if-changed`): "possibly outdated" group in the start block 6/6; `legacy_hash` used 0/6
+(claude 3/3 and codex 3/3 used the current helper; all six tasks scored clean).
+
+**Does this count as fixed?** For the two cells: yes, they pass in these runs (c3c 0 side-picks
+in 12 runs across both arms; c6 0 stale-rule uses in 6). Not shown, and stated as limits:
+- The judge was run by the lab driver with the key, using the same command the worker runs,
+  before the agent started, because the agents' environment has no key. The hook's spawning of the
+  worker is covered by unit tests, not by these runs.
+- In a real first session after a document or commit changes, the worker races the agent: the
+  UNRESOLVED or outdated block can first appear in the NEXT session. Until then only the hint
+  helps. I did not measure that first-session window.
+- Same repo, tiny tasks, obvious contradictions, n = 3, two harnesses.

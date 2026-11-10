@@ -308,8 +308,8 @@ mechanisms: (1) DETECTION: the conflict judge runs when a document changes (afte
 in the daily run); (2) HINT: a fixed line when more than one org/team source applies,
 a nudge that does not detect anything; (3) the staleness pass runs in the same worker
 on new commits. Never in a hook; a failing judge leaves delivery unchanged. Whether
-this fixes the two cells is a measured question: see docs/BENCHMARK.md, follow-up to
-run 2.
+this fixes the two cells is a measured question: both cells passed in the follow-up (n=3, see
+docs/BENCHMARK.md), with the first-session race unmeasured.
 
 ### Local UI (validate first)
 A command, not a daemon: `reverie ui` serves a localhost page until Ctrl-C
