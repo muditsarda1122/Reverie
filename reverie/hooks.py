@@ -76,6 +76,7 @@ def _memory_blocks(info, print_fn) -> None:
         text = deliver.startup_text(info.repo_path)
         if text:
             print_fn(text)
+        _spawn_context_check(info.repo_path)
         conn = deliver.open_db()
         if conn is None:
             return
@@ -120,6 +121,47 @@ def _spawn_stale_check(conn, key: str, root: str) -> None:
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
     except OSError:
+        pass
+
+
+def _spawn_context_check(root: str) -> None:
+    """Team documents changed, or commits landed, since the judge last ran: run
+    `reverie context check --if-changed` in a detached process. The hook only reads
+    files and compares a hash; it never calls a model, never waits, and any failure
+    leaves the session start exactly as it was."""
+    import os
+    import subprocess
+    import time
+
+    from . import context, launch, spool, staleness
+    if os.environ.get("REVERIE_NO_BACKGROUND"):
+        return
+    try:
+        if not context.documents(root):
+            return
+        state = context.load_state()
+        same_docs = (state.get("doc_sig") or {}).get(root) == context.doc_signature(root)
+        same_head = (state.get("stale_commit") or {}).get(root) == staleness.head(root)
+        stamp = spool.repo_dir(root) / "context.stamp"
+        daily = not stamp.exists() or time.time() - stamp.stat().st_mtime >= MERGE_EVERY_SECS
+        if same_docs and same_head and not daily:
+            return
+        lock = spool.repo_dir(root) / "context.lock"
+        if lock.exists() and time.time() - lock.stat().st_mtime < 600:
+            return
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(str(time.time()))
+        tail = ["context", "check", "--repo", root]
+        if not daily:
+            tail.insert(2, "--if-changed")
+        else:
+            stamp.write_text(str(time.time()))      # the daily job: a full recheck
+        command, args = launch.reverie_command(tail)
+        subprocess.Popen(f"{command} {' '.join(args)}" if not args else [command, *args],
+                         shell=not args, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except Exception:
         pass
 
 

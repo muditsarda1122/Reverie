@@ -111,6 +111,18 @@ def _cmd_rules(args) -> int:
     return 0
 
 
+def _context_detect(root: str) -> None:
+    """After a document changed: judge it now (best effort, this is a command, not a
+    hook). A missing or failing judge changes nothing and prints nothing."""
+    import os
+    if os.environ.get("REVERIE_NO_BACKGROUND"):
+        return
+    from . import context_check
+    res = context_check.auto_check(root)
+    if res and res.get("conflicts"):
+        print(f"{res['conflicts']} conflict(s) between scopes: `reverie context list`.")
+
+
 def _cmd_context(args) -> int:
     from . import context, spool
     root = spool.repo_root(args.repo or ".")
@@ -132,6 +144,7 @@ def _cmd_context(args) -> int:
                   f"an owner runs `reverie context accept <name>`.")
         else:
             print(f"Added to {added.path}")
+            _context_detect(root)
         return 0
     if args.action == "proposals":
         found = context.proposals(root)
@@ -148,9 +161,13 @@ def _cmd_context(args) -> int:
             print(str(exc), file=sys.stderr)
             return 2
         print(f"Accepted into {doc}")
+        _context_detect(root)
         return 0
     if args.action == "check":
         from . import context_check
+        if args.if_changed:                    # the detached worker: quiet, skips if unchanged
+            context_check.auto_check(root)
+            return 0
         cfg, judge = context_check._cfg_judge()
         conflicts = context_check.find_conflicts(root, judge)
         flags = context_check.check_stale(root, judge, since=args.since,
@@ -487,6 +504,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="check: recheck commits since this revision (default: last check)")
     p.add_argument("--doc", default=None,
                    help="document file name, without .md (add; default rules or guidance)")
+    p.add_argument("--if-changed", action="store_true", dest="if_changed",
+                   help="check: quiet; judge only if a document or the code changed since the "
+                        "last run (what the detached session-start worker runs)")
     p.add_argument("--repo", default=None,
                    help="repo path (default: current directory)")
     sub.add_parser("capture-turn", help="capture the completed exchange "
@@ -629,6 +649,8 @@ def main(argv: list[str] | None = None) -> int:
         for gone, keep in rep.merged:
             print(f"merged [{gone[:8]}] into [{keep[:8]}]")
         print(f"{len(rep.merged)} near-duplicate item(s) merged.")
+        from . import context_check
+        context_check.auto_check(root, force=True)     # team documents: same daily job
         return 0
     if args.command == "stale":
         return _cmd_stale(args)

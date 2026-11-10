@@ -294,6 +294,27 @@ def documents(root: str) -> list[tuple[str, str, Path]]:
     return docs
 
 
+def doc_signature(root: str) -> str:
+    """A hash of every applicable document's path and content: changes exactly when
+    a document is added, removed or edited (the key for "run the judge again")."""
+    h = hashlib.sha256()
+    for layer, name, path in documents(root):
+        h.update(f"{layer}|{name}|{path}\n".encode())
+        h.update((_read(path) or "").encode("utf-8", "replace"))
+    return h.hexdigest()[:16]
+
+
+CONTRADICTION_HINT = "If two rules above seem to contradict, ask before acting."
+
+
+def contradiction_hint(res: "Resolved") -> str:
+    """A MITIGATION, not detection: when more than one org or team source applies,
+    one fixed line nudging the agent to ask. It says nothing about whether a
+    conflict exists; detection is ``context_check.find_conflicts``."""
+    scopes = {(i.layer, i.scope) for i in res.items if i.layer in ("org", "team")}
+    return CONTRADICTION_HINT if len(scopes) > 1 else ""
+
+
 def load_items(root: str) -> list[CtxItem]:
     names = repo_names(root)
     items: list[CtxItem] = []
@@ -572,6 +593,9 @@ def render(root: str, *, budget: int = 3600, rule_chars: int = 300) -> str:
     if cl:
         lines.append("Conflicts between scopes (never silently dropped):")
         lines += cl
+    hint = contradiction_hint(res)
+    if hint:
+        lines.append(hint)
     outdated = [i for i in res.items if i.id in res.stale]
     if outdated:
         lines.append("Possibly outdated team context (a later commit may contradict it; verify):")

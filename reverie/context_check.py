@@ -111,3 +111,50 @@ def check_stale(root: str, judge: Callable[[str], str], *, diff_chars: int = 600
     marks[root] = head
     context.save_state(state)
     return flags
+
+
+def auto_check(root: str, judge: Callable[[str], str] | None = None, *,
+               diff_chars: int | None = None, force: bool = False) -> dict | None:
+    """Detection, run where a model call is allowed (``context add``/``accept``, the
+    detached session-start worker, the daily merge job; never a hook). Conflicts are
+    judged only when the documents changed since the last run (keyed by
+    ``context.doc_signature``); staleness only on commits since the last check. A
+    failing or missing judge is swallowed: nothing is recorded as checked, so the
+    next run tries again. Returns a summary or None when nothing needed doing."""
+    try:
+        state = context.load_state()
+        sig = context.doc_signature(root)
+        sigs: dict[str, str] = state.setdefault("doc_sig", {})
+        new_docs = force or sigs.get(root) != sig
+        new_commits = staleness.head(root) != (state.get("stale_commit") or {}).get(root)
+        if not (new_docs or new_commits):
+            return None
+        errors = 0
+        if judge is None:
+            cfg, judge = _cfg_judge()
+            diff_chars = diff_chars or int(cfg.stale.diff_chars)
+
+        def guarded(prompt: str) -> str:
+            nonlocal errors
+            try:
+                return judge(prompt)          # type: ignore[misc]
+            except Exception:
+                errors += 1
+                raise
+
+        out: dict = {"conflicts": None, "stale": None}
+        old_mark = (state.get("stale_commit") or {}).get(root)
+        if new_docs:
+            out["conflicts"] = len(find_conflicts(root, guarded, state=state))
+        if new_commits:
+            out["stale"] = len(check_stale(root, guarded, diff_chars=diff_chars or 6000,
+                                           state=state))
+        if errors == 0:
+            state.setdefault("doc_sig", {})[root] = sig
+        elif old_mark is not None:
+            state["stale_commit"][root] = old_mark   # a failed judge must not skip commits
+        context.save_state(state)
+        out["judge_errors"] = errors
+        return out
+    except Exception:
+        return None
