@@ -265,7 +265,7 @@ def memory_page(root: str, page: int = 1) -> str:
                + (f'<a href="/memory?page={page - 1}">previous</a> ' if page > 1 else "")
                + (f'<a href="/memory?page={page + 1}">next</a>' if page < pages else "") + "</p>")
     body = (f"<p>{len(mem)} item(s). Open one with <code>reverie show &lt;id&gt;</code>.</p>{nav}"
-            "<table><tr><th>Kind</th><th>Text</th><th>Source</th><th>Agents followed it</th>"
+            "<table><tr><th>Kind</th><th>Text</th><th>Source</th><th>How agents used it</th>"
             f"<th>Flags</th><th>Id</th></tr>{''.join(rows)}</table>{nav}")
     return layout("Memory", body, "/memory")
 
