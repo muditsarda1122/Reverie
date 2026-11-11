@@ -460,3 +460,23 @@ def test_no_cut_note_when_every_rule_fits(env, serve, monkeypatch):
     s = serve(repo)
     assert "cut by the start limit" not in req(s, "/project")[1].lower()
     assert "cut by the start limit" not in req(s, "/start")[1]
+
+
+def test_rules_tab_badge_equals_rules_in_force(env, serve, monkeypatch):
+    """One function counts the rules: the Rules tab badge, Overview and the Projects card cannot differ."""
+    _, repo = env
+    (repo / ".reverie" / "context").mkdir(parents=True)
+    (repo / ".reverie" / "context" / "rules.md").write_text("## Rules\n- Money is integer cents\n")
+    (repo / ".reverie" / "rules.md").write_text("# Reverie rules\n- Squash merge only\n- Tag every release\n")
+    conn = _brain(repo, monkeypatch)
+    items.add(conn, text="Always paginate list endpoints", kind="rule", source="user_said",
+              repo_key=deliver.repo_key(str(repo)))
+    conn.close()
+    s = serve(repo)
+    over = req(s, "/project")[1]
+    n = int(re.search(r"<b>(\d+)</b>Rules in force", over).group(1))
+    assert n == 4                                    # 1 team + 2 rules.md + 1 remembered
+    for page in ("/project", "/context", "/memory", "/start", "/proposals"):   # Connect and Add show no badges at all
+        badge = re.search(r'href="/context[^"]*"[^>]*>.*?Rules<span class="n">(\d+)</span>', req(s, page)[1], re.S)
+        assert badge and int(badge.group(1)) == n, page
+    assert f"{n} rules in force" in req(s, "/")[1]

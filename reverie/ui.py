@@ -354,10 +354,6 @@ def rules_in_force(d: dict) -> tuple[int, int]:
     return given, total - given
 
 
-def _in_force(d: dict) -> int:
-    return rules_in_force(d)[0]
-
-
 def _attention(d: dict) -> int:
     return len(d["unresolved"]) + len(d["stale_team"]) + len(d["stale_mem"]) + len(d["proposals"])
 
@@ -450,7 +446,7 @@ def frame(proj: dict, plist: list[dict], d: dict | None, tab: str, body: str, *,
     d = d or {}
     n_att = _attention(d) if d else 0
     counts = {"/project": (n_att, True), "/proposals": (len(d.get("proposals", [])), True),
-              "/context": (len(d.get("team_rules", [])), False), "/memory": (len(d.get("mem", [])), False)}
+              "/context": (rules_in_force(d)[0] if d else 0, False), "/memory": (len(d.get("mem", [])), False)}
     tabs = ""
     for path, label, ico in TABS:
         n, hot = counts.get(path, (0, False))
