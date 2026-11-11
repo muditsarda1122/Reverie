@@ -324,3 +324,27 @@ def test_add_page_personal_rule_command_has_user_flag(env, serve):
     body = req(serve(repo), "/add")[1]
     assert 'reverie rules add --user "Money is integer cents"' in body
     assert 'reverie rules add "' not in body
+
+
+def test_repo_rules_file_is_shown_labelled_and_counted(env, serve):
+    """<repo>/.reverie/rules.md reaches agents as "This repo's rules (team)"; the page must show and count it."""
+    _, repo = env
+    rules.add("Money is integer cents", level="repo", cwd=str(repo))
+    rules.add("Prefer small PRs", level="repo", cwd=str(repo))
+    s = serve(repo)
+    ctx = req(s, "/context")[1]
+    assert "Shared rules file: no owners, no review" in ctx
+    assert "Money is integer cents" in ctx and "Prefer small PRs" in ctx
+    assert "No team context applies here" not in ctx            # not the empty state any more
+    assert re.search(r"<b>2</b>Rules in force", req(s, "/project")[1])
+    assert "2 rules in force" in req(s, "/")[1]
+    assert "This repo's rules (team)" in html.unescape(req(s, "/start")[1])   # same bullets, as delivered
+
+
+def test_repo_rules_file_sits_beside_team_context(env, serve):
+    tmp_path, repo = env
+    _seed(tmp_path, repo)
+    rules.add("Repo file rule", level="repo", cwd=str(repo))
+    body = req(serve(repo), "/context")[1]
+    assert "Shared rules file: no owners, no review" in body and "Repo file rule" in body
+    assert "Always squash merge" in body                          # the team table is still there

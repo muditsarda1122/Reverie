@@ -333,6 +333,11 @@ def collect(root: str) -> dict:
     }
 
 
+def _in_force(d: dict) -> int:
+    """Rules agents are given: team rules, personal and repo rules.md bullets, remembered rules."""
+    return len(d["team_rules"]) + len(d["personal"]) + len(d["repo_rules"]) + len(d["mem_rules"])
+
+
 def _attention(d: dict) -> int:
     return len(d["unresolved"]) + len(d["stale_team"]) + len(d["stale_mem"]) + len(d["proposals"])
 
@@ -497,7 +502,7 @@ def projects_page(root: str, query=None) -> str:
             chips.append(f'<span class="chip warn">{out} outdated</span>')
         if d["proposals"]:
             chips.append(f'<span class="chip acc">{len(d["proposals"])} proposal{"s" if len(d["proposals"]) != 1 else ""}</span>')
-        in_force = len(d["team_rules"]) + len(d["personal"]) + len(d["mem_rules"])
+        in_force = _in_force(d)
         foot = (f'<hr class=rule><div class=meta><span>{in_force} rules in force</span><span>·</span>'
                 f'<span>{len(d["mem"])} remembered</span></div>')
         card = (f'<a class=card href="{link}">{head}'
@@ -514,7 +519,7 @@ def projects_page(root: str, query=None) -> str:
 
 def overview(root: str, proj: dict, plist: list[dict]) -> str:
     d = collect(root)
-    in_force = len(d["team_rules"]) + len(d["personal"]) + len(d["mem_rules"])
+    in_force = _in_force(d)
     outdated = len(d["stale_team"]) + len(d["stale_mem"])
     statline = "".join(f"<span><b>{n}</b>{esc(label)}</span>" for label, n in (
         ("Rules in force", in_force), ("Conflicts to settle", len(d["unresolved"])),
@@ -591,8 +596,14 @@ def _chips(marks: list[str]) -> str:
 def context_page(root: str, proj: dict, plist: list[dict]) -> str:
     d = collect(root)
     res = d["res"]
+    shared = _lane("Shared rules file: no owners, no review", "",
+                   [f'<article class=card><p class=q style="margin:0">{esc(b)}</p></article>'
+                    for b in d["repo_rules"]]) if d["repo_rules"] else ""
+    shared_note = ('<p class=hint>These bullets come from <code>.reverie/rules.md</code>: a file shared through git '
+                   'with no owners and no review. Agents are told them as this repo\'s rules.</p>'
+                   f'<div class=board style="grid-auto-columns:minmax(272px,420px)">{shared}</div>') if shared else ""
     if not res.items:
-        return frame(proj, plist, d, "/context", _empty(
+        return frame(proj, plist, d, "/context", shared_note or _empty(
             "users", "No team context applies here",
             "Put markdown in <code>.reverie/context/</code> (see <code>reverie context</code>) "
             "to share rules with a team."))
@@ -618,6 +629,7 @@ def context_page(root: str, proj: dict, plist: list[dict]) -> str:
     body += (f'<p class=hint>Hint shown to agents: {esc(hint)}</p>' if hint else "")
     body += ('<div class="panel scroll"><table><thead><tr><th>Applies to</th><th>Kind</th><th>Rule</th>'
              f'<th>Marks</th><th>Id</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>')
+    body += shared_note
     return frame(proj, plist, d, "/context", body)
 
 
