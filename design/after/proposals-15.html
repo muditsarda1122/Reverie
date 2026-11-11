@@ -108,9 +108,18 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .entry { padding-block: var(--space-lg); border-bottom: var(--rule-hair) solid var(--color-rule); }
 .rule { font-family: var(--font-serif); font-size: var(--text-lg); font-weight: 400; line-height: 1.4; color: var(--color-ink); }
 .rule code { font-size: 0.82em; }
+.items { margin: 0; padding: 0; list-style: none; }
+.side + .side { margin-top: var(--space-md); }
+.side .meta { margin-top: var(--space-2xs); }
+.label { color: var(--color-ink); font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-2xs); }
+.go { margin-top: var(--space-sm); }
+.cmdline { margin-top: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
+.todo { margin-top: var(--space-sm); font-size: var(--text-sm); color: var(--color-ink-2); }
+.cut { margin-top: var(--space-xs); color: var(--color-ink-2); }
 .why { margin-top: var(--space-xs); }
 .meta { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-lg); margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); }
 .meta code { color: var(--color-ink-2); }
+.meta a { font-weight: 600; }
 .act { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-xs) var(--space-lg); margin-top: var(--space-md); }
 .act form { margin: 0; }
 .reject summary, .cmd summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; min-height: 2.5rem; font-weight: 600; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
@@ -152,7 +161,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 <form class="find" action="/search" method="get" role="search"><input type="hidden" name="p" value="4e1e91cd"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
 </div></header>
 <div class="page">
-<div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=4e1e91cd">Overview<span class="n">14</span></a><a href="/context?p=4e1e91cd">Rules</a><a href="/memory?p=4e1e91cd">Memory</a><a href="/start?p=4e1e91cd">What agents are told</a><a href="/proposals?p=4e1e91cd" aria-current="page">Proposals<span class="n">11</span></a><a href="/connect?p=4e1e91cd">Connect</a></nav><div class="acts"><a href="/connect?p=4e1e91cd">Connect an agent</a><a href="/add?p=4e1e91cd">Add a rule</a></div></div>
+<div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=4e1e91cd">Overview<span class="n">13</span></a><a href="/context?p=4e1e91cd">Rules</a><a href="/memory?p=4e1e91cd">Memory</a><a href="/start?p=4e1e91cd">What agents are told</a><a href="/proposals?p=4e1e91cd" aria-current="page">Proposals<span class="n">11</span></a><a href="/connect?p=4e1e91cd">Connect</a></nav><div class="acts"><a href="/connect?p=4e1e91cd">Connect an agent</a><a href="/add?p=4e1e91cd">Add a rule</a></div></div>
 <main class="main">
 <h1 class="visually-hidden">Proposals for payments-api</h1>
 <p class="testnote">Layout test: 15 proposals waiting. The first three are the seed; the other twelve use invented rule text and are not product data.</p><p class="who">Acting as <span title="mudit@payments.example">Mudit Sarda</span>, from your git identity.</p><p class="tally">11 waiting on you, 4 waiting on others.</p><section class="group" aria-labelledby="h-you"><h2 id="h-you">Waiting on you</h2><article class="entry" id="p-b9b43260e2"><h3 class="rule">Ledger reconciliation jobs must be idempotent per <code>batch_id</code></h3><p class="why">Why: the nightly job re-ran twice last week and posted duplicates</p><p class="meta"><span title="priya@payments.example">Priya Nair</span><span>2026-11-12</span><span title=".reverie/context/paths-services-ledger.md"><code>paths-services-ledger.md</code></span><span>only under <code>services/ledger/**</code></span></p><div class="act"><form method="post" action="/do/accept"><input type="hidden" name="token" value="B7QFUmwMJf_-KGzCzyaLWeSOsVgFJSzsyN_CXIj9G5E"><input type="hidden" name="p" value="4e1e91cd"><input type="hidden" name="slug" value="ledger-reconciliation-jobs-must-be-idemp-67b4cd"><button class="btn" type="submit">Accept</button></form><details class="reject"><summary>Reject</summary><form method="post" action="/do/reject"><input type="hidden" name="token" value="B7QFUmwMJf_-KGzCzyaLWeSOsVgFJSzsyN_CXIj9G5E"><input type="hidden" name="p" value="4e1e91cd"><input type="hidden" name="slug" value="ledger-reconciliation-jobs-must-be-idemp-67b4cd"><label>Reason for turning it down (the proposer will read it)<input type="text" name="why" maxlength="300" required></label><button class="text-btn" type="submit">Turn down with this reason</button></form></details><details class="cmd"><summary>As commands</summary><pre>reverie context accept ledger-reconciliation-jobs-must-be-idemp-67b4cd

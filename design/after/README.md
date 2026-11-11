@@ -13,6 +13,20 @@ Static pages built by `python3 design/tools/build_after.py` from the seed in `de
 
 `screenshots/proposals-opened-desktop-*.png` shows the Reject reason field, the commands and Turned down open.
 
+## Overview (built from `design.md`)
+| File | Replaces | Identity | Shows |
+|---|---|---|---|
+| `overview.html` | `design/before/overview.html` | mudit | 4 waiting on you (2 proposals, the conflict, the ledger rule that may be outdated), 2 on others (pip-audit, the webhook rule: owner Priya) |
+| `overview-arjun.html` | `overview.html` (no capture of its own) | arjun | 1 on him (the conflict: no CODEOWNERS entry covers either document); 5 on others |
+| `overview-capped.html` | `overview-capped.html` | mudit | As mudit, plus "6 rules are cut by the start limit. See what agents are told." |
+| `empty-overview.html` | `empty-overview.html` | mudit, notifications-service | "Nothing needs you." |
+
+- **Waiting on you** (one definition, also the Overview tab count): proposals you can decide, plus unresolved conflicts and possibly-outdated rules in documents you own or that no CODEOWNERS entry covers. Everything else is listed after under "Waiting on others", with who it waits on. Order inside each group: proposals, conflicts, possibly-outdated rules.
+- Each item opens with a label line (Proposal, Conflict, Possibly outdated); rule text is plain, never a link. One text link per item: "Decide" or "View" (to `/proposals?p=…#p-…`, the old links), "Open rule" for a possibly-outdated rule and under each side of a conflict. A conflict shows both rules, where each comes from (team folder and document), that agents are told to ask, who can settle it, and its `reverie context resolve` command quietly. A possibly-outdated rule shows the rule, the reason and the commit (short hash and message) that changed the code.
+- **New route for the port:** `/rule?p=<project>&id=<rule id>`, a read-only page for one rule (designed next). Rules link to it from Overview.
+- No stat strip, no "Rules in force" number on Overview. The cut-by-the-start-limit line appears only when the count is above zero.
+- Data used that the old Overview did not print: the commit message beside the hash (`context_check.check_stale` always writes `message`, the commit subject, but it is empty for a commit with no subject, so the page prints the message only when present), and the folder of each conflicting rule (`CtxItem.label`).
+
 ## Rules this screen follows (from the review)
 - One quiet metadata line under the why, at every width: name, date, document name, "only under <paths>". The full path (`.reverie/context/<name>`) is the document's title attribute; the proposer's email is the name's title attribute. Emails are printed only in "Waiting on an owner of ...", because CODEOWNERS only gives emails.
 - No repo path on this page (the switcher names the repo).

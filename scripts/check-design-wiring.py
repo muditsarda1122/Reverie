@@ -11,6 +11,7 @@ missing makes the exit status 1.
 """
 from __future__ import annotations
 
+import re
 import sys
 from collections import Counter
 from html.parser import HTMLParser
@@ -38,7 +39,7 @@ class Scan(HTMLParser):
         if a.get("id"):
             self.ids.add(a["id"])
         if tag == "a" and a.get("href"):
-            self.links[a["href"]] += 1
+            self.links[re.sub(r"p=[0-9a-f]{8}", "p=*", a["href"])] += 1   # project ids differ between seeds
         if tag == "article":
             self._in_article, self._article_text, self._art_forms = True, "", []
         if tag == "form":
@@ -73,8 +74,11 @@ def form_key(f: dict) -> tuple:
     return (f["action"], f["method"], f["slug"], tuple(sorted(set(n for n, _ in f["fields"]))))
 
 
+ALIASES = {"overview-arjun.html": "overview.html"}   # a page with no capture of its own, compared with the same screen as mudit
+
+
 def compare(name: str) -> int:
-    b, a = scan(BEFORE / name), scan(AFTER / name)
+    b, a = scan(BEFORE / ALIASES.get(name, name)), scan(AFTER / name)
     bad = 0
     print(f"{name}")
     miss_links = b.links - a.links
@@ -105,7 +109,7 @@ def compare(name: str) -> int:
 
 
 def main() -> int:
-    names = sys.argv[1:] or sorted(p.name for p in AFTER.glob("*.html") if (BEFORE / p.name).exists())
+    names = sys.argv[1:] or sorted(p.name for p in AFTER.glob("*.html") if (BEFORE / ALIASES.get(p.name, p.name)).exists())
     bad = sum(compare(n) for n in names)
     print("wiring: " + ("every link, form, field and id is kept (expected drops listed)" if not bad else f"{bad} item(s) missing"))
     return 1 if bad else 0

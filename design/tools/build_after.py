@@ -28,8 +28,26 @@ DOCS = {   # document name -> owners (CODEOWNERS entries, which are emails here)
     "security.md": ["priya@payments.example"],
     "paths-services-ledger.md": ["mudit@payments.example"],
 }
-# From the seed: the unresolved conflict and the two possibly-outdated rules wait on everyone.
-OTHER_ATTENTION = 1 + 2
+# From the seed (design/before/README.md): the unresolved http-retries conflict between two sibling team folders
+# (no CODEOWNERS entry covers either document) and the two possibly-outdated rules, whose commits are the seed's own.
+CONFLICTS = [dict(
+    key="http-retries", owners=[],
+    rules=[dict(id="e3d2757f37", folder="orgdocs/platform", doc="rules.md",
+                text="All outbound HTTP calls retry up to 3 times with exponential backoff"),
+           dict(id="887e6b40e1", folder="orgdocs/payments", doc="rules.md",
+                text="Never retry the card processor's `charge` endpoint; use the idempotency key and poll status instead")])]
+OUTDATED = [
+    dict(id="9c55b68de3", doc="rules.md", commit="d671085a88a14641fe0dd258cf025f52746c25df",
+         message="ledger: route writes through LedgerWriter",
+         text="Use `app/clients/ledger.py` for all ledger writes; do not call the ledger service directly from handlers, "
+              "because it owns retry and outbox semantics.",
+         reason="handlers now call LedgerWriter directly; ledger.py no longer wraps retries"),
+    dict(id="38b000cf40", doc="security.md", commit="e65f06b67b1bfd4944ea5d5842744b7d9cdd4a68",
+         message="webhooks: rename verify_signature to verify_webhook",
+         text="Webhook payloads from the card processor must be verified with `verify_signature()` in "
+              "`app/webhooks/verify.py` before any parsing.",
+         reason="verify_signature no longer exists; verification moved to verify_webhook with a timestamp tolerance"),
+]
 
 WAITING = [
     dict(slug="ledger-reconciliation-jobs-must-be-idemp-67b4cd", id="p-b9b43260e2",
@@ -91,6 +109,11 @@ def name(key: str) -> str:
 
 def mine(p: dict, me: str) -> bool:
     return PEOPLE[me][1] in DOCS[p["doc"]]
+
+
+def can_settle(owners: list[str], me: str) -> bool:
+    """A document nobody owns (no CODEOWNERS entry) can be settled by anyone."""
+    return not owners or PEOPLE[me][1] in owners
 
 
 # --------------------------------------------------------------------------------------------------
@@ -196,9 +219,18 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .entry { padding-block: var(--space-lg); border-bottom: var(--rule-hair) solid var(--color-rule); }
 .rule { font-family: var(--font-serif); font-size: var(--text-lg); font-weight: 400; line-height: 1.4; color: var(--color-ink); }
 .rule code { font-size: 0.82em; }
+.items { margin: 0; padding: 0; list-style: none; }
+.side + .side { margin-top: var(--space-md); }
+.side .meta { margin-top: var(--space-2xs); }
+.label { color: var(--color-ink); font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-2xs); }
+.go { margin-top: var(--space-sm); }
+.cmdline { margin-top: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
+.todo { margin-top: var(--space-sm); font-size: var(--text-sm); color: var(--color-ink-2); }
+.cut { margin-top: var(--space-xs); color: var(--color-ink-2); }
 .why { margin-top: var(--space-xs); }
 .meta { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-lg); margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); }
 .meta code { color: var(--color-ink-2); }
+.meta a { font-weight: 600; }
 .act { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-xs) var(--space-lg); margin-top: var(--space-md); }
 .act form { margin: 0; }
 .reject summary, .cmd summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; min-height: 2.5rem; font-weight: 600; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
@@ -233,18 +265,19 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 """
 
 
-def tabs(pid: str, counts: dict[str, int]) -> str:
+def tabs(pid: str, counts: dict[str, int], active: str = "/proposals") -> str:
     items = [("/project", "Overview"), ("/context", "Rules"), ("/memory", "Memory"),
              ("/start", "What agents are told"), ("/proposals", "Proposals"), ("/connect", "Connect")]
     out = []
     for path, label in items:
-        cur = ' aria-current="page"' if path == "/proposals" else ""
+        cur = ' aria-current="page"' if path == active else ""
         n = counts.get(path)
         out.append(f'<a href="{path}?p={pid}"{cur}>{label}' + (f'<span class="n">{n}</span>' if n else "") + "</a>")
     return '<nav class="tabs" aria-label="Project">' + "".join(out) + "</nav>"
 
 
-def shell(*, title: str, pid: str, repo: str, counts: dict, body: str, desc: str) -> str:
+def shell(*, title: str, pid: str, repo: str, counts: dict, body: str, desc: str, active: str = "/proposals",
+          h1: str = "Proposals") -> str:
     projects = [(API, "payments-api"), (NOTIF, "notifications-service"), (LEGACY, "legacy-billing")]
     menu = "".join(
         f'<li><a href="/project?p={p}"' + (' aria-current="page"' if p == pid else "") + f">{n}</a></li>"
@@ -267,9 +300,9 @@ def shell(*, title: str, pid: str, repo: str, counts: dict, body: str, desc: str
 <form class="find" action="/search" method="get" role="search"><input type="hidden" name="p" value="{pid}"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
 </div></header>
 <div class="page">
-<div class="tabrow">{tabs(pid, counts)}<div class="acts"><a href="/connect?p={pid}">Connect an agent</a><a href="/add?p={pid}">Add a rule</a></div></div>
+<div class="tabrow">{tabs(pid, counts, active)}<div class="acts"><a href="/connect?p={pid}">Connect an agent</a><a href="/add?p={pid}">Add a rule</a></div></div>
 <main class="main">
-<h1 class="visually-hidden">Proposals for {esc(repo)}</h1>
+<h1 class="visually-hidden">{esc(h1)} for {esc(repo)}</h1>
 {body}
 </main>
 </div>
@@ -350,10 +383,95 @@ def empty_body(pid: str) -> str:
 
 
 def counts_for(me: str, waiting: list[dict]) -> dict:
-    """Only what waits on the viewer, and nothing at zero: Overview = conflicts + outdated rules + proposals
-    the viewer can decide; Proposals = the proposals the viewer can decide. No counts on Rules or Memory."""
-    n = sum(1 for p in waiting if mine(p, me))
-    return {"/project": OTHER_ATTENTION + n, "/proposals": n}
+    """Only what waits on the viewer, and nothing at zero. Overview = proposals you can decide + unresolved conflicts and
+    possibly-outdated rules in documents you own or that no CODEOWNERS entry covers; Proposals = the proposals you can
+    decide. No counts on Rules or Memory."""
+    props = sum(1 for p in waiting if mine(p, me))
+    return {"/project": props + sum(1 for c in CONFLICTS if conflict_mine(c, me))
+            + sum(1 for o in OUTDATED if can_settle(DOCS[o["doc"]], me)), "/proposals": props}
+
+
+def conflict_mine(c: dict, me: str) -> bool:
+    return can_settle(c["owners"], me)
+
+
+# ---- Overview ------------------------------------------------------------------------------------------------
+def _doc(doc: str) -> str:
+    return f'<span title="{esc(".reverie/context/" + doc)}"><code>{esc(doc)}</code></span>'
+
+
+def prop_item(p: dict, me: str, pid: str) -> str:
+    meta = [name(p["by"]), f'<span>{p["date"]}</span>', _doc(p["doc"])]
+    if p["paths"]:
+        meta.append(f'<span>only under <code>{esc(p["paths"])}</code></span>')
+    why = f'<p class="why">Why: {rule_html(p["why"])}</p>' if p.get("why") else ""
+    href = f'/proposals?p={pid}#{p["id"]}'
+    if mine(p, me):
+        tail = f'<p class="go"><a href="{href}">Decide</a></p>'
+    else:
+        tail = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(p["doc"])}</code>: '
+                f'{esc(", ".join(DOCS[p["doc"]]))}.</p><p class="go"><a href="{href}">View</a></p>')
+    return (f'<li><article class="entry"><p class="label">Proposal</p><h3 class="rule">{rule_html(p["text"])}</h3>'
+            f'{why}<p class="meta">{"".join(meta)}</p>{tail}</article></li>')
+
+
+def conflict_item(c: dict, me: str, pid: str) -> str:
+    sides = "".join(
+        f'<div class="side"><p class="rule">{rule_html(r["text"])}</p>'
+        f'<p class="meta"><span>Team folder {esc(r["folder"])}</span>{_doc(r["doc"])}'
+        f'<a href="/rule?p={pid}&amp;id={r["id"]}">Open rule</a></p></div>' for r in c["rules"])
+    if c["owners"]:
+        who = ("You own one of the documents, so you can settle it." if conflict_mine(c, me)
+               else f'Waiting on an owner: {esc(", ".join(c["owners"]))}.')
+    else:
+        who = "No CODEOWNERS entry covers either document, so anyone can settle it."
+    return (f'<li><article class="entry"><p class="label">Conflict</p>{sides}'
+            f'<p class="why">Agents are told to ask before acting on either. {who}</p>'
+            f'<p class="cmdline"><code>reverie context resolve {esc(c["key"])} "your decision"</code></p></article></li>')
+
+
+def outdated_item(o: dict, me: str, pid: str) -> str:
+    # The commit message comes from the judge's stale entry; it can be empty, so then only the hash is shown.
+    msg = f' {esc(o["message"])}' if o.get("message") else ""
+    meta = [_doc(o["doc"]), f'<span>Commit <code>{esc(o["commit"][:7])}</code>{msg}</span>']
+    if can_settle(DOCS[o["doc"]], me):
+        tail = (f'<p class="todo">Check the code, then edit or remove the rule in '
+                f'<code>.reverie/context/{esc(o["doc"])}</code>.</p>')
+    else:
+        tail = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(o["doc"])}</code>: '
+                f'{esc(", ".join(DOCS[o["doc"]]))}.</p>')
+    return (f'<li><article class="entry"><p class="label">Possibly outdated</p><h3 class="rule">{rule_html(o["text"])}</h3>'
+            f'<p class="why">A later change to the code may contradict it: {esc(o["reason"])}.</p>'
+            f'<p class="meta">{"".join(meta)}</p>{tail}'
+            f'<p class="go"><a href="/rule?p={pid}&amp;id={o["id"]}">Open rule</a></p></article></li>')
+
+
+def overview_body(me: str, waiting: list[dict], conflicts: list[dict], outdated: list[dict], pid: str, cut: int = 0) -> str:
+    you = ([prop_item(p, me, pid) for p in waiting if mine(p, me)]
+           + [conflict_item(c, me, pid) for c in conflicts if conflict_mine(c, me)]
+           + [outdated_item(o, me, pid) for o in outdated if can_settle(DOCS[o["doc"]], me)])
+    others = ([prop_item(p, me, pid) for p in waiting if not mine(p, me)]
+              + [conflict_item(c, me, pid) for c in conflicts if not conflict_mine(c, me)]
+              + [outdated_item(o, me, pid) for o in outdated if not can_settle(DOCS[o["doc"]], me)])
+    if you and others:
+        tally = f"{len(you)} waiting on you, {len(others)} waiting on others."
+    elif you:
+        tally = f"{len(you)} waiting on you."
+    elif others:
+        tally = f"Nothing waiting on you. {len(others)} waiting on others."
+    else:
+        tally = "Nothing needs you."
+    parts = [f'<p class="who">Acting as {name(me)}, from your git identity.</p>', f'<p class="tally">{tally}</p>']
+    if cut:
+        parts.append(f'<p class="cut">{cut} {"rule is" if cut == 1 else "rules are"} cut by the start limit. '
+                     f'<a href="/start?p={pid}">See what agents are told.</a></p>')
+    if you:
+        parts.append('<section class="group" aria-labelledby="h-you"><h2 id="h-you">Waiting on you</h2>'
+                     f'<ol class="items">{"".join(you)}</ol></section>')
+    if others:
+        parts.append('<section class="group" aria-labelledby="h-others"><h2 id="h-others">Waiting on others</h2>'
+                     f'<ol class="items">{"".join(others)}</ol></section>')
+    return "".join(parts)
 
 
 def write(fname: str, html_text: str) -> None:
@@ -370,6 +488,15 @@ def main() -> None:
     # empty: notifications-service, as mudit (nothing there waits on anyone)
     write("empty-proposals.html", shell(title="Proposals for notifications-service, Reverie", pid=NOTIF,
                                         repo="notifications-service", counts={}, desc=desc, body=empty_body(NOTIF)))
+    # Overview: mudit, arjun, the capped variant (6 rules cut by the start limit), and an empty project
+    odesc = "What needs you in this project: proposals, conflicts and possibly outdated rules."
+    for me, fname, cut in (("mudit", "overview.html", 0), ("arjun", "overview-arjun.html", 0), ("mudit", "overview-capped.html", 6)):
+        write(fname, shell(title="Overview of payments-api, Reverie", pid=API, repo="payments-api", active="/project",
+                           h1="Overview", counts=counts_for(me, WAITING), desc=odesc,
+                           body=overview_body(me, WAITING, CONFLICTS, OUTDATED, API, cut)))
+    write("empty-overview.html", shell(title="Overview of notifications-service, Reverie", pid=NOTIF,
+                                       repo="notifications-service", active="/project", h1="Overview", counts={}, desc=odesc,
+                                       body=overview_body("mudit", [], [], [], NOTIF)))
     # extra 1: the page right after Mudit accepts "Prefer small PRs" (the one place the teal appears)
     accepted = next(p for p in WAITING if p["slug"].startswith("prefer-small-prs"))
     after = [p for p in WAITING if p is not accepted]
