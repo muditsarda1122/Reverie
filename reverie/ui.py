@@ -761,7 +761,7 @@ def add_page(root: str, proj: dict, plist: list[dict], st: State | None = None,
              '<p class=hint>The same as <code>reverie context add</code>. A rule that looks like a secret is refused '
              'and not kept.</p></article>'
              + way("A rule only you follow", "Stays on your machine and is delivered to your agents. "
-                   "Still a command.", 'reverie rules add "Money is integer cents"')
+                   "Still a command.", 'reverie rules add --user "Money is integer cents"')
              + way("Turn a rule you already use into a team proposal",
                    "Takes a rule from your own rules or memory and proposes it to the team. Still a command.",
                    'reverie context propose "Money is integer cents"'))

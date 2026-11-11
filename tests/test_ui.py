@@ -316,3 +316,11 @@ def test_memory_hint_says_this_machine_not_everyone(env, serve, monkeypatch):
     body = req(serve(repo), "/memory")[1]
     assert "1 item(s) remembered on this machine for this repo." in body
     assert "shared by everyone" not in body
+
+
+def test_add_page_personal_rule_command_has_user_flag(env, serve):
+    """Without --user, `reverie rules add` writes the git-shared <repo>/.reverie/rules.md."""
+    _, repo = env
+    body = req(serve(repo), "/add")[1]
+    assert 'reverie rules add --user "Money is integer cents"' in body
+    assert 'reverie rules add "' not in body
