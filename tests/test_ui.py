@@ -425,3 +425,38 @@ def test_connect_tab_of_a_disabled_project_shows_how_to_turn_it_on(env, serve, m
     assert "squash merge" not in body and "Prefer small PRs" not in body      # still shows no project data
     for page in ("/project", "/context", "/proposals", "/memory", "/start", "/add"):   # the rest stay "off"
         assert "Nothing is delivered to agents and nothing is shown here" in req(s, page)[1], page
+
+
+def test_rules_in_force_counts_only_what_the_start_limit_lets_through(env, serve, monkeypatch):
+    """The start block lists at most 15 user-wide and 30 repo rules; the rest are cut. The count must equal
+    what agents get, and the cut must be said next to it and on the start screen."""
+    _, repo = env
+    conn = _brain(repo, monkeypatch)
+    key = deliver.repo_key(str(repo))
+    for n in range(35):
+        items.add(conn, text=f"Repo rule number {n:02d} about thing {n}", kind="rule", source="user_said", repo_key=key)
+    for n in range(20):
+        items.add(conn, text=f"Wide preference {n:02d} about habit {n}", kind="preference", source="user_said",
+                  repo_key=None)
+    conn.close()
+    s = serve(repo)
+    block = deliver.startup_text(str(repo), log=False)
+    handed = len(re.findall(r"^- \[[0-9a-f]{8}\] (?:preference: )?(?:Repo rule|Wide preference)", block, re.M))
+    assert 0 < handed < 55                                    # the caps really cut something
+    cut = 55 - handed
+    over = req(s, "/project")[1]
+    assert re.search(rf"<b>{handed}</b>Rules in force", over)
+    assert re.search(rf"<b>{cut}</b>Cut by the start limit", over)
+    assert f"{handed} rules in force" in req(s, "/")[1] and f"{cut} cut by the start limit" in req(s, "/")[1]
+    assert f"{handed} rules in force · {cut} cut by the start limit" in req(s, "/start")[1]
+
+
+def test_no_cut_note_when_every_rule_fits(env, serve, monkeypatch):
+    _, repo = env
+    conn = _brain(repo, monkeypatch)
+    items.add(conn, text="Always paginate list endpoints", kind="rule", source="user_said",
+              repo_key=deliver.repo_key(str(repo)))
+    conn.close()
+    s = serve(repo)
+    assert "cut by the start limit" not in req(s, "/project")[1].lower()
+    assert "cut by the start limit" not in req(s, "/start")[1]

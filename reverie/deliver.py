@@ -227,27 +227,28 @@ def _rules_files_text(cwd: str) -> str:
     return "\n\n".join(out)
 
 
-def startup_text(cwd: str, *, log: bool = True) -> str:
+def startup_text(cwd: str, *, log: bool = True, mem: list[dict] | None = None) -> str:
     """Everything an agent should know at the start of a session, within
     the configured cap (``deliver.startup_chars``, default 8000): the user's rules, rules stated in earlier sessions
     (stale ones set apart), and the headline index of everything else.
     '' when disabled or empty. Never raises; read-only. ``log=False`` is for viewers (the
-    UI): looking at the block is not a delivery and must not enter the usage log."""
+    UI): looking at the block is not a delivery and must not enter the usage log. ``mem`` is
+    the viewer's already-loaded ``memory()`` result, to spare the (slow) collapse of a second load."""
     try:
         cap = startup_cap()
         root = spool.repo_root(cwd)
         files_text = _rules_files_text(cwd)
-        mem: list[dict] = []
+        loaded: list[dict] = []
         conn = open_db()
         if conn is not None:
             try:
                 key = repo_key(cwd)
                 if is_disabled(conn, key):
                     return ""
-                mem = memory(conn, key, root)
+                loaded = mem if mem is not None else memory(conn, key, root)
             finally:
                 conn.close()
-        mem = [m for m in mem if is_live(m, root)]
+        mem = [m for m in loaded if is_live(m, root)]
         from . import context as _ctx
         shared = _ctx.shared_rule_norms(root)
         if shared:                       # a rule already in the team document: show it once

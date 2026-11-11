@@ -337,12 +337,25 @@ def collect(root: str) -> dict:
         "stale_team": [i for i in res.items if i.id in res.stale],
         "proposals": _safe(lambda: context.proposals(root), []),
         "rejected": _safe(lambda: context.rejected(root), []),
+        "start": _safe(lambda: deliver.startup_text(root, log=False, mem=mem), ""),
     }
 
 
+def rules_in_force(d: dict) -> tuple[int, int]:
+    """(given, cut): rules agents actually receive in the start block, and rules that apply but were
+    left out of it by its line and size limits. A rule counts as given when its text is in the block."""
+    flat = " ".join(d["start"].split())
+    texts = ([i.text for i in d["team_rules"]] + list(d["personal"]) + list(d["repo_rules"]))
+    total = len(texts) + len(d["mem_rules"])
+    if not flat:
+        return total, 0                       # no block to compare with: nothing is known to be cut
+    given = sum(1 for t in texts if " ".join(t.split())[:60] in flat)
+    given += sum(1 for m in d["mem_rules"] if f"[{m['id'][:8]}]" in flat)
+    return given, total - given
+
+
 def _in_force(d: dict) -> int:
-    """Rules agents are given: team rules, personal and repo rules.md bullets, remembered rules."""
-    return len(d["team_rules"]) + len(d["personal"]) + len(d["repo_rules"]) + len(d["mem_rules"])
+    return rules_in_force(d)[0]
 
 
 def _attention(d: dict) -> int:
@@ -514,8 +527,9 @@ def projects_page(root: str, query=None) -> str:
             chips.append(f'<span class="chip warn">{out} outdated</span>')
         if d["proposals"]:
             chips.append(f'<span class="chip acc">{len(d["proposals"])} proposal{"s" if len(d["proposals"]) != 1 else ""}</span>')
-        in_force = _in_force(d)
-        foot = (f'<hr class=rule><div class=meta><span>{in_force} rules in force</span><span>·</span>'
+        in_force, cut = rules_in_force(d)
+        cut_note = f'<span>{cut} cut by the start limit</span><span>·</span>' if cut else ""
+        foot = (f'<hr class=rule><div class=meta><span>{in_force} rules in force</span><span>·</span>{cut_note}'
                 f'<span>{len(d["mem"])} remembered</span></div>')
         card = (f'<a class=card href="{link}">{head}'
                 + (f'<div class=marks style="margin-top:12px">{"".join(chips)}</div>' if chips else "")
@@ -531,10 +545,11 @@ def projects_page(root: str, query=None) -> str:
 
 def overview(root: str, proj: dict, plist: list[dict]) -> str:
     d = collect(root)
-    in_force = _in_force(d)
+    in_force, cut = rules_in_force(d)
     outdated = len(d["stale_team"]) + len(d["stale_mem"])
     statline = "".join(f"<span><b>{n}</b>{esc(label)}</span>" for label, n in (
-        ("Rules in force", in_force), ("Conflicts to settle", len(d["unresolved"])),
+        ("Rules in force", in_force), *((("Cut by the start limit", cut),) if cut else ()),
+        ("Conflicts to settle", len(d["unresolved"])),
         ("Possibly outdated", outdated), ("Proposals waiting", len(d["proposals"]))))
     conflicts, stale, props = [], [], []
     for c in d["unresolved"]:
@@ -590,12 +605,16 @@ def overview(root: str, proj: dict, plist: list[dict]) -> str:
 
 def start(root: str, proj: dict, plist: list[dict]) -> str:
     d = collect(root)
-    text = _safe(lambda: deliver.startup_text(root, log=False), "")
+    text = d["start"]
+    given, cut = rules_in_force(d)
+    cut_hint = (f'<p class=hint>{given} rules in force · {cut} cut by the start limit: they apply here but '
+                f'do not fit in what agents are handed. <code>reverie rules list</code> shows them all.</p>'
+                ) if cut else ""
     intro = ("<p class=hint>This is exactly what an agent is handed when a session starts in this repo. "
              "Viewing it here is not a delivery and is not counted as one.</p>")
     if text:
         body = (intro + f'<div class=panel><pre id=start>{esc(text, redacted=False)}</pre></div>'
-                f'<p class=hint>{len(text)} characters.</p>')
+                f'<p class=hint>{len(text)} characters.</p>' + cut_hint)
     else:
         body = intro + _empty("eye", "Nothing.", "No rules or memory apply here yet, so an agent starts with a clean slate.")
     return frame(proj, plist, d, "/start", body)
