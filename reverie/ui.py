@@ -877,6 +877,10 @@ def _banner(flash: dict | None) -> str:
     return f'<div class="flash {"ok" if flash["ok"] else "bad"}" role=status>{esc(flash["msg"])}</div>'
 
 
+CHECK_LATER = (" It has not been checked for conflicts yet: that happens at the next session start, "
+               "or now with `reverie context check`.")
+
+
 def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
     """Run one write through the CLI's functions and return where to redirect. Security checks
     (Host, Origin, token, size) are done by the handler before this is called."""
@@ -905,14 +909,15 @@ def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
                 if added.proposal:
                     return back(True, f"Written as a proposal ({added.path.name}). The owners "
                                       f"({', '.join(added.owners)}) review it; it is not in force yet.")
-                return back(True, f"Added to {added.path.name}. It applies from the next session.")
+                return back(True, f"Added to {added.path.name}. It applies from the next session." + CHECK_LATER)
             slug = form.get("slug", "")
             # exact name only: the CLI matches a prefix, and "" is a prefix of every proposal
             if slug not in {x["slug"] for x in context.proposals(target)}:
                 return back(False, "Refused: that proposal is not waiting any more.")
             if path == "/do/accept":
                 doc = context.accept(target, slug)
-                return back(True, f"Accepted into {doc.name}. The proposal is gone and the rule is in force.")
+                return back(True, f"Accepted into {doc.name}. The proposal is gone and the rule is in force."
+                                + CHECK_LATER)
             if redact.contains_secret(why):
                 return back(False, "Refused: the reason looks like it contains a secret, so nothing was "
                                    "changed. Remove the value and try again.")

@@ -469,3 +469,28 @@ def test_headers_forbid_framing_and_cross_origin_forms(env, serve):
     assert "<script" not in body.lower() and "cookie" not in {k.lower() for k in hdr}
     for m in re.findall(r'<form[^>]*method=post[^>]*>', body):
         assert re.search(r'action="/do/\w+"', m)
+
+
+NOTE = "It has not been checked for conflicts yet: that happens at the next session start, or now with `reverie context check`."
+
+
+def test_add_and_accept_say_the_conflict_check_has_not_run(env, serve):
+    tmp_path, repo = env
+    prop = _propose_as_dev(repo)
+    _owner(repo)
+    s = serve(repo)
+    page = _follow(s, _add(s, "Always squash merge"))
+    assert "Added to rules.md" in page and NOTE in page
+    tok, pid = _form(s, "/proposals")
+    page = _follow(s, _http(s, "POST", "/do/accept", {"token": tok, "p": pid, "slug": prop["slug"]}))
+    assert "Accepted into rules.md" in page and NOTE in page
+
+
+def test_no_conflict_note_when_nothing_is_in_force_or_the_write_is_refused(env, serve):
+    _, repo = env                                       # dev is not an owner: a proposal, not in force
+    s = serve(repo)
+    page = _follow(s, _add(s, "Prefer small PRs"))
+    assert "Written as a proposal" in page and "checked for conflicts" not in page
+    tok, pid = _form(s, "/proposals")
+    page = _follow(s, _http(s, "POST", "/do/reject", {"token": tok, "p": pid, "slug": "nope", "why": "x"}))
+    assert "Refused" in page and "checked for conflicts" not in page
