@@ -392,3 +392,20 @@ def test_overview_proposal_links_to_its_card_on_proposals(env, serve):
     for _, frag in links:
         assert f'<article class=card id="{frag}">' in page      # every link lands on a card
     assert page.count('<article class=card id="p-') == 2
+
+
+def test_memory_lanes_use_human_names(env, serve, monkeypatch):
+    _, repo = env
+    conn = _brain(repo, monkeypatch)
+    key = deliver.repo_key(str(repo))
+    for kind, text in (("rule", "r1"), ("preference", "p1"), ("decision", "d1"),
+                       ("rejected_approach", "Do not cache fees"), ("environment", "Needs docker"),
+                       ("open_question", "Which queue?"), ("external_context", "Vendor API v2")):
+        items.add(conn, text=text, kind=kind, source="user_said", repo_key=key)
+    conn.close()
+    body = req(serve(repo), "/memory")[1]
+    lanes = re.findall(r"<section class=lane><h2>([^<]+)<", body)
+    assert lanes == ["Rules", "Preferences", "Decisions", "Environment", "External context",
+                     "Open questions", "Rejected approaches"]       # known first, the rest alphabetical
+    assert "Findings" not in body and "Rejected_Approach" not in body and "_" not in " ".join(lanes)
+    assert ui._kind_name("observation") == "Observations" and ui._kind_name("some_new_kind") == "Some new kind"

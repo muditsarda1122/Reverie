@@ -702,7 +702,15 @@ def proposals_page(root: str, proj: dict, plist: list[dict], st: State | None = 
     return frame(proj, plist, d, "/proposals", body)
 
 
-_KIND_ORDER = ("rule", "preference", "decision", "finding")
+_KIND_ORDER = ("rule", "preference", "decision")
+KIND_NAMES = {"rule": "Rules", "preference": "Preferences", "decision": "Decisions",
+              "rejected_approach": "Rejected approaches", "environment": "Environment",
+              "observation": "Observations", "open_question": "Open questions",
+              "work_state": "Work in progress", "external_context": "External context"}
+
+
+def _kind_name(kind: str) -> str:
+    return KIND_NAMES.get(kind) or kind.replace("_", " ").capitalize()
 
 
 def _mcard(m: dict) -> str:
@@ -730,8 +738,7 @@ def memory_page(root: str, proj: dict, plist: list[dict], page: int = 1) -> str:
     chunk = mem[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
     kinds = [k for k in _KIND_ORDER if any(m.get("kind") == k for m in chunk)]
     kinds += sorted({str(m.get("kind")) for m in chunk} - set(kinds))
-    lanes = "".join(_lane({"rule": "Rules", "preference": "Preferences", "decision": "Decisions",
-                           "finding": "Findings"}.get(k, k.title()), "",
+    lanes = "".join(_lane(_kind_name(k), "",
                           [_mcard(m) for m in chunk if str(m.get("kind")) == k]) for k in kinds)
     nav = ""
     if pages > 1:
