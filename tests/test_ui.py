@@ -303,3 +303,16 @@ def test_only_known_projects_open_and_never_by_path(env, serve, monkeypatch):
         assert "svc" in body                              # fell back to the repo it was started in
     ids = re.findall(r'href="/project\?p=([0-9a-f]{8})"', req(s, "/")[1])
     assert ids and len(set(ids)) == 1                      # one known project, never the other repo
+
+
+# --- copy and count fixes (one test each) -----------------------------------------------------
+
+def test_memory_hint_says_this_machine_not_everyone(env, serve, monkeypatch):
+    _, repo = env
+    conn = _brain(repo, monkeypatch)
+    items.add(conn, text="Always paginate", kind="rule", source="user_said",
+              repo_key=deliver.repo_key(str(repo)))
+    conn.close()
+    body = req(serve(repo), "/memory")[1]
+    assert "1 item(s) remembered on this machine for this repo." in body
+    assert "shared by everyone" not in body

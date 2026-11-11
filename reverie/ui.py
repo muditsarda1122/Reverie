@@ -713,7 +713,7 @@ def memory_page(root: str, proj: dict, plist: list[dict], page: int = 1) -> str:
         nav = (f'<div class=pager><span>Page {page} of {pages}</span>'
                + (f'<a href="{_u("/memory", proj, page=str(page - 1))}">Previous</a>' if page > 1 else "")
                + (f'<a href="{_u("/memory", proj, page=str(page + 1))}">Next</a>' if page < pages else "") + "</div>")
-    body = (f'<p class=hint>{len(mem)} item(s) remembered here, shared by everyone who works in this repo. '
+    body = (f'<p class=hint>{len(mem)} item(s) remembered on this machine for this repo. '
             f'Open one with <code>reverie show &lt;id&gt;</code>.</p><div class=board>{lanes}</div>{nav}')
     return frame(proj, plist, d, "/memory", body)
 
