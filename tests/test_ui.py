@@ -348,3 +348,26 @@ def test_repo_rules_file_sits_beside_team_context(env, serve):
     body = req(serve(repo), "/context")[1]
     assert "Shared rules file: no owners, no review" in body and "Repo file rule" in body
     assert "Always squash merge" in body                          # the team table is still there
+
+
+def test_rules_in_force_matches_what_the_start_block_gives(env, serve, monkeypatch):
+    """A remembered rule that repeats a team rule is hidden from agents, so it is not counted; a repo-level
+    preference is only an index line, so it is not counted either."""
+    tmp_path, repo = env
+    (repo / ".reverie" / "context").mkdir(parents=True)
+    (repo / ".reverie" / "context" / "rules.md").write_text("## Rules\n- Money is integer cents\n")
+    conn = _brain(repo, monkeypatch)
+    key = deliver.repo_key(str(repo))
+    items.add(conn, text="money is integer cents.", kind="rule", source="user_said", repo_key=key)   # repeat
+    items.add(conn, text="Always paginate list endpoints", kind="rule", source="user_said", repo_key=key)
+    items.add(conn, text="Keep handlers short", kind="preference", source="user_said", repo_key=key)
+    items.add(conn, text="Use UTC everywhere", kind="preference", source="user_said", repo_key=None)
+    conn.close()
+    s = serve(repo)
+    start = req(s, "/start")[1]
+    assert "Always paginate list endpoints" in start and "Use UTC everywhere" in start
+    given = deliver.startup_text(str(repo), log=False)
+    assert given.count("Money is integer cents") == 1            # shown once: the team rule
+    # team rule 1 + remembered "paginate" 1 + user-wide preference 1
+    assert re.search(r"<b>3</b>Rules in force", req(s, "/project")[1])
+    assert "3 rules in force" in req(s, "/")[1]

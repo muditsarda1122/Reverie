@@ -321,8 +321,15 @@ def collect(root: str) -> dict:
     team_rules = [i for i in res.effective if i.kind == "rule" and i.id not in res.stale]
     personal = rules.bullets(_safe(lambda: rules.load(root, hide_shared=True)["user"], ""))
     repo_rules = rules.bullets(_safe(lambda: rules.load(root)["repo"], ""))
-    mem_rules = [m for m in mem if m["kind"] in ("rule", "preference")
-                 and not deliver.is_stale_flagged(m)]
+    # Exactly the remembered rules deliver.startup_text hands over in full: not stale, not a repeat of a
+    # team rule (the start block hides those), and either a rule or a user-wide preference.
+    shared = {context.norm(i.text) for i in res.effective
+              if i.kind == "rule" and i.layer != "personal" and i.id not in res.stale}
+    mem_rules = [m for m in mem if not deliver.is_stale_flagged(m)
+                 and context.norm(m.get("text") or "") not in shared
+                 and (m["kind"] == "rule"
+                      or (m["kind"] == "preference" and m.get("repo_key") is None
+                          and m.get("origin") == "item"))]
     return {
         "res": res, "mem": mem, "stale_mem": stale_mem, "team_rules": team_rules,
         "personal": personal, "repo_rules": repo_rules, "mem_rules": mem_rules,
