@@ -1,7 +1,7 @@
 # The Reverie web UI, before the redesign
 
 Static copies of every page, saved exactly as `reverie ui` served them (HTML, inline styles, no scripts), at branch tip
-`1c1f4d1` of `feat/continuity-spine`. Regenerate with `scripts/capture-before.sh`; the data comes from
+`df1801a` of `feat/continuity-spine` (with the seed's personal-rule change described below). Regenerate with `scripts/capture-before.sh`; the data comes from
 `scripts/seed-demo.sh` (the `payments-api` seed proposed in `docs/ui-inventory.md` section 8), built in a throwaway
 folder with its own `HOME`, `REVERIE_HOME` and git config, so nothing under `~/.reverie` or the real git config is touched.
 
@@ -17,10 +17,10 @@ Notes for viewers:
 |---|---|---|
 | `projects.html` | `/` Projects | The board: `payments-api` under Needs attention, `notifications-service` under All clear, `legacy-billing` under Turned off. Card chips and the "N rules in force · N remembered" line. |
 | `new.html` | `/new` Add a project | The "Projects are repos" screen with its command steps. |
-| `overview.html` | `/project` Overview, `payments-api` | Stat line (9 rules in force, 1 conflict, 2 possibly outdated, 3 proposals), then the three lanes: the http-retries conflict, the two outdated rules, the three proposals. |
-| `rules.html` | `/context` Rules | The table of all 10 team rules by scope (platform, payments, repo), marks (outdated, conflict, path-only), and the conflict card. |
+| `overview.html` | `/project` Overview, `payments-api` | Stat line (8 rules in force, 1 conflict, 2 possibly outdated, 3 proposals), then the three lanes: the http-retries conflict, the two outdated rules, the three proposals. |
+| `rules.html` | `/context` Rules | The table of all 10 team rules by scope (platform, payments, repo) plus the personal rule that copies team rule 1, with marks (outdated, conflict, path-only, "also a shared rule: hidden here"), and the conflict card. |
 | `memory.html` | `/memory` Memory | The six remembered items in lanes by kind, including the challenged decision with its usage tally. |
-| `start.html` | `/start` What agents are told | The exact start block an agent receives, no cut note. |
+| `start.html` | `/start` What agents are told | The exact start block an agent receives, no cut note. Team rule 1 appears once; the personal copy of it is left out. |
 | `proposals.html` | `/proposals` Proposals | The three waiting proposals with decide blocks (as Mudit: one "Not an owner", the security one) and the one turned-down proposal with its reason. |
 | `add.html` | `/add` Add a rule | The add form, identity line and the two command cards. |
 | `connect.html` | `/connect` Connect | The four connect steps. |
@@ -36,13 +36,15 @@ Notes for viewers:
 
 ## Empty states, `notifications-service` (enabled, nothing in it), as mudit
 
+The seed's personal-layer rule (a copy of team rule 1) lives in `REVERIE_HOME` and so applies in every repo; `capture-before.sh` sets it aside while these five pages are saved, so they show the true empty state.
+
 | File | Screen | What it shows |
 |---|---|---|
-| `empty-overview.html` | `/project` | "Nothing needs your action". Rules in force is 2: the two personal rules apply in every repo. |
+| `empty-overview.html` | `/project` | "Nothing needs your action". Rules in force is 1: the personal `rg` bullet applies in every repo. |
 | `empty-rules.html` | `/context` | "No team context applies here". |
 | `empty-memory.html` | `/memory` | "Nothing remembered for this repo yet". |
 | `empty-proposals.html` | `/proposals` | "No proposals". |
-| `empty-start.html` | `/start` | The start block with only the two personal rules. |
+| `empty-start.html` | `/start` | The start block with only the one personal rule. |
 
 ## The "cut by the start limit" state, as mudit
 
@@ -58,6 +60,4 @@ Same seed plus 35 extra repo-level rules remembered for `payments-api` ("Seed ru
 Run against these captures:
 - Conflicts 1, Possibly outdated 2, Proposals 3, Turned down 1: match.
 - Decide blocks: Arjun sees three "Not an owner"; Mudit one (security); Priya one (the ledger proposal): match.
-- **Rules in force: 9, not "about 10 team + 2 personal + memory rules".** The 9 are 6 team rules, 2 personal and 1 remembered rule. The count differs from the plan in two ways:
-  - Only 6 of the 10 team rules count: 2 are possibly outdated (rules 4 and 7) and 2 are the unresolved http-retries pair, which agents are told to ask about instead of applying.
-  - Nothing is "hidden": the plan assumed the personal rule "Money is integer cents" duplicates team rule 1, but rule 1 is a longer sentence, so it does not match and both personal rules count.
+- **Rules in force: 8**, and the section 8 text now says so: 6 team rules + 1 personal bullet + 1 remembered rule. Only 6 of the 10 team rules count (2 are possibly outdated, rules 4 and 7; 2 are the unresolved http-retries pair, which agents are told to ask about instead of applying). The second personal rule is an exact copy of team rule 1, so it is marked "also a shared rule: hidden here" on the Rules page and left out of the start block and the count.

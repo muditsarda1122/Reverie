@@ -212,7 +212,10 @@ for n in range(1, EXTRA + 1):
               kind="rule", source="user_said", repo_key=key)
 conn.close()
 
-rules.add("Money is integer cents", level="user")
+# Personal rules. The first is an exact copy of team rule 1, kept as a personal-layer context rule: the Rules page marks it
+# "also a shared rule: hidden here" and the start block leaves it out. The second is a plain bullet in ~/.reverie/rules.md.
+RULE1 = "Money is stored and passed as integer minor units (cents) with an ISO 4217 currency code; never use floats, because rounding drift broke reconciliation in the March settlement run."
+context.add(R, RULE1, layer="personal")
 rules.add("Prefer `rg` over `grep` in examples", level="user")
 
 for r in (notif, legacy):

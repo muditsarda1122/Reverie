@@ -45,11 +45,15 @@ grab "/project?p=$OFF"           disabled-project.html
 as "$D1" arjun; grab "/proposals?p=$API" proposals-arjun.html
 as "$D1" priya; grab "/proposals?p=$API" proposals-priya.html
 as "$D1" mudit
+# The personal-layer rule lives in REVERIE_HOME and so applies in every repo; set it aside so the empty project's
+# Rules and start screens show the true empty state, then put it back.
+mv "$D1/home/context" "$D1/home/context.aside"
 grab "/project?p=$NOTIF"         empty-overview.html
 grab "/context?p=$NOTIF"         empty-rules.html
 grab "/memory?p=$NOTIF"          empty-memory.html
 grab "/proposals?p=$NOTIF"       empty-proposals.html
 grab "/start?p=$NOTIF"           empty-start.html
+mv "$D1/home/context.aside" "$D1/home/context"
 
 # ---- the variant with 35 extra repo rules (start-limit cut) -------------------------------------
 D2="$TMP/seed-capped"; start "$D2" --extra-repo-rules 35

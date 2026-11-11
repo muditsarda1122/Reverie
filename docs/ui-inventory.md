@@ -697,13 +697,13 @@ Produced by `reverie context propose`/`add` as Arjun, then `reverie context reje
 5. `environment`, agent_inferred, evidence quote: "Integration tests need `docker compose up postgres redis` first and take about 90 seconds to start." (anchor `docker-compose.yml`)
 6. `decision`, agent_inferred with `meta.usage` `{"USED": 3, "CONTRADICTED": 2}` and `meta.challenged: true`: "Refunds over 10,000 INR need manager approval in the admin tool." Evidence: "approval gate in `app/refunds/policy.py`". This one exercises the "challenged" chip and usage tally.
 
-**Personal side (to exercise the count in "Rules in force"):** two bullets in `~/.reverie/rules.md`, e.g. "Money is integer cents" (a duplicate of team rule 1, which the product hides at delivery and the Rules table marks "hidden here") and "Prefer `rg` over `grep` in examples".
+**Personal side (to exercise the count in "Rules in force"):** two personal rules. One is an exact copy of team rule 1's text, kept as a personal-layer context rule (`reverie context add --layer personal`): the Rules table marks it "also a shared rule: hidden here" and delivery leaves it out. (A bullet in `~/.reverie/rules.md` that copies a team rule is also hidden from the start block, but the Rules table never lists those bullets, so it carries no mark.) The other is a bullet in `~/.reverie/rules.md`: "Prefer `rg` over `grep` in examples". `scripts/seed-demo.sh` builds exactly this.
 
 **Also seed:** one second project (an empty repo with Reverie enabled, e.g. `notifications-service`) so the Projects board has "Needs attention" and "All clear" lanes; one disabled project for the "Turned off" lane.
 
-Check after seeding: Overview should read Rules in force ≈ 10 team + 2 personal (one hidden) + memory rules; Conflicts 1; Possibly outdated 2; Proposals 3; Proposals "Turned down" 1.
+Check after seeding (measured on the seed built by `scripts/seed-demo.sh`): Overview reads Rules in force **8** = 6 team + 1 personal + 1 remembered rule. Of the 10 team rules, two are possibly outdated (rules 4 and 7) and two are the unresolved http-retries pair (agents are told to ask before acting on either), so neither pair is counted; the personal copy of team rule 1 is hidden, so it is not counted either; the other five memory items are a preference (repo-level, an index line only), decisions, a rejected approach and an environment note, so only the one remembered rule counts. Conflicts 1; Possibly outdated 2; Proposals 3; Proposals "Turned down" 1.
 As Arjun's identity the three proposals' decide blocks show "Not an owner"; as Mudit the first two (rules, ledger) are decidable and the security one is not; as Priya `rules.md` and `security.md` ones are.
-Counts above are a plan, not a measurement: nothing was run **(inferred)**.
+The counts were measured on that seed (see `design/before/README.md`).
 
 ---
 
