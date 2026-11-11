@@ -953,7 +953,7 @@ def render(root: str, path: str, query: dict[str, list[str]] | None = None,
         if path == "/new":
             return 200, new_page(root, query)
         if path == "/memory" or path == "/search" or path in PROJECT_PAGES:
-            if is_disabled(target):
+            if path != "/connect" and is_disabled(target):    # Connect is how you turn it back on
                 tab = path if path in dict((p, 1) for p, _, _ in TABS) else "/project"
                 return 200, _disabled(proj, plist, tab)
             if path == "/memory":

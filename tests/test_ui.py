@@ -409,3 +409,19 @@ def test_memory_lanes_use_human_names(env, serve, monkeypatch):
                      "Open questions", "Rejected approaches"]       # known first, the rest alphabetical
     assert "Findings" not in body and "Rejected_Approach" not in body and "_" not in " ".join(lanes)
     assert ui._kind_name("observation") == "Observations" and ui._kind_name("some_new_kind") == "Some new kind"
+
+
+def test_connect_tab_of_a_disabled_project_shows_how_to_turn_it_on(env, serve, monkeypatch):
+    tmp_path, repo = env
+    _seed(tmp_path, repo)
+    monkeypatch.chdir(repo)
+    assert cli.main(["disable"]) == 0
+    s = serve(repo)
+    status, body, _ = req(s, "/connect")
+    assert status == 200
+    assert "Reverie is turned off for this repo" in body
+    assert "reverie enable" in body and "Turn it on for this project" in body
+    assert "reverie install" in body
+    assert "squash merge" not in body and "Prefer small PRs" not in body      # still shows no project data
+    for page in ("/project", "/context", "/proposals", "/memory", "/start", "/add"):   # the rest stay "off"
+        assert "Nothing is delivered to agents and nothing is shown here" in req(s, page)[1], page

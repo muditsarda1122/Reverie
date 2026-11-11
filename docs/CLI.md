@@ -327,7 +327,7 @@ each with the command that deals with it), **Rules** (team context: scopes, mark
 and turned down with the reason) and **Connect** (the steps to set an agent up). The search box
 looks through the team rules and memory of the current project. "Add a project" and "Connect"
 are guided screens that show the exact command to run. A project that is turned off shows only
-that, and refuses writes. Looking at the start block is not a delivery and is not
+that (its Connect tab still shows the steps to turn it back on), and refuses writes. Looking at the start block is not a delivery and is not
 counted in usage.
 
 Only repos Reverie already knows about (plus the one `--repo` points at) can be opened, by an
