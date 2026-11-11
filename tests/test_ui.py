@@ -378,3 +378,17 @@ def test_cli_help_for_ui_no_longer_says_read_only():
     helps = {c.dest: c.help for c in sub._choices_actions}
     assert "read-only" not in helps["ui"].lower()
     assert "add, accept or reject" in helps["ui"]
+
+
+def test_overview_proposal_links_to_its_card_on_proposals(env, serve):
+    tmp_path, repo = env
+    _seed(tmp_path, repo)
+    context.add(str(repo), "Second proposal", why="because")          # a second one waiting
+    s = serve(repo)
+    over = req(s, "/project")[1]
+    links = re.findall(r'<a href="(/proposals\?p=[0-9a-f]{8})#(p-[0-9a-f]{10})">A proposal is waiting</a>', over)
+    assert len(links) == 2 and len({frag for _, frag in links}) == 2
+    page = req(s, links[0][0])[1]
+    for _, frag in links:
+        assert f'<article class=card id="{frag}">' in page      # every link lands on a card
+    assert page.count('<article class=card id="p-') == 2

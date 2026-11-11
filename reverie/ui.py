@@ -465,6 +465,11 @@ def _cmd(*commands: str, label: str = "How to settle it") -> str:
     return f"<details><summary>{esc(label)}</summary>{lines}</details>"
 
 
+def _pslug(slug: str) -> str:
+    """A safe fragment id for a proposal card, the same on Overview (link) and Proposals (target)."""
+    return "p-" + hashlib.sha1(slug.encode()).hexdigest()[:10]
+
+
 def _owner(item) -> str:
     return _safe(lambda: context.owner_text(item), "")
 
@@ -562,7 +567,8 @@ def overview(root: str, proj: dict, plist: list[dict]) -> str:
         by = str(p.get("proposed-by", "someone"))
         props.append(
             f'<article class=card><span class="chip acc">Proposal</span>'
-            f"<h3 style='margin-top:10px'>A proposal is waiting</h3>"
+            f"<h3 style='margin-top:10px'><a href=\"{_u('/proposals', proj)}#{_pslug(p['slug'])}\">"
+            f"A proposal is waiting</a></h3>"
             f"<p class=q>“{esc(_clip(context.bullet_text(p['bullet']), 200))}”</p>"
             + (f"<p>Because: {esc(_clip(p.get('why', ''), 160))}</p>" if p.get("why") else "")
             + f"<hr class=rule><div class=meta><span class=who1>{_avatar(by)}{esc(by)}</span></div>"
@@ -673,7 +679,7 @@ def proposals_page(root: str, proj: dict, plist: list[dict], st: State | None = 
         by = str(p.get("proposed-by", "?"))
         extra = " · ".join(f"{k}: {p[k]}" for k in ("from", "first-stated", "usage") if p.get(k))
         wait.append(
-            f"<article class=card><p class=q style='margin:0'>“{esc(context.bullet_text(p['bullet']))}”</p>"
+            f"<article class=card id=\"{_pslug(p['slug'])}\"><p class=q style='margin:0'>“{esc(context.bullet_text(p['bullet']))}”</p>"
             + (f"<p>Why: {esc(p['why'])}</p>" if p.get("why") else "")
             + (f"<p>{esc(extra)}</p>" if extra else "")
             + f"<hr class=rule><div class=meta><span class=who1>{_avatar(by)}{esc(by)}</span>"
