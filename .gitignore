@@ -54,3 +54,5 @@ docs/EC_TECHNICAL_REFERENCE.md
 
 # --- Scripts --- #
 find-orgs.sh
+# Hallmark working folder (screenshots, before/after records)
+.hallmark/

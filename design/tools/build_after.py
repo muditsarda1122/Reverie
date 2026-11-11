@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""Builds design/after/*.html (the Proposals screen, redesigned) as static pages.
+
+The data is the seed in design/before/ (see design/before/README.md). Nothing here is a product
+feature: every field used below is one the proposal files, `context.proposals()` and `context.rejected()`
+already carry (see design/after/README.md for the few the old page did not print).
+
+    python3 design/tools/build_after.py
+"""
+from __future__ import annotations
+
+import html
+import re
+from pathlib import Path
+
+OUT = Path(__file__).resolve().parent.parent / "after"
+
+TOKEN = "B7QFUmwMJf_-KGzCzyaLWeSOsVgFJSzsyN_CXIj9G5E"   # the one-off CSRF value in design/before (kept so the fields match)
+API, NOTIF, LEGACY = "4e1e91cd", "81071af5", "4cdea88b"
+
+PEOPLE = {
+    "mudit": ("Mudit Sarda", "mudit@payments.example"),
+    "priya": ("Priya Nair", "priya@payments.example"),
+    "arjun": ("Arjun Mehta", "arjun@payments.example"),
+}
+DOCS = {   # document name -> owners (CODEOWNERS entries, which are emails here)
+    "rules.md": ["priya@payments.example", "mudit@payments.example"],
+    "security.md": ["priya@payments.example"],
+    "paths-services-ledger.md": ["mudit@payments.example"],
+}
+# From the seed: the unresolved conflict and the two possibly-outdated rules wait on everyone.
+OTHER_ATTENTION = 1 + 2
+
+WAITING = [
+    dict(slug="ledger-reconciliation-jobs-must-be-idemp-67b4cd", id="p-b9b43260e2",
+         text="Ledger reconciliation jobs must be idempotent per `batch_id`",
+         why="the nightly job re-ran twice last week and posted duplicates",
+         by="priya", date="2026-11-12", doc="paths-services-ledger.md", paths="services/ledger/**"),
+    dict(slug="prefer-small-prs-under-400-changed-lines-4b7962", id="p-ff0b68b93f",
+         text="Prefer small PRs: under 400 changed lines unless it is a mechanical rename",
+         why="reviews of the 1,200-line refund PR took four days",
+         by="arjun", date="2026-11-12", doc="rules.md", paths=""),
+    dict(slug="run-pip-audit-in-ci-and-fail-the-build-o-7776a6", id="p-a624ebd52d",
+         text="Run `pip-audit` in CI and fail the build on a high severity finding",
+         why="we shipped with an unpatched `cryptography` last quarter",
+         by="arjun", date="2026-11-12", doc="security.md", paths=""),
+]
+REJECTED = [
+    dict(text="Use the ORM for all queries, no raw SQL",
+         reason="Reporting queries need raw SQL for window functions; the ORM version was 10x slower in the "
+                "settlement report. Reopen with a benchmark.",
+         by="arjun", rejected_by="priya", date="2026-11-12"),
+]
+
+# A layout test only: invented rule texts, to see 15 waiting at once. Not product data.
+STRESS_TEXTS = [
+    ("Every public endpoint documents its error codes in the OpenAPI file", "clients keep guessing at 4xx bodies", "rules.md"),
+    ("Background jobs log their `job_id` at start and at finish", "we could not trace the March replay", "rules.md"),
+    ("Feature flags are removed within two releases of full rollout", "the flag list has 40 stale entries", "rules.md"),
+    ("Never call the card processor from a request handler; enqueue it", "a slow processor stalled the API", "rules.md"),
+    ("Rotate the webhook signing secret every quarter", "the last rotation was two years ago", "security.md"),
+    ("Admin tool actions write an audit row with the actor and the reason", "auditors asked for who approved refunds", "security.md"),
+    ("Ledger reversals reference the original `entry_id`", "reversals were matched by amount and date", "paths-services-ledger.md"),
+    ("Ledger exports are signed and checksummed before upload", "a truncated export reached the auditors", "paths-services-ledger.md"),
+    ("Tests that need the network are marked and skipped by default", "CI flaked on an outbound call", "rules.md"),
+    ("Currency conversion uses the rate stored on the payment, never today's rate", "refunds were off by a cent", "rules.md"),
+    ("Dependencies are pinned and updated by one weekly pull request", "three people bumped the same package", "security.md"),
+    ("Database indexes ship in their own migration", "an index build locked the payments table", "rules.md"),
+]
+
+
+def esc(s: str) -> str:
+    return html.escape(s, quote=True)
+
+
+def rule_html(text: str) -> str:
+    """Rule text, escaped; `backticked` spans are code (paths, commands, file names are monospace)."""
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", esc(text))
+
+
+def slugify(text: str, n: int) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40]
+    return f"{base}-{n:06x}"
+
+
+def name(key: str) -> str:
+    """A person by name; the email is in the title attribute."""
+    n, e = PEOPLE[key]
+    return f'<span title="{esc(e)}">{esc(n)}</span>'
+
+
+def mine(p: dict, me: str) -> bool:
+    return PEOPLE[me][1] in DOCS[p["doc"]]
+
+
+# --------------------------------------------------------------------------------------------------
+CSS = """/* Hallmark · shape: app screen · genre: modern-minimal · theme: Ink (deal 3/3, seed local-review-tool-where-be9d·5ff087b0·2026-11-11·r0) · redesign: full
+ * nav: top bar, typeset wordmark, project switcher, text tabs · signature: the proposal as a ruled entry, its rule text set in serif · states: waiting on you, waiting on others, turned down, empty, accepted · ink: system faces, one teal that means in force and nothing else, no pills
+ * axes: light/grotesk-sans/chromatic-teal · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, the screen is a ruled list like the catalogue the theme was drawn from; the serif rule text and the single bordered Accept are what make it a review tool */
+/* waive 22 · ink and greys at zero chroma · a notice board is printed in plain black */
+/* waive 7b · the paper is a tinted off-white, the dark paper a lifted grey; neither is pure */
+/* Hallmark · dropped token, slug, why, post /do/accept, post /do/reject · the Accept and Reject forms are not drawn for a proposal the viewer cannot decide; the brief says never to show an action that will be refused, and the old page marked those "Not an owner: the CLI would refuse" */
+/* Hallmark · reworded "waiting 3", "turned down 1", "payments-api", "notifications-service" · the proposals are split by who can decide them, turned down is a disclosure, and the repo name moves into the project switcher */
+:root {
+  color-scheme: light dark;
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px;
+  --text-xs: 0.75rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.2rem; --text-xl: 1.44rem;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --dur-micro: 120ms;
+  --color-paper: oklch(99.5% 0.003 100); --color-paper-2: oklch(97% 0.004 100); --color-paper-3: oklch(94% 0.006 100);
+  --color-ink: oklch(16% 0 0); --color-ink-2: oklch(28% 0 0); --color-muted: oklch(44% 0 0);
+  --color-rule: oklch(89% 0.004 100); --color-line: oklch(62% 0 0);
+  --color-in: oklch(50% 0.095 188);
+  --color-focus: oklch(16% 0 0); --color-selection: oklch(90% 0.01 100);
+  --font-serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --radius-control: 10px; --radius-well: 12px; --rule-hair: 1px;
+  --tracking-display: -0.02em; --display-weight: 700;
+  --page: 60rem;
+}
+/* The dark theme is drawn, not inverted: a lifted grey, not black, so the tab does not glare or vanish beside a dark
+   terminal; text at 92% so serif rule text does not bloom; rules and control lines raised in lightness (shadows do no
+   work here); the one teal lifted and softened so it still reads as the single colour on a dark ground. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: oklch(19% 0.003 100); --color-paper-2: oklch(22.5% 0.003 100); --color-paper-3: oklch(27% 0.003 100);
+    --color-ink: oklch(92% 0 0); --color-ink-2: oklch(83% 0 0); --color-muted: oklch(68% 0 0);
+    --color-rule: oklch(31% 0.003 100); --color-line: oklch(54% 0 0);
+    --color-in: oklch(76% 0.09 188);
+    --color-focus: oklch(92% 0 0); --color-selection: oklch(34% 0.01 100);
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { overflow-x: clip; }
+html { scroll-padding-top: var(--space-xl); }
+body { margin: 0; background: var(--color-paper); color: var(--color-ink-2); font-family: var(--font-sans); font-size: var(--text-md); line-height: 1.55; -webkit-font-smoothing: antialiased; caret-color: var(--color-ink); }
+::selection { background: var(--color-selection); color: var(--color-ink); }
+a { color: var(--color-ink); font-weight: 600; text-decoration-thickness: 1px; text-underline-offset: 0.16em; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; color: var(--color-ink); min-width: 0; overflow-wrap: break-word; }
+h2 { font-size: var(--text-xl); font-weight: var(--display-weight); letter-spacing: var(--tracking-display); line-height: 1.15; text-wrap: balance; }
+p { margin: 0; text-wrap: pretty; }
+code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.page { max-width: var(--page); margin-inline: auto; padding-inline: var(--space-lg); }
+
+/* top bar */
+.bar { border-bottom: var(--rule-hair) solid var(--color-rule); }
+.bar .page { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-lg); min-height: 3.5rem; }
+.mark { font-weight: var(--display-weight); font-size: var(--text-lg); letter-spacing: var(--tracking-display); color: var(--color-ink); text-decoration: none; }
+.switch { position: relative; }
+.switch summary { list-style: none; cursor: pointer; font-weight: 600; color: var(--color-ink); padding: var(--space-xs) 0; display: inline-flex; align-items: center; gap: var(--space-xs); }
+.switch summary::-webkit-details-marker { display: none; }
+.switch summary::after { content: ""; width: 0.45em; height: 0.45em; border-right: 1.5px solid var(--color-muted); border-bottom: 1.5px solid var(--color-muted); transform: translateY(-0.12em) rotate(45deg); }
+.switch[open] summary::after { transform: translateY(0.1em) rotate(-135deg); }
+.menu { position: absolute; z-index: 10; top: 100%; left: calc(-1 * var(--space-sm)); min-width: 16rem; margin: 0; padding: var(--space-xs); list-style: none; background: var(--color-paper); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-well); }
+.menu a { display: block; padding: var(--space-xs) var(--space-sm); border-radius: 8px; text-decoration: none; font-weight: 400; color: var(--color-ink-2); }
+.menu a:hover { background: var(--color-paper-2); }
+.menu a[aria-current] { font-weight: 600; color: var(--color-ink); }
+.menu hr { border: 0; border-top: var(--rule-hair) solid var(--color-rule); margin: var(--space-xs) 0; }
+.find { margin-left: auto; }
+.find input[type=search] { width: 15rem; max-width: 100%; min-height: 2.25rem; padding: 0 var(--space-sm); background: var(--color-paper-2); color: var(--color-ink); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); }
+.find input[type=search]::placeholder { color: var(--color-muted); }
+
+/* project actions and tabs */
+.tabrow { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 0 var(--space-lg); margin-top: var(--space-lg); border-bottom: var(--rule-hair) solid var(--color-rule); }
+.tabs { display: flex; flex-wrap: wrap; gap: 0 var(--space-lg); }
+.acts { display: flex; flex-wrap: wrap; gap: 0 var(--space-lg); }
+.acts a { padding: var(--space-sm) 0; }
+.tabs a { flex: none; padding: var(--space-sm) 0; color: var(--color-muted); font-weight: 400; text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: calc(-1 * var(--rule-hair)); }
+.tabs a:hover { color: var(--color-ink); }
+.tabs a[aria-current] { color: var(--color-ink); font-weight: 600; border-bottom-color: var(--color-ink); }
+.tabs .n { margin-left: var(--space-xs); font-weight: 600; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+
+/* controls: Accept is the one bordered button on the page */
+.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 2.5rem; padding: 0 var(--space-md); font: inherit; font-weight: 600; color: var(--color-ink); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out); }
+.btn:hover { background: var(--color-paper-3); }
+.btn:active { background: var(--color-rule); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.text-btn { display: inline-flex; align-items: center; flex: none; white-space: nowrap; min-height: 2.5rem; font: inherit; font-weight: 600; background: none; border: 0; padding: 0; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; cursor: pointer; }
+.text-btn:hover { text-decoration-thickness: 2px; }
+.text-btn:active { color: var(--color-muted); }
+.text-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* the review */
+.main { padding-block: var(--space-lg) var(--space-2xl); }
+.flash { max-width: 65ch; margin: 0 0 var(--space-lg); color: var(--color-ink-2); }
+.flash .in { color: var(--color-in); font-weight: 700; }
+.testnote { margin: 0 0 var(--space-lg); color: var(--color-muted); font-size: var(--text-sm); }
+.who { color: var(--color-muted); font-size: var(--text-sm); }
+.tally { margin-top: var(--space-xs); color: var(--color-ink); font-weight: 600; }
+.group { margin-top: var(--space-xl); }
+.group > h2 { padding-bottom: var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-ink); }
+.entry { padding-block: var(--space-lg); border-bottom: var(--rule-hair) solid var(--color-rule); }
+.rule { font-family: var(--font-serif); font-size: var(--text-lg); font-weight: 400; line-height: 1.4; color: var(--color-ink); }
+.rule code { font-size: 0.82em; }
+.why { margin-top: var(--space-xs); }
+.meta { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-lg); margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); }
+.meta code { color: var(--color-ink-2); }
+.act { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-xs) var(--space-lg); margin-top: var(--space-md); }
+.act form { margin: 0; }
+.reject summary, .cmd summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; min-height: 2.5rem; font-weight: 600; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
+.reject summary::-webkit-details-marker, .cmd summary::-webkit-details-marker { display: none; }
+.cmd summary { font-weight: 400; color: var(--color-muted); }
+.reject[open], .cmd[open] { flex-basis: 100%; }
+.reject form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-sm) var(--space-lg); padding-top: var(--space-xs); }
+.reject label { display: grid; gap: var(--space-2xs); flex: 1 1 20rem; font-size: var(--text-sm); color: var(--color-muted); }
+.reject input[type=text] { min-height: 2.5rem; padding: 0 var(--space-sm); font: inherit; color: var(--color-ink); background: var(--color-paper); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); }
+.cmd pre { width: fit-content; max-width: min(65ch, 100%); margin: var(--space-xs) 0 0; padding: var(--space-sm) var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.waiting-on { margin-top: var(--space-sm); color: var(--color-ink-2); font-size: var(--text-sm); }
+.history { margin-top: var(--space-xl); }
+.history > summary { list-style: none; cursor: pointer; padding-bottom: var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule); color: var(--color-muted); font-weight: 600; }
+.history > summary::-webkit-details-marker { display: none; }
+.history > summary::before { content: ""; display: inline-block; width: 0.4em; height: 0.4em; margin-right: var(--space-sm); border-right: 1.5px solid var(--color-muted); border-bottom: 1.5px solid var(--color-muted); transform: translateY(-0.12em) rotate(-45deg); }
+.history[open] > summary::before { transform: translateY(-0.2em) rotate(45deg); }
+.history .rule { color: var(--color-ink-2); }
+.empty { margin-top: var(--space-md); }
+.empty .lead { color: var(--color-ink); font-size: var(--text-lg); }
+.empty .cli { margin-top: var(--space-xl); color: var(--color-muted); font-size: var(--text-sm); }
+.empty pre { width: fit-content; max-width: min(65ch, 100%); margin: var(--space-xs) 0 var(--space-md); padding: var(--space-xs) var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 40rem) {
+  .page { padding-inline: var(--space-md); }
+  .btn, .text-btn, .reject summary, .cmd summary { min-height: 2.75rem; }
+  .find { margin-left: 0; width: 100%; }
+  .find input[type=search] { width: 100%; }
+  .menu { left: 0; }
+  .tabs { gap: 0 var(--space-md); }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; } }
+"""
+
+
+def tabs(pid: str, counts: dict[str, int]) -> str:
+    items = [("/project", "Overview"), ("/context", "Rules"), ("/memory", "Memory"),
+             ("/start", "What agents are told"), ("/proposals", "Proposals"), ("/connect", "Connect")]
+    out = []
+    for path, label in items:
+        cur = ' aria-current="page"' if path == "/proposals" else ""
+        n = counts.get(path)
+        out.append(f'<a href="{path}?p={pid}"{cur}>{label}' + (f'<span class="n">{n}</span>' if n else "") + "</a>")
+    return '<nav class="tabs" aria-label="Project">' + "".join(out) + "</nav>"
+
+
+def shell(*, title: str, pid: str, repo: str, counts: dict, body: str, desc: str) -> str:
+    projects = [(API, "payments-api"), (NOTIF, "notifications-service"), (LEGACY, "legacy-billing")]
+    menu = "".join(
+        f'<li><a href="/project?p={p}"' + (' aria-current="page"' if p == pid else "") + f">{n}</a></li>"
+        for p, n in projects)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{esc(title)}</title>
+<meta name="description" content="{esc(desc)}">
+<style>
+{CSS}</style>
+</head>
+<body>
+<header class="bar"><div class="page">
+<a class="mark" href="/" aria-label="Reverie, all projects">Reverie</a>
+<details class="switch"><summary>{esc(repo)}</summary>
+<ul class="menu">{menu}<li><hr></li><li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>
+<form class="find" action="/search" method="get" role="search"><input type="hidden" name="p" value="{pid}"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
+</div></header>
+<div class="page">
+<div class="tabrow">{tabs(pid, counts)}<div class="acts"><a href="/connect?p={pid}">Connect an agent</a><a href="/add?p={pid}">Add a rule</a></div></div>
+<main class="main">
+<h1 class="visually-hidden">Proposals for {esc(repo)}</h1>
+{body}
+</main>
+</div>
+</body>
+</html>
+"""
+
+
+def entry(p: dict, me: str, pid: str) -> str:
+    owners = DOCS[p["doc"]]
+    docpath = f".reverie/context/{p['doc']}"
+    meta = [name(p["by"]), f'<span>{p["date"]}</span>', f'<span title="{esc(docpath)}"><code>{esc(p["doc"])}</code></span>']
+    if p["paths"]:
+        meta.append(f'<span>only under <code>{esc(p["paths"])}</code></span>')
+    why = f'<p class="why">Why: {rule_html(p["why"])}</p>' if p.get("why") else ""
+    if mine(p, me):
+        slug = esc(p["slug"])
+        hidden = (f'<input type="hidden" name="token" value="{TOKEN}"><input type="hidden" name="p" value="{pid}">'
+                  f'<input type="hidden" name="slug" value="{slug}">')
+        act = (f'<form method="post" action="/do/accept">{hidden}<button class="btn" type="submit">Accept</button></form>'
+               f'<details class="reject"><summary>Reject</summary>'
+               f'<form method="post" action="/do/reject">{hidden}'
+               f'<label>Reason for turning it down (the proposer will read it)'
+               f'<input type="text" name="why" maxlength="300" required></label>'
+               f'<button class="text-btn" type="submit">Turn down with this reason</button></form></details>'
+               f'<details class="cmd"><summary>As commands</summary><pre>reverie context accept {slug}\n'
+               f'reverie context reject {slug} --why "..."</pre></details>')
+        act = f'<div class="act">{act}</div>'
+    else:
+        act = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(p["doc"])}</code>: '
+               f'{esc(", ".join(owners))}.</p>')
+    return (f'<article class="entry" id="{p["id"]}"><h3 class="rule">{rule_html(p["text"])}</h3>{why}'
+            f'<p class="meta">{"".join(meta)}</p>{act}</article>')
+
+
+def history(rejected: list[dict]) -> str:
+    if not rejected:
+        return ""
+    rows = []
+    for r in rejected:
+        rows.append(
+            f'<article class="entry"><h3 class="rule">{rule_html(r["text"])}</h3>'
+            f'<p class="why">Reason: {rule_html(r["reason"])}</p>'
+            f'<p class="meta"><span>Proposed by {name(r["by"])}</span>'
+            f'<span>Turned down by {name(r["rejected_by"])}</span><span>{r["date"]}</span></p></article>')
+    return f'<details class="history"><summary>Turned down, {len(rejected)}</summary>' + "".join(rows) + "</details>"
+
+
+def proposals_body(me: str, waiting: list[dict], rejected: list[dict], pid: str, flash: str = "", note: str = "") -> str:
+    on_me = [p for p in waiting if mine(p, me)]
+    other = [p for p in waiting if not mine(p, me)]
+    if on_me and other:
+        tally = f"{len(on_me)} waiting on you, {len(other)} waiting on others."
+    elif on_me:
+        tally = f"{len(on_me)} waiting on you."
+    elif other:
+        tally = f"Nothing waiting on you. {len(other)} waiting on others."
+    else:
+        tally = "Nothing waiting."
+    ident = f'<p class="who">Acting as {name(me)}, from your git identity.</p>'
+    parts = [note, flash, ident, f'<p class="tally">{tally}</p>']
+    if on_me:
+        parts.append('<section class="group" aria-labelledby="h-you"><h2 id="h-you">Waiting on you</h2>'
+                     + "".join(entry(p, me, pid) for p in on_me) + "</section>")
+    if other:
+        parts.append('<section class="group" aria-labelledby="h-others"><h2 id="h-others">Waiting on others</h2>'
+                     + "".join(entry(p, me, pid) for p in other) + "</section>")
+    parts.append(history(rejected))
+    return "".join(parts)
+
+
+def empty_body(pid: str) -> str:
+    return (f'<div class="empty"><p class="lead">Nothing waiting. Suggest a rule with <a href="/add?p={pid}">Add a rule</a>.</p>'
+            '<div class="cli"><p>The same from the command line:</p>'
+            '<pre>reverie context add "Money is integer cents" --why "reason"</pre>'
+            '<p>To turn a rule you already use into a proposal:</p>'
+            '<pre>reverie context propose "Money is integer cents"</pre></div></div>')
+
+
+def counts_for(me: str, waiting: list[dict]) -> dict:
+    """Only what waits on the viewer, and nothing at zero: Overview = conflicts + outdated rules + proposals
+    the viewer can decide; Proposals = the proposals the viewer can decide. No counts on Rules or Memory."""
+    n = sum(1 for p in waiting if mine(p, me))
+    return {"/project": OTHER_ATTENTION + n, "/proposals": n}
+
+
+def write(fname: str, html_text: str) -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / fname).write_text(html_text, encoding="utf-8")
+    print("wrote", fname)
+
+
+def main() -> None:
+    desc = "Rules people suggested for the team, who can decide each one, and what was turned down."
+    for me, fname in (("mudit", "proposals.html"), ("arjun", "proposals-arjun.html"), ("priya", "proposals-priya.html")):
+        write(fname, shell(title="Proposals for payments-api, Reverie", pid=API, repo="payments-api",
+                           counts=counts_for(me, WAITING), desc=desc, body=proposals_body(me, WAITING, REJECTED, API)))
+    # empty: notifications-service, as mudit (nothing there waits on anyone)
+    write("empty-proposals.html", shell(title="Proposals for notifications-service, Reverie", pid=NOTIF,
+                                        repo="notifications-service", counts={}, desc=desc, body=empty_body(NOTIF)))
+    # extra 1: the page right after Mudit accepts "Prefer small PRs" (the one place the teal appears)
+    accepted = next(p for p in WAITING if p["slug"].startswith("prefer-small-prs"))
+    after = [p for p in WAITING if p is not accepted]
+    flash = (f'<p class="flash" role="status">Accepted into rules.md: “{rule_html(accepted["text"])}”. The proposal is gone '
+             'and the rule is <span class="in">in force</span>. It has not been checked for conflicts yet: that happens at '
+             'the next session start, or now with <code>reverie context check</code>.</p>')
+    write("proposals-accepted.html", shell(
+        title="Proposals for payments-api, Reverie", pid=API, repo="payments-api",
+        counts=counts_for("mudit", after), desc=desc, body=proposals_body("mudit", after, REJECTED, API, flash)))
+    # extra 2: layout test, 15 waiting (invented rule texts: not product data)
+    many = list(WAITING)
+    for i, (text, why, doc) in enumerate(STRESS_TEXTS):
+        many.append(dict(slug=slugify(text, 0x1000 + i), id=f"p-{0xa00000 + i:010x}", text=text, why=why,
+                         by="priya" if doc.startswith("paths") else "arjun",
+                         date="2026-11-12", doc=doc, paths="services/ledger/**" if doc.startswith("paths") else ""))
+    note = ('<p class="testnote">Layout test: 15 proposals waiting. The first three are the seed; the other twelve '
+            'use invented rule text and are not product data.</p>')
+    write("proposals-15.html", shell(
+        title="Layout test, 15 proposals waiting (invented rule text), Reverie", pid=API, repo="payments-api",
+        counts=counts_for("mudit", many), desc=desc, body=proposals_body("mudit", many, REJECTED, API, note=note)))
+
+
+if __name__ == "__main__":
+    main()
