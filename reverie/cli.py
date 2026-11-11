@@ -550,8 +550,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         "last run (what the detached session-start worker runs)")
     p.add_argument("--repo", default=None,
                    help="repo path (default: current directory)")
-    p = sub.add_parser("ui", help="read-only local page: what agents are told, team context, "
-                       "proposals, memory (stops on Ctrl-C)")
+    p = sub.add_parser("ui", help="local web page: what agents are told, team context, "
+                       "proposals, memory; it writes only when you press add, accept or "
+                       "reject (stops on Ctrl-C)")
     p.add_argument("--repo", default=None, help="repo path (default: current directory)")
     p.add_argument("--port", type=int, default=0,
                    help="port on 127.0.0.1 (default: a free one)")

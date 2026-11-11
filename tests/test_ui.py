@@ -371,3 +371,10 @@ def test_rules_in_force_matches_what_the_start_block_gives(env, serve, monkeypat
     # team rule 1 + remembered "paginate" 1 + user-wide preference 1
     assert re.search(r"<b>3</b>Rules in force", req(s, "/project")[1])
     assert "3 rules in force" in req(s, "/")[1]
+
+
+def test_cli_help_for_ui_no_longer_says_read_only():
+    sub = next(a for a in cli._build_parser()._actions if a.dest == "command")
+    helps = {c.dest: c.help for c in sub._choices_actions}
+    assert "read-only" not in helps["ui"].lower()
+    assert "add, accept or reject" in helps["ui"]
