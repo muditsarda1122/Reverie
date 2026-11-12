@@ -305,6 +305,7 @@ def layout(*, title: str, proj: dict | None, plist: list[dict], body: str, tab: 
         f'<li><a href="{_u("/project", p)}"' + (' aria-current="page"' if proj and p["id"] == proj["id"] else "")
         + f">{esc(p['name'])}</a></li>" for p in plist[:40])
     pid = f'<input type="hidden" name="p" value="{esc(proj["id"])}">' if proj else ""
+    divider = "<li><hr></li>" if menu else ""                                  # a rule only when there are projects above it
     value = f' value="{esc(q)}"' if q else ""
     add = f'<div class="acts"><a href="{_u("/add", proj)}">Add a rule</a></div>' if acts else ""      # not offered while Reverie is off
     tabrow = f'<div class="tabrow">{_tabs_html(proj, counts or {}, tab)}{add}</div>' if proj else ""
@@ -315,7 +316,7 @@ def layout(*, title: str, proj: dict | None, plist: list[dict], body: str, tab: 
             + f"<style>\n{DESIGN_CSS}</style>\n</head>\n<body>\n"
             f'<header class="bar"><div class="page">\n<a class="mark" href="/" aria-label="Reverie, all projects">Reverie</a>\n'
             f'<details class="switch"><summary>{esc(proj["name"] if proj else "All projects")}</summary>\n'
-            f'<ul class="menu">{menu}<li><hr></li><li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>\n'
+            f'<ul class="menu">{menu}{divider}<li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>\n'
             f'<form class="find" action="/search" method="get" role="search">{pid}<input name="q" type="search" '
             f'placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"{value}></form>\n'
             f'</div></header>\n<div class="page">\n{tabrow}\n<main class="main">\n{hidden}\n{body}\n</main>\n</div>\n</body>\n</html>\n')
@@ -1223,11 +1224,16 @@ def not_found_page(plist: list[dict]) -> str:
         '<p class="tally">That page does not exist.</p><p class="go"><a href="/">Back to all projects</a></p>'))
 
 
-def error_page() -> str:
-    """A 500: no trace, no exception text, nothing read from disk. Only what to do next."""
+def error_page(writing: bool = False) -> str:
+    """A 500: no trace, no exception text, nothing read from disk. A failed write says its outcome is not known."""
+    if writing:
+        what = ('<p class="who">Your change may or may not have been saved. Check Rules and Proposals before trying again.</p>'
+                '<p class="why">If it keeps failing, run this in a terminal:</p>')
+    else:
+        what = ('<p class="who">This page could not be built.</p>'
+                '<p class="why">Reload the page. If it keeps failing, run this in a terminal:</p>')
     return layout(title="Something went wrong, Reverie", proj=None, plist=[], body=(
-        '<p class="tally">Something went wrong.</p><p class="who">This page could not be built. The CLI still works.</p>'
-        f'<p class="why">Reload the page. If it keeps failing, run this in a terminal:</p>{_block("reverie status")}'
+        f'<p class="tally">Something went wrong.</p>{what}{_block("reverie status")}'
         '<p class="go"><a href="/">Back to all projects</a></p>'))
 
 
@@ -1593,7 +1599,7 @@ def make_handler(root: str, allowed_hosts: set[str], state: State | None = None)
                     try:
                         where = do_write(root, st, path, form)
                     except Exception:
-                        self._reply(500, error_page())
+                        self._reply(500, error_page(writing=True))
                         return
                     self._reply(303, "see other", extra={"Location": where})
 

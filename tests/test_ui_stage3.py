@@ -516,10 +516,17 @@ def test_not_found_is_its_own_page_with_a_way_back(env, serve):
 BOOM = "SECRET-DETAIL /Users/someone/private/module.py line 12 sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAA"
 
 
-def _assert_a_plain_500(status, body, tmp_path):
+WRITE_WORDS = "Your change may or may not have been saved. Check Rules and Proposals before trying again."
+
+
+def _assert_a_plain_500(status, body, tmp_path, writing=False):
     assert status == 500
     assert "<p class=\"tally\">Something went wrong.</p>" in body
-    assert '<p class="who">This page could not be built. The CLI still works.</p>' in body
+    if writing:
+        assert f'<p class="who">{WRITE_WORDS}</p>' in body and "could not be built" not in body
+    else:
+        assert '<p class="who">This page could not be built.</p>' in body and "may or may not" not in body
+    assert "The CLI still works" not in body and "<hr>" not in body                         # no projects above it: no divider
     assert '<pre class="block-cmd">reverie status</pre>' in body and '<a href="/">Back to all projects</a>' in body
     for leak in ("SECRET-DETAIL", "Traceback", "RuntimeError", "module.py", "/Users/someone", "sk-ant", "ui.py", str(tmp_path), "line 12"):
         assert leak not in body, leak
@@ -558,13 +565,19 @@ def test_an_exception_while_writing_is_a_500_page_too_and_changes_nothing(env, s
         raise RuntimeError(BOOM)
     monkeypatch.setattr(ui, "do_write", boom)
     status, body, _ = _http(s, "POST", "/do/add", {"token": tok, "p": pid, "text": "R", "kind": "rule", "target": "repo"})
-    _assert_a_plain_500(status, body, tmp_path)
+    _assert_a_plain_500(status, body, tmp_path, writing=True)
     assert _tree(tmp_path) == before
 
 
-def test_the_error_page_needs_nothing_from_disk_or_the_project_list():
-    page = ui.error_page()
-    assert "Something went wrong." in page and "<ul class=\"menu\"><li><hr>" in page.replace("\n", "")
+def test_the_menu_has_a_divider_only_when_projects_are_listed_above_it(env):
+    tmp_path, repo = env
+    none = ui.layout(title="t", proj=None, plist=[], body="")
+    assert "<hr>" not in none and '<ul class="menu"><li><a href="/">All projects</a></li>' in none
+    for page in (ui.error_page(), ui.error_page(writing=True)):
+        assert "<hr>" not in page
+    some = ui.layout(title="t", proj=None, plist=ui.projects(str(repo)), body="")
+    assert some.count("<hr>") == 1 and some.index("svc</a></li>") < some.index("<hr>") < some.index("All projects</a></li>")
+    assert "<hr>" in ui.render(str(repo), "/", {})[1]
 
 
 # --- every internal link on every ported page resolves --------------------------------------------------------------
