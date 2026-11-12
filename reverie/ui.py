@@ -309,7 +309,8 @@ def layout(*, title: str, proj: dict | None, plist: list[dict], body: str, tab: 
     value = f' value="{esc(q)}"' if q else ""
     add = f'<div class="acts"><a href="{_u("/add", proj)}">Add a rule</a></div>' if acts else ""      # not offered while Reverie is off
     tabrow = f'<div class="tabrow">{_tabs_html(proj, counts or {}, tab)}{add}</div>' if proj else ""
-    hidden = f'<h1 class="visually-hidden">{esc(h1)} for {esc(proj["name"])}</h1>' if (h1 and proj) else ""
+    hidden = (f'<h1 class="visually-hidden">{esc(h1)} for {esc(proj["name"])}</h1>' if proj else
+              f'<h1 class="visually-hidden">{esc(h1)}</h1>') if h1 else ""
     return (f'<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
             f'<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>{esc(title)}</title>\n'
             + (f'<meta name="description" content="{esc(desc)}">\n' if desc else "")
@@ -1155,7 +1156,7 @@ def projects_page(root: str, query=None, st: State | None = None) -> str:
     if off:
         out.append('<section class="group" aria-labelledby="g-off"><h2 id="g-off" class="dim">Turned off</h2><ul class="plain dim">'
                    + "".join(f'<li>{link(p, " class=" + chr(34) + "dim" + chr(34))}</li>' for p in off) + "</ul></section>")
-    return layout(title="Projects, Reverie", proj=None, plist=plist, body="".join(out))
+    return layout(title="Projects, Reverie", proj=None, plist=plist, body="".join(out), h1="All projects")
 
 
 def _step(title: str, text: str, cmd: str) -> str:
@@ -1221,7 +1222,7 @@ def off_page(proj: dict, plist: list[dict], tab: str) -> str:
 
 def not_found_page(plist: list[dict]) -> str:
     return layout(title="Not found, Reverie", proj=None, plist=plist, body=(
-        '<p class="tally">That page does not exist.</p><p class="go"><a href="/">Back to all projects</a></p>'))
+        '<p class="tally">That page does not exist.</p><p class="go"><a href="/">Back to all projects</a></p>'), h1="Not found")
 
 
 def error_page(writing: bool = False) -> str:

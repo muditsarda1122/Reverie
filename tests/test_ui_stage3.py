@@ -505,6 +505,15 @@ def test_add_and_search_of_a_turned_off_project_read_nothing_from_it(env, serve,
 
 # --- Not found, Something went wrong ----------------------------------------------------------------------------------
 
+def test_the_board_and_not_found_have_a_hidden_h1(env, serve):
+    s = serve(env[1])
+    board, nf = get(s, "/")[1], get(s, "/nosuchpage")[1]
+    assert board.count("<h1") == 1 and '<h1 class="visually-hidden">All projects</h1>' in board
+    assert nf.count("<h1") == 1 and '<h1 class="visually-hidden">Not found</h1>' in nf
+    new = get(s, "/new")[1]                                                                # Add a project already has its visible h1
+    assert new.count("<h1") == 1 and '<h1 class="ask">Add a project</h1>' in new
+
+
 def test_not_found_is_its_own_page_with_a_way_back(env, serve):
     s = serve(env[1])
     for path in ("/nosuchpage", "/project/extra", "/do/add", "/rules"):
