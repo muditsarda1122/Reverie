@@ -108,6 +108,20 @@ def name(key: str) -> str:
     return f'<span title="{esc(e)}">{esc(n)}</span>'
 
 
+def people(emails: list[str], me: str) -> str:
+    """Names with the email in a title attribute; the viewer is 'First (you)'; an unknown email is shown as is."""
+    by_email = {e: (k, n) for k, (n, e) in PEOPLE.items()}
+    out = []
+    for e in emails:
+        if e not in by_email:
+            out.append(esc(e))
+            continue
+        k, n = by_email[e]
+        label = f"{n.split()[0]} (you)" if k == me else n
+        out.append(f'<span title="{esc(e)}">{esc(label)}</span>')
+    return ", ".join(out)
+
+
 def mine(p: dict, me: str) -> bool:
     return PEOPLE[me][1] in DOCS[p["doc"]]
 
@@ -257,6 +271,25 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .fold[open] > summary::before { transform: translateY(-0.2em) rotate(45deg); }
 .fold > summary + .items { border-top: var(--rule-hair) solid var(--color-rule); margin-top: var(--space-xs); }
 .note { margin-top: var(--space-xs); max-width: 65ch; color: var(--color-ink-2); font-size: var(--text-sm); }
+.back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
+.back a { font-weight: 400; color: var(--color-muted); }
+.back a:hover { color: var(--color-ink); }
+.bigrule { max-width: 52rem; text-wrap: pretty; font-family: var(--font-serif); font-size: 1.9rem; font-weight: 400; line-height: 1.3; letter-spacing: 0; color: var(--color-ink); }
+.bigrule code { font-size: 0.82em; }
+.status { margin-top: var(--space-sm); font-weight: 600; }
+.sec { margin-top: var(--space-xl); }
+.sec > h2 { font-size: var(--text-md); font-weight: 600; letter-spacing: 0; padding-bottom: var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule); }
+.facts { display: grid; grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr); gap: var(--space-sm) var(--space-lg); margin: var(--space-md) 0 0; }
+.facts dt { color: var(--color-muted); font-size: var(--text-sm); padding-top: 0.1em; }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.facts dd code { font-size: 0.88em; }
+.other { margin-top: var(--space-md); }
+.other .rule { max-width: 44rem; margin-top: var(--space-xs); }
+.quote { font-family: var(--font-sans); font-size: var(--text-md); color: var(--color-ink-2); }
+.absent { margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); max-width: 65ch; }
+.idline { margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); }
+.idline code { color: var(--color-ink-2); }
+.block-cmd { width: fit-content; max-width: min(65ch, 100%); margin-top: var(--space-sm); padding: var(--space-xs) var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .waiting-on { margin-top: var(--space-sm); color: var(--color-ink-2); font-size: var(--text-sm); }
 .history { margin-top: var(--space-xl); }
 .history > summary { list-style: none; cursor: pointer; padding-bottom: var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule); color: var(--color-muted); font-weight: 600; }
@@ -275,6 +308,9 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
   .find { margin-left: 0; width: 100%; }
   .find input[type=search] { width: 100%; }
   .menu { left: 0; }
+  .bigrule { font-size: 1.5rem; }
+  .facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-3xs) 0; }
+  .facts dd { margin-bottom: var(--space-sm); }
   .tabs { gap: 0 var(--space-md); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; } }
@@ -293,7 +329,7 @@ def tabs(pid: str, counts: dict[str, int], active: str = "/proposals") -> str:
 
 
 def shell(*, title: str, pid: str, repo: str, counts: dict, body: str, desc: str, active: str = "/proposals",
-          h1: str = "Proposals") -> str:
+          h1: str | None = "Proposals") -> str:
     projects = [(API, "payments-api"), (NOTIF, "notifications-service"), (LEGACY, "legacy-billing")]
     menu = "".join(
         f'<li><a href="/project?p={p}"' + (' aria-current="page"' if p == pid else "") + f">{n}</a></li>"
@@ -318,7 +354,7 @@ def shell(*, title: str, pid: str, repo: str, counts: dict, body: str, desc: str
 <div class="page">
 <div class="tabrow">{tabs(pid, counts, active)}<div class="acts"><a href="/connect?p={pid}">Connect an agent</a><a href="/add?p={pid}">Add a rule</a></div></div>
 <main class="main">
-<h1 class="visually-hidden">{esc(h1)} for {esc(repo)}</h1>
+{f'<h1 class="visually-hidden">{esc(h1)} for {esc(repo)}</h1>' if h1 else ""}
 {body}
 </main>
 </div>
@@ -573,7 +609,7 @@ def rule_li(r: dict, pid: str) -> str:
     elif st == "conflict":
         label = '<span class="st">Conflict</span>'
         o = r["other"]
-        who = (f'Waiting on an owner: {esc(", ".join(r["owners"]))}.' if r["owners"]
+        who = (f'Waiting on an owner: {people(r["owners"], "mudit")}.' if r["owners"]
                else "No CODEOWNERS entry covers either document, so anyone can settle it.")
         extra = (f'<p class="note">Disagrees with {_q(o["text"])} in {esc(o["where"])}. '
                  f'Agents are told to ask before acting on either. {who}</p>')
@@ -655,6 +691,102 @@ def rules_body(rs: list[dict], pid: str, note: str = "") -> str:
     return "".join(out)
 
 
+# ---- Rule page -----------------------------------------------------------------------------------------------
+LAYER = {"org": "Organisation", "team": "Team", "repo": "This repo", "personal": "Yours"}
+ME_OWNERS = {"rules.md": DOCS["rules.md"], "security.md": DOCS["security.md"],
+             "paths-services-ledger.md": DOCS["paths-services-ledger.md"]}
+
+
+def _fact(dt: str, dd: str) -> str:
+    return f"<dt>{dt}</dt><dd>{dd}</dd>"
+
+
+def _owners(owners: list[str]) -> str:
+    return people(owners, "mudit") if owners else "No CODEOWNERS entry covers it."
+
+
+def _where(r: dict) -> str:
+    """The 'Where it comes from' facts of a document rule: layer, folder, document, section, owners, scope, lock."""
+    rows = [_fact("Source", LAYER[r["layer"]]), _fact("Folder", f'<code>{esc(r["folder"])}</code>'),
+            _fact("Document", f'<code>{esc(r["path"])}</code>'), _fact("Section", esc(r["section"])),
+            _fact("Owners", _owners(r["owners"]))]
+    if r.get("paths"):
+        rows.append(_fact("Applies to", f'only under <code>{esc(r["paths"])}</code>'))
+    if r.get("locked"):
+        rows.append(_fact("Locked", "It cannot be overridden inside its scope."))
+    return f'<section class="sec"><h2>Where it comes from</h2><dl class="facts">{"".join(rows)}</dl></section>'
+
+
+def _other(r: dict, pid: str, lead: str) -> str:
+    return (f'<div class="other"><p class="why">{lead}</p><p class="rule">{rule_html(r["text"])}</p>'
+            f'<p class="meta"><span>{esc(r["from"])}</span><span title="{esc(r["path"])}"><code>{esc(r["doc"])}</code></span>'
+            + (f'<span>only under <code>{esc(r["paths"])}</code></span>' if r.get("paths") else "")
+            + f'<a class="open" href="/rule?p={pid}&amp;id={r["id"]}">Open rule</a></p></div>')
+
+
+def _idline(rid: str) -> str:
+    return (f'<p class="idline">Id <code>{esc(rid)}</code>. Open it from a terminal with '
+            f'<code>reverie show {esc(rid)}</code>.</p>')
+
+
+def rule_body(r: dict, pid: str, note: str = "") -> str:
+    home = r.get("home", ("Rules", "/context"))
+    out = [note, f'<p class="back"><a href="{home[1]}?p={pid}">Back to {home[0]}</a></p>',
+           f'<h1 class="bigrule">{rule_html(r["text"])}</h1>']
+    if r.get("status"):
+        out.append(f'<p class="status">{esc(r["status"])}</p>')
+    st = r.get("kind")
+    if st == "team":
+        out.append(_where(r))
+        if r.get("conflict"):
+            c = r["conflict"]
+            who = (f'Waiting on an owner: {people(c["owners"], "mudit")}.' if c["owners"]
+                   else "No CODEOWNERS entry covers either document, so anyone can settle it.")
+            out.append('<section class="sec"><h2>Conflict</h2>'
+                       + _other(c["other"], pid, f'Disagrees with this rule. Conflict <code>{esc(c["key"])}</code>: {esc(c["reason"])}')
+                       + f'<p class="why">Agents are told to ask before acting on either. {who}</p>'
+                       f'<pre class="block-cmd">reverie context resolve {esc(c["key"])} "your decision"</pre></section>')
+        if r.get("overridden"):
+            o = r["overridden"]
+            out.append('<section class="sec"><h2>Overridden</h2>'
+                       + _other(o["other"], pid, "Overridden by this rule.")
+                       + f'<p class="why">Why it wins: {esc(o["why"])}.</p>'
+                       f'<p class="absent">The conflict is <code>{esc(o["key"])}</code>. An overridden rule is kept in its document and '
+                       'is not told to agents.</p></section>')
+        if r.get("outdated"):
+            o = r["outdated"]
+            msg = f' {esc(o["message"])}' if o.get("message") else ""
+            out.append('<section class="sec"><h2>Possibly outdated</h2><dl class="facts">'
+                       + _fact("Reason", f'A later change to the code may contradict it: {esc(o["reason"])}.')
+                       + _fact("Commit", f'<code>{esc(o["commit"][:7])}</code>{msg}')
+                       + _fact("What to do", f'Check the code, then edit or remove the rule in <code>{esc(r["path"])}</code>.')
+                       + '</dl></section>')
+    else:
+        out.append(r["_html"])
+    out.append(_idline(r["id"]))
+    return "".join(out)
+
+
+def remembered_html(m: dict, heading: str) -> str:
+    rows = [_fact("Said by", esc(m["said"]))]
+    if m.get("evidence"):
+        rows.append(_fact("Evidence", f'<span class="quote">“{rule_html(m["evidence"])}”</span>'))
+    rows.append(_fact("Remembered", esc(m["date"])))
+    if m.get("files"):
+        rows.append(_fact("Anchored to", ", ".join(f"<code>{esc(f)}</code>" for f in m["files"])))
+    if m.get("commit"):
+        rows.append(_fact("Grounded on commit", f'<code>{esc(m["commit"][:7])}</code>'))
+    if m.get("verified"):
+        rows.append(_fact("Last verified", esc(m["verified"])))
+    if m.get("usage"):
+        rows.append(_fact("Used by agents", esc(m["usage"])))
+    body = f'<section class="sec"><h2>{heading}</h2><dl class="facts">' + "".join(rows) + "</dl>"
+    if m.get("challenged"):
+        body += ('<p class="why">Challenged: agents contradicted it repeatedly, so agents are now told to confirm or fix it '
+                 'before relying on it. See the tally with <code>reverie usage</code>.</p>')
+    return body + "</section>"
+
+
 def write(fname: str, html_text: str) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / fname).write_text(html_text, encoding="utf-8")
@@ -697,13 +829,13 @@ def main() -> None:
     NARROW = "Verify card webhooks before parsing them"
     st = [
         R("aa00000001", "All services log in JSON, one object per line.", "team", "Organisation folder orgdocs/org", path="orgdocs/org/rules.md", locked=True,
-          beats=dict(text="Services may log plain text in development.", where="this repo", why="it is locked, so it wins in every scope")),
+          beats=dict(text="Services may log plain text in development.", where="this repo", why="it is locked, so it wins everywhere")),
         R("aa00000002", "Services may log plain text in development.", "team", RC, path=".reverie/context/rules.md", status="overridden",
-          by=dict(text="All services log in JSON, one object per line.", where="orgdocs/org", why="it is locked, so it wins in every scope")),
+          by=dict(text="All services log in JSON, one object per line.", where="orgdocs/org", why="it is locked, so it wins everywhere")),
         R("aa00000003", "Payment webhooks are verified before any parsing.", "team", RC, doc="security.md", path=".reverie/context/security.md",
-          paths="app/webhooks/**", beats=dict(text="Verify inbound requests at the edge proxy only.", where="orgdocs/platform", why="its scope is narrower")),
+          paths="app/webhooks/**", beats=dict(text="Verify inbound requests at the edge proxy only.", where="orgdocs/platform", why="it is more specific")),
         R("aa00000004", "Verify inbound requests at the edge proxy only.", "team", RK, path="orgdocs/platform/rules.md", status="overridden",
-          by=dict(text="Payment webhooks are verified before any parsing.", where="this repo", why="its scope is narrower")),
+          by=dict(text="Payment webhooks are verified before any parsing.", where="this repo", why="it is more specific")),
         R("aa00000005", "Rate limits are set per merchant, never per IP.", "team", RC, doc="security.md", path=".reverie/context/security.md",
           status="conflict", other=dict(text="Rate limits are set per IP at the edge.", where="this repo"), owners=["priya@payments.example"]),
         R("aa00000006", "Rate limits are set per IP at the edge.", "team", RC, path=".reverie/context/rules.md",
@@ -716,6 +848,40 @@ def main() -> None:
     write("rules-states.html", shell(title="Layout test, rule states (invented rule text), Reverie", pid=API, repo="payments-api",
                                      active="/context", h1="Rules", counts=counts_for("mudit", WAITING), desc=rdesc,
                                      body=rules_body(st, API, tn)))
+
+    # Rule page: one page per case (read-only; commands shown quietly)
+    ldesc = "One rule: where it comes from, its status and what to do about it."
+    pg = dict(pid=API, repo="payments-api", h1=None, counts=counts_for("mudit", WAITING), desc=ldesc)
+    inv = ('<p class="testnote">Layout test: the seed has no overridden rule. The rule text is invented and is not product data.</p>')
+    ledger = dict(id="59cf39933e", kind="team", layer="repo", folder=".reverie/context", section="Rules", owners=DOCS["paths-services-ledger.md"],
+                  path=".reverie/context/paths-services-ledger.md", paths="services/ledger/**",
+                  text="Ledger entries are append-only: corrections are new reversing entries, never UPDATE or DELETE, because auditors replay the table.")
+    write("rule-team.html", shell(title="Rule 59cf39933e, Reverie", active="/context", body=rule_body(ledger, API), **pg))
+    ra = dict(id="e3d2757f37", kind="team", layer="team", folder="orgdocs/platform", section="Rules", owners=[],
+              path="orgdocs/platform/rules.md", text=RETRY_A, status="Conflict",
+              conflict=dict(key="http-retries", reason="Both come from team folders at the same level, so neither one wins.", owners=[],
+                            other=dict(id="887e6b40e1", text=RETRY_B, **{"from": "Team folder orgdocs/payments"}, doc="rules.md",
+                                       path="orgdocs/payments/rules.md")))
+    write("rule-conflict.html", shell(title="Rule e3d2757f37, Reverie", active="/context", body=rule_body(ra, API), **pg))
+    o = ODOC["9c55b68de3"]
+    ro = dict(id="9c55b68de3", kind="team", layer="repo", folder=".reverie/context", section="Rules", owners=DOCS["rules.md"],
+              path=".reverie/context/rules.md", text=o["text"], status="Possibly outdated",
+              outdated=dict(reason=o["reason"], commit=o["commit"], message=o["message"]))
+    write("rule-outdated.html", shell(title="Rule 9c55b68de3, Reverie", active="/context", body=rule_body(ro, API), **pg))
+    rv = dict(id="aa00000004", kind="team", layer="team", folder="orgdocs/platform", section="Rules", owners=[],
+              path="orgdocs/platform/rules.md", text="Verify inbound requests at the edge proxy only.", status="Overridden",
+              overridden=dict(key="webhook-verify", why="it is more specific, so it answers this one", other=dict(
+                  id="aa00000003", text="Payment webhooks are verified before any parsing.", **{"from": "This repo"}, doc="security.md",
+                  path=".reverie/context/security.md", paths="app/webhooks/**")))
+    write("rule-overridden.html", shell(title="Rule aa00000004 (layout test), Reverie", active="/context", body=rule_body(rv, API, inv), **pg))
+    mem = dict(id="932ff77c", text=MIGR, said="You said it", date="2026-11-12")
+    write("rule-remembered.html", shell(title="Rule 932ff77c, Reverie", active="/context", body=rule_body(dict(id=mem["id"], text=MIGR, _html=remembered_html(mem, "Remembered rule")), API), **pg))
+    ch = dict(id="23e2645b", text="Refunds over 10,000 INR need manager approval in the admin tool.", said="An agent inferred it",
+              evidence="approval gate in `app/refunds/policy.py`", date="2026-11-12", files=["app/refunds/policy.py"],
+              usage="Used 3 times, contradicted twice.", challenged=True)
+    write("rule-remembered-challenged.html", shell(title="Remembered decision 23e2645b, Reverie", active="/memory", body=rule_body(
+        dict(id=ch["id"], text=ch["text"], status="Challenged", home=("Memory", "/memory"),
+             _html=remembered_html(ch, "Remembered decision")), API), **pg))
     # extra 1: the page right after Mudit accepts "Prefer small PRs" (the one place the teal appears)
     accepted = next(p for p in WAITING if p["slug"].startswith("prefer-small-prs"))
     after = [p for p in WAITING if p is not accepted]

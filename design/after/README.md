@@ -42,6 +42,22 @@ Static pages built by `python3 design/tools/build_after.py` from the seed in `de
 - For the port: the old page listed only team documents and the shared file; Your rules (`rules.bullets` of `~/.reverie/rules.md`) and Remembered rules (`mem_rules`) are in `collect()` already. Rules-file bullets have no id, so `Open rule` would use a hash of the text (here the first 10 hex of a sha1 of the normalised text). The ids of the six cut remembered rules in `rules-capped.html` are made up (the capture lists only 30 in the start block).
 - Dropped from the old page: the Id column and the Kind and Marks columns (now the meta line), the separate Conflicts lane (the note sits with each rule) and the "Hint shown to agents" line.
 
+## Rule page (`/rule?p=<project>&id=<rule id>`, read-only)
+| File | Case | Data |
+|---|---|---|
+| `rule-team.html` | in force, scoped to `services/ledger/**` | seed rule `59cf39933e` |
+| `rule-conflict.html` | unresolved conflict `http-retries` | seed rule `e3d2757f37` and the other side in full |
+| `rule-outdated.html` | possibly outdated | seed rule `9c55b68de3`, its commit and reason |
+| `rule-overridden.html` | overridden by a narrower rule | **invented rule text**: the seed has no overridden rule (labelled on the page) |
+| `rule-remembered.html` | a remembered rule | seed item `932ff77c` (user said it; no anchor, commit, verification or usage) |
+| `rule-remembered-challenged.html` | extra | the seed's challenged item `23e2645b`. It is a remembered decision, not a rule, but it is the only seed item with anchors, evidence, a usage tally and "challenged" |
+
+- The rule text is the page's only `h1`, set large in serif. Status appears under it only for exceptions. Rules is the active tab; "Back to Rules" is a quiet link at the top. The remembered decision page is the exception: Memory is the active tab and the link reads "Back to Memory".
+- Sections: Where it comes from (layer, folder, document path, section, owners, "only under", "locked"), then Conflict, Overridden, Possibly outdated or Remembered on this machine as the case needs; the id with `reverie show <id>` at the end. No actions: the one command (`reverie context resolve`) sits in a small block.
+- **What the port can read.** `context.show` / `reverie show` print: id, layer and folder (label), kind, locked, text, document (absolute path; the page shows it repo-relative), section, applies-to, paths, owners (`owner_text`), the conflict key, status and parties, and the stale commit (8 characters) and reason. The page also needs, all already in memory: the conflict's `reason` and `winner` (`Conflict` in `context.resolve`) and the stale entry's `message`.
+- **Not available from `context.show`, so not drawn (a field with no value is omitted from the page):** which file a possibly-outdated rule's commit changed (`check_stale` stores commit, message, reason and the document only); for a remembered item, anchors, grounding commit, last verified and usage when the item has none (the seed's rule has none). `reverie show` for a remembered item prints files, symbols, source, author, level, evidence and a freshness line, but not `created_at`, `last_verified`, the usage tally or `challenged`; the page reads them from the item row (`meta.usage`, `meta.challenged`).
+- Ids for bullets in `rules.md` files are a hash of the text (see Rules); there is no `reverie show` for them today.
+
 ## Rules this screen follows (from the review)
 - One quiet metadata line under the why, at every width: name, date, document name, "only under <paths>". The full path (`.reverie/context/<name>`) is the document's title attribute; the proposer's email is the name's title attribute. Emails are printed only in "Waiting on an owner of ...", because CODEOWNERS only gives emails.
 - No repo path on this page (the switcher names the repo).

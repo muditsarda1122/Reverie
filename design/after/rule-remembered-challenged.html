@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remembered decision 23e2645b, Reverie</title>
+<meta name="description" content="One rule: where it comes from, its status and what to do about it.">
+<style>
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Ink (deal 3/3, seed local-review-tool-where-be9d·5ff087b0·2026-11-11·r0) · redesign: full
+ * nav: top bar, typeset wordmark, project switcher, text tabs · signature: the proposal as a ruled entry, its rule text set in serif · states: waiting on you, waiting on others, turned down, empty, accepted · ink: system faces, one teal that means in force and nothing else, no pills
+ * axes: light/grotesk-sans/chromatic-teal · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, the screen is a ruled list like the catalogue the theme was drawn from; the serif rule text and the single bordered Accept are what make it a review tool */
+/* waive 22 · ink and greys at zero chroma · a notice board is printed in plain black */
+/* waive 7b · the paper is a tinted off-white, the dark paper a lifted grey; neither is pure */
+/* Hallmark · dropped token, slug, why, post /do/accept, post /do/reject · the Accept and Reject forms are not drawn for a proposal the viewer cannot decide; the brief says never to show an action that will be refused, and the old page marked those "Not an owner: the CLI would refuse" */
+/* Hallmark · reworded "waiting 3", "turned down 1", "payments-api", "notifications-service" · the proposals are split by who can decide them, turned down is a disclosure, and the repo name moves into the project switcher */
+:root {
+  color-scheme: light dark;
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px;
+  --text-xs: 0.75rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.2rem; --text-xl: 1.44rem;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --dur-micro: 120ms;
+  --color-paper: oklch(99.5% 0.003 100); --color-paper-2: oklch(97% 0.004 100); --color-paper-3: oklch(94% 0.006 100);
+  --color-ink: oklch(16% 0 0); --color-ink-2: oklch(28% 0 0); --color-muted: oklch(44% 0 0);
+  --color-rule: oklch(89% 0.004 100); --color-line: oklch(62% 0 0);
+  --color-in: oklch(50% 0.095 188);
+  --color-focus: oklch(16% 0 0); --color-selection: oklch(90% 0.01 100);
+  --font-serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --radius-control: 10px; --radius-well: 12px; --rule-hair: 1px;
+  --tracking-display: -0.02em; --display-weight: 700;
+  --page: 60rem;
+}
+/* The dark theme is drawn, not inverted: a lifted grey, not black, so the tab does not glare or vanish beside a dark
+   terminal; text at 92% so serif rule text does not bloom; rules and control lines raised in lightness (shadows do no
+   work here); the one teal lifted and softened so it still reads as the single colour on a dark ground. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: oklch(19% 0.003 100); --color-paper-2: oklch(22.5% 0.003 100); --color-paper-3: oklch(27% 0.003 100);
+    --color-ink: oklch(92% 0 0); --color-ink-2: oklch(83% 0 0); --color-muted: oklch(68% 0 0);
+    --color-rule: oklch(31% 0.003 100); --color-line: oklch(54% 0 0);
+    --color-in: oklch(76% 0.09 188);
+    --color-focus: oklch(92% 0 0); --color-selection: oklch(34% 0.01 100);
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { overflow-x: clip; }
+html { scroll-padding-top: var(--space-xl); }
+body { margin: 0; background: var(--color-paper); color: var(--color-ink-2); font-family: var(--font-sans); font-size: var(--text-md); line-height: 1.55; -webkit-font-smoothing: antialiased; caret-color: var(--color-ink); }
+::selection { background: var(--color-selection); color: var(--color-ink); }
+a { color: var(--color-ink); font-weight: 600; text-decoration-thickness: 1px; text-underline-offset: 0.16em; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; color: var(--color-ink); min-width: 0; overflow-wrap: break-word; }
+h2 { font-size: var(--text-xl); font-weight: var(--display-weight); letter-spacing: var(--tracking-display); line-height: 1.15; text-wrap: balance; }
+p { margin: 0; text-wrap: pretty; }
+code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.page { max-width: var(--page); margin-inline: auto; padding-inline: var(--space-lg); }
+
+/* top bar */
+.bar { border-bottom: var(--rule-hair) solid var(--color-rule); }
+.bar .page { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs) var(--space-lg); min-height: 3.5rem; }
+.mark { font-weight: var(--display-weight); font-size: var(--text-lg); letter-spacing: var(--tracking-display); color: var(--color-ink); text-decoration: none; }
+.switch { position: relative; }
+.switch summary { list-style: none; cursor: pointer; font-weight: 600; color: var(--color-ink); padding: var(--space-xs) 0; display: inline-flex; align-items: center; gap: var(--space-xs); }
+.switch summary::-webkit-details-marker { display: none; }
+.switch summary::after { content: ""; width: 0.45em; height: 0.45em; border-right: 1.5px solid var(--color-muted); border-bottom: 1.5px solid var(--color-muted); transform: translateY(-0.12em) rotate(45deg); }
+.switch[open] summary::after { transform: translateY(0.1em) rotate(-135deg); }
+.menu { position: absolute; z-index: 10; top: 100%; left: calc(-1 * var(--space-sm)); min-width: 16rem; margin: 0; padding: var(--space-xs); list-style: none; background: var(--color-paper); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-well); }
+.menu a { display: block; padding: var(--space-xs) var(--space-sm); border-radius: 8px; text-decoration: none; font-weight: 400; color: var(--color-ink-2); }
+.menu a:hover { background: var(--color-paper-2); }
+.menu a[aria-current] { font-weight: 600; color: var(--color-ink); }
+.menu hr { border: 0; border-top: var(--rule-hair) solid var(--color-rule); margin: var(--space-xs) 0; }
+.find { margin-left: auto; }
+.find input[type=search] { width: 15rem; max-width: 100%; min-height: 2.25rem; padding: 0 var(--space-sm); background: var(--color-paper-2); color: var(--color-ink); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); }
+.find input[type=search]::placeholder { color: var(--color-muted); }
+
+/* project actions and tabs */
+.tabrow { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 0 var(--space-lg); margin-top: var(--space-lg); border-bottom: var(--rule-hair) solid var(--color-rule); }
+.tabs { display: flex; flex-wrap: wrap; gap: 0 var(--space-lg); }
+.acts { display: flex; flex-wrap: wrap; gap: 0 var(--space-lg); }
+.acts a { padding: var(--space-sm) 0; }
+.tabs a { flex: none; padding: var(--space-sm) 0; color: var(--color-muted); font-weight: 400; text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: calc(-1 * var(--rule-hair)); }
+.tabs a:hover { color: var(--color-ink); }
+.tabs a[aria-current] { color: var(--color-ink); font-weight: 600; border-bottom-color: var(--color-ink); }
+.tabs .n { margin-left: var(--space-xs); font-weight: 600; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+
+/* controls: Accept is the one bordered button on the page */
+.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 2.5rem; padding: 0 var(--space-md); font: inherit; font-weight: 600; color: var(--color-ink); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out); }
+.btn:hover { background: var(--color-paper-3); }
+.btn:active { background: var(--color-rule); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.text-btn { display: inline-flex; align-items: center; flex: none; white-space: nowrap; min-height: 2.5rem; font: inherit; font-weight: 600; background: none; border: 0; padding: 0; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; cursor: pointer; }
+.text-btn:hover { text-decoration-thickness: 2px; }
+.text-btn:active { color: var(--color-muted); }
+.text-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* the review */
+.main { padding-block: var(--space-lg) var(--space-2xl); }
+.flash { max-width: 65ch; margin: 0 0 var(--space-lg); color: var(--color-ink-2); }
+.flash .in { color: var(--color-in); font-weight: 700; }
+.testnote { margin: 0 0 var(--space-lg); color: var(--color-muted); font-size: var(--text-sm); }
+.who { color: var(--color-muted); font-size: var(--text-sm); }
+.tally { margin-top: var(--space-xs); color: var(--color-ink); font-weight: 600; }
+.group { margin-top: var(--space-xl); }
+.group > h2 { padding-bottom: var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-ink); }
+.entry { padding-block: var(--space-lg); border-bottom: var(--rule-hair) solid var(--color-rule); }
+.rule { font-family: var(--font-serif); font-size: var(--text-lg); font-weight: 400; line-height: 1.4; color: var(--color-ink); }
+.rule code { font-size: 0.82em; }
+.items { margin: 0; padding: 0; list-style: none; }
+.side + .side { margin-top: var(--space-md); }
+.side .meta { margin-top: var(--space-2xs); }
+.label { color: var(--color-ink); font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-2xs); }
+.go { margin-top: var(--space-sm); }
+.cmdline { margin-top: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
+.todo { margin-top: var(--space-sm); font-size: var(--text-sm); color: var(--color-ink-2); }
+.cut { margin-top: var(--space-xs); color: var(--color-ink-2); }
+.why { margin-top: var(--space-xs); }
+.meta { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-lg); margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); }
+.meta code { color: var(--color-ink-2); }
+.meta a { font-weight: 600; }
+.meta a.open { font-weight: 400; color: var(--color-muted); }
+.meta a.open:hover { color: var(--color-ink); }
+.tally .in { color: var(--color-in); }
+.act { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-xs) var(--space-lg); margin-top: var(--space-md); }
+.act form { margin: 0; }
+.reject summary, .cmd summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; min-height: 2.5rem; font-weight: 600; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
+.reject summary::-webkit-details-marker, .cmd summary::-webkit-details-marker { display: none; }
+.cmd summary { font-weight: 400; color: var(--color-muted); }
+.reject[open], .cmd[open] { flex-basis: 100%; }
+.reject form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-sm) var(--space-lg); padding-top: var(--space-xs); }
+.reject label { display: grid; gap: var(--space-2xs); flex: 1 1 20rem; font-size: var(--text-sm); color: var(--color-muted); }
+.reject input[type=text] { min-height: 2.5rem; padding: 0 var(--space-sm); font: inherit; color: var(--color-ink); background: var(--color-paper); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); }
+.cmd pre { width: fit-content; max-width: min(65ch, 100%); margin: var(--space-xs) 0 0; padding: var(--space-sm) var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.st { font-weight: 600; color: var(--color-ink); }
+.sub { margin-top: var(--space-lg); font-size: var(--text-md); font-weight: 600; letter-spacing: 0; color: var(--color-ink); }
+.sub code { font-weight: 400; }
+.group > h2 + .sub, .group > .gnote + .sub { margin-top: var(--space-md); }
+.sub + .items > .entry:first-child, .sub + .fold > summary + .items > .entry:first-child { padding-top: var(--space-sm); }
+.gnote { margin-top: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
+.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; min-height: 2.5rem; font-weight: 600; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before { content: ""; flex: none; width: 0.4em; height: 0.4em; margin-right: var(--space-sm); border-right: 1.5px solid var(--color-ink); border-bottom: 1.5px solid var(--color-ink); transform: translateY(-0.12em) rotate(-45deg); }
+.fold[open] > summary::before { transform: translateY(-0.2em) rotate(45deg); }
+.fold > summary + .items { border-top: var(--rule-hair) solid var(--color-rule); margin-top: var(--space-xs); }
+.note { margin-top: var(--space-xs); max-width: 65ch; color: var(--color-ink-2); font-size: var(--text-sm); }
+.back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
+.back a { font-weight: 400; color: var(--color-muted); }
+.back a:hover { color: var(--color-ink); }
+.bigrule { max-width: 52rem; text-wrap: pretty; font-family: var(--font-serif); font-size: 1.9rem; font-weight: 400; line-height: 1.3; letter-spacing: 0; color: var(--color-ink); }
+.bigrule code { font-size: 0.82em; }
+.status { margin-top: var(--space-sm); font-weight: 600; }
+.sec { margin-top: var(--space-xl); }
+.sec > h2 { font-size: var(--text-md); font-weight: 600; letter-spacing: 0; padding-bottom: var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule); }
+.facts { display: grid; grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr); gap: var(--space-sm) var(--space-lg); margin: var(--space-md) 0 0; }
+.facts dt { color: var(--color-muted); font-size: var(--text-sm); padding-top: 0.1em; }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.facts dd code { font-size: 0.88em; }
+.other { margin-top: var(--space-md); }
+.other .rule { max-width: 44rem; margin-top: var(--space-xs); }
+.quote { font-family: var(--font-sans); font-size: var(--text-md); color: var(--color-ink-2); }
+.absent { margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); max-width: 65ch; }
+.idline { margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); }
+.idline code { color: var(--color-ink-2); }
+.block-cmd { width: fit-content; max-width: min(65ch, 100%); margin-top: var(--space-sm); padding: var(--space-xs) var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.waiting-on { margin-top: var(--space-sm); color: var(--color-ink-2); font-size: var(--text-sm); }
+.history { margin-top: var(--space-xl); }
+.history > summary { list-style: none; cursor: pointer; padding-bottom: var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule); color: var(--color-muted); font-weight: 600; }
+.history > summary::-webkit-details-marker { display: none; }
+.history > summary::before { content: ""; display: inline-block; width: 0.4em; height: 0.4em; margin-right: var(--space-sm); border-right: 1.5px solid var(--color-muted); border-bottom: 1.5px solid var(--color-muted); transform: translateY(-0.12em) rotate(-45deg); }
+.history[open] > summary::before { transform: translateY(-0.2em) rotate(45deg); }
+.history .rule { color: var(--color-ink-2); }
+.empty { margin-top: var(--space-md); }
+.empty .lead { color: var(--color-ink); font-size: var(--text-lg); }
+.empty .cli { margin-top: var(--space-xl); color: var(--color-muted); font-size: var(--text-sm); }
+.empty pre { width: fit-content; max-width: min(65ch, 100%); margin: var(--space-xs) 0 var(--space-md); padding: var(--space-xs) var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 40rem) {
+  .page { padding-inline: var(--space-md); }
+  .btn, .text-btn, .reject summary, .cmd summary, .fold > summary { min-height: 2.75rem; }
+  .find { margin-left: 0; width: 100%; }
+  .find input[type=search] { width: 100%; }
+  .menu { left: 0; }
+  .bigrule { font-size: 1.5rem; }
+  .facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-3xs) 0; }
+  .facts dd { margin-bottom: var(--space-sm); }
+  .tabs { gap: 0 var(--space-md); }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<header class="bar"><div class="page">
+<a class="mark" href="/" aria-label="Reverie, all projects">Reverie</a>
+<details class="switch"><summary>payments-api</summary>
+<ul class="menu"><li><a href="/project?p=4e1e91cd" aria-current="page">payments-api</a></li><li><a href="/project?p=81071af5">notifications-service</a></li><li><a href="/project?p=4cdea88b">legacy-billing</a></li><li><hr></li><li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>
+<form class="find" action="/search" method="get" role="search"><input type="hidden" name="p" value="4e1e91cd"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
+</div></header>
+<div class="page">
+<div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=4e1e91cd">Overview<span class="n">4</span></a><a href="/context?p=4e1e91cd">Rules</a><a href="/memory?p=4e1e91cd" aria-current="page">Memory</a><a href="/start?p=4e1e91cd">What agents are told</a><a href="/proposals?p=4e1e91cd">Proposals<span class="n">2</span></a><a href="/connect?p=4e1e91cd">Connect</a></nav><div class="acts"><a href="/connect?p=4e1e91cd">Connect an agent</a><a href="/add?p=4e1e91cd">Add a rule</a></div></div>
+<main class="main">
+
+<p class="back"><a href="/memory?p=4e1e91cd">Back to Memory</a></p><h1 class="bigrule">Refunds over 10,000 INR need manager approval in the admin tool.</h1><p class="status">Challenged</p><section class="sec"><h2>Remembered decision</h2><dl class="facts"><dt>Said by</dt><dd>An agent inferred it</dd><dt>Evidence</dt><dd><span class="quote">“approval gate in <code>app/refunds/policy.py</code>”</span></dd><dt>Remembered</dt><dd>2026-11-12</dd><dt>Anchored to</dt><dd><code>app/refunds/policy.py</code></dd><dt>Used by agents</dt><dd>Used 3 times, contradicted twice.</dd></dl><p class="why">Challenged: agents contradicted it repeatedly, so agents are now told to confirm or fix it before relying on it. See the tally with <code>reverie usage</code>.</p></section><p class="idline">Id <code>23e2645b</code>. Open it from a terminal with <code>reverie show 23e2645b</code>.</p>
+</main>
+</div>
+</body>
+</html>
