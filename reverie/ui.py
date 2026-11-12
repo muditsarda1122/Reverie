@@ -730,7 +730,18 @@ def _doc_path(path: Path, root: str) -> str:
     try:
         return path.resolve().relative_to(Path(root).resolve()).as_posix()
     except ValueError:
-        return f"{context.scope_name(path.parent)}/{path.name}"
+        pass
+    mine = _under_home(path)
+    return mine if mine else f"{context.scope_name(path.parent)}/{path.name}"
+
+
+def _under_home(path: Path) -> str:
+    """A path inside the personal Reverie folder, shown as ~/.reverie/... whatever the folder is really called."""
+    try:
+        rel = path.resolve().relative_to(spool.reverie_home().resolve()).as_posix()
+    except ValueError:
+        return ""
+    return f"~/.reverie/{rel}" if rel != "." else "~/.reverie"
 
 
 def _doc_span(path: Path, root: str) -> str:
@@ -943,8 +954,10 @@ def _prop_entry(x: dict, ctx: dict, st: State | None) -> str:
                f'<label>Reason for turning it down (the proposer will read it)'
                f'<input type="text" name="why" maxlength="{LIMITS["why"]}" required></label>'
                f'<button class="text-btn" type="submit">Turn down with this reason</button></form></details>'
-               f'<details class="cmd"><summary>As commands</summary><pre>reverie context accept {slug}\n'
-               f'reverie context reject {slug} --why "..."</pre></details>')
+               f'<details class="cmd"><summary>As commands</summary>'
+               f'<p class="why">Accept it.</p><pre>reverie context accept {slug}</pre>'
+               f'<p class="why">Or turn it down, with the reason the proposer will read.</p>'
+               f'<pre>reverie context reject {slug} --why "..."</pre></details>')
         act = f'<div class="act">{act}</div>'
     else:
         act = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(x["doc"].name)}</code>: '
@@ -1328,13 +1341,13 @@ def rule_page(root: str, proj: dict, plist: list[dict], rid: str) -> tuple[int, 
         sec += "</section>"
         i = str(mem.get("id", ""))[:8]
         cmds = [("Print this item in a terminal.", f"reverie show {i}"),
-                ("Forget it. It can be restored.", f"reverie undo {i}\nreverie undo {i} --restore"),
-                ("Make it apply in every repo, not only this one. Take it back with --demote.",
-                 f"reverie promote {i}\nreverie promote {i} --demote")]
+                (f"Forget it. Bring it back with <code>reverie undo {i} --restore</code>.", f"reverie undo {i}"),
+                (f"Make it apply in every repo, not only this one. Take it back with <code>reverie promote {i} --demote</code>.",
+                 f"reverie promote {i}")]
         if deliver.is_stale_flagged(mem):
             cmds.append(("Keep it as it is and clear the possibly-outdated flag.", f"reverie stale keep {i}"))
         sec += ('<section class="sec"><h2>Commands</h2>' + "".join(
-            f'<p class="why">{esc(t)}</p><pre class="block-cmd">{esc(c)}</pre>' for t, c in cmds) + "</section>")
+            f'<p class="why">{t if "<code>" in t else esc(t)}</p><pre class="block-cmd">{esc(c)}</pre>' for t, c in cmds) + "</section>")
         text, ident = str(mem.get("text", "")), i
     else:
         assert rec is not None
@@ -1355,7 +1368,8 @@ def _team_sections(rec: dict, ctx: dict, w: dict, root: str) -> str:
     rows = []
     if rec["kind"] == "team":
         owners = _safe(lambda: context.owners_of(Path(it.file)), [])
-        folder = ".reverie/context" if it.layer == "repo" else (it.scope or "")
+        folder = (".reverie/context" if it.layer == "repo" else
+                  (_under_home(Path(it.file).parent) or it.scope or "") if it.layer == "personal" else (it.scope or ""))
         rows = [_fact("Source", esc(LAYER_WORD.get(it.layer, it.layer))), _fact("Folder", f'<code>{esc(folder)}</code>'),
                 _fact("Document", f'<code>{esc(rec["path"])}</code>')]
         if it.section:
