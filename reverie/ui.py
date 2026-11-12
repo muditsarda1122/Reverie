@@ -1481,6 +1481,11 @@ TAB_PATHS = ("/project", "/context", "/memory", "/start", "/proposals", "/connec
 
 def render(root: str, path: str, query: dict[str, list[str]] | None = None,
            st: State | None = None) -> tuple[int, str]:
+    with spool.git_memo():                       # git is asked once per answer for this one request, never across requests
+        return _render(root, path, query, st)
+
+
+def _render(root: str, path: str, query: dict[str, list[str]] | None, st: State | None) -> tuple[int, str]:
     try:
         target, proj, plist = _target(root, query)
         want = ((query or {}).get("p") or [""])[0]
@@ -1598,7 +1603,8 @@ def make_handler(root: str, allowed_hosts: set[str], state: State | None = None)
                     self._reply(403, "forbidden: missing or wrong token")
                 else:
                     try:
-                        where = do_write(root, st, path, form)
+                        with spool.git_memo():
+                            where = do_write(root, st, path, form)
                     except Exception:
                         self._reply(500, error_page(writing=True))
                         return

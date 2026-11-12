@@ -19,6 +19,8 @@ leaves at most a torn final line, which readers skip.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import json
 import os
@@ -54,7 +56,32 @@ def reverie_home() -> Path:
     return Path(env).expanduser() if env else Path.home() / ".reverie"
 
 
+_git_memo: contextvars.ContextVar[dict | None] = contextvars.ContextVar("reverie_git_memo", default=None)
+
+
+@contextlib.contextmanager
+def git_memo():
+    """Remember `git` answers (identity, repo root, history) until the block ends. The web UI wraps ONE request in it, so a
+    page asks git once however many places need the same answer, and a changed identity shows on the next page load.
+    Outside a block nothing is remembered."""
+    token = _git_memo.set({})
+    try:
+        yield
+    finally:
+        _git_memo.reset(token)
+
+
 def _git(args: list[str], cwd: str | Path, timeout: float = 5.0) -> str:
+    memo = _git_memo.get()
+    if memo is None:
+        return _git_run(args, cwd, timeout)
+    key = (tuple(args), str(cwd))
+    if key not in memo:
+        memo[key] = _git_run(args, cwd, timeout)
+    return memo[key]
+
+
+def _git_run(args: list[str], cwd: str | Path, timeout: float) -> str:
     try:
         proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
                               text=True, timeout=timeout)

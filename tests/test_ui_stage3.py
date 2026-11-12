@@ -179,7 +179,7 @@ def test_empty_and_blank_text_is_refused_with_nothing_written(env, serve):
         page = _follow(s, _http(s, "POST", "/do/add", {"token": tok, "p": pid, "text": text, "kind": "rule", "target": "repo", "why": "w"}))
         assert '<p class="err" id="add-error" role="alert">Nothing was saved: write the rule first.</p>' in page
         assert re.search(r'<textarea[^>]*required aria-invalid="true" aria-describedby="add-error"></textarea>', page)
-        assert 'name="why" maxlength="300" value="w"' in page                          # what was typed is kept
+        assert 'name="why"' not in page                                                # an owner is shown no Why field
     assert _tree(tmp_path) == before
 
 
@@ -196,7 +196,7 @@ def test_a_secret_is_refused_cleared_and_never_echoed_anywhere(env, serve):
         assert "Nothing was saved: this looks like it contains a secret. Remove the value and try again. The text was cleared on purpose." in page
         assert KEY not in page and "sk-ant" not in page and "Use token" not in page and "Fine rule" not in page
         assert re.search(r'<textarea[^>]*aria-invalid="true"[^>]*></textarea>', page)
-        assert 'name="why" maxlength="300" value=""' in page
+        assert 'name="why"' not in page
         assert "sk-ant" not in get(s, "/add")[1] and "sk-ant" not in get(s, "/context")[1]
     assert _tree(tmp_path) == before
 
@@ -210,7 +210,7 @@ def test_an_unknown_destination_is_refused_keeps_the_text_and_marks_the_choices(
     for target in ("team|nowhere/at-all", "personal", "../../etc", "org|x", ""):
         page = _follow(s, _http(s, "POST", "/do/add", {"token": tok, "p": pid, "text": "Keep me", "kind": "rule", "target": target, "why": "kept why"}))
         assert 'role="alert">Nothing was saved: this project cannot add to that place. Pick another option.</p>' in page, target
-        assert ">Keep me</textarea>" in page and 'value="kept why"' in page
+        assert ">Keep me</textarea>" in page
         assert 'name="target" value="repo" checked aria-invalid="true" aria-describedby="add-error"' in page
     assert _tree(tmp_path) == before
 
