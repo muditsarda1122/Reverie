@@ -11,6 +11,7 @@ missing makes the exit status 1.
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from collections import Counter
@@ -18,7 +19,6 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-import os
 BEFORE, AFTER = ROOT / "design" / "before", Path(os.environ.get("WIRING_AFTER") or ROOT / "design" / "after")   # WIRING_AFTER=design/live checks the real server's pages
 
 

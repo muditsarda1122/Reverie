@@ -220,14 +220,14 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 <header class="bar"><div class="page">
 <a class="mark" href="/" aria-label="Reverie, all projects">Reverie</a>
 <details class="switch"><summary>payments-api</summary>
-<ul class="menu"><li><a href="/project?p=f6892abc" aria-current="page">payments-api</a></li><li><a href="/project?p=30767912">notifications-service</a></li><li><a href="/project?p=75eaf87f">legacy-billing</a></li><li><hr></li><li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>
-<form class="find" action="/search" method="get" role="search"><input type="hidden" name="p" value="f6892abc"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
+<ul class="menu"><li><a href="/project?p=4b8c1bae" aria-current="page">payments-api</a></li><li><a href="/project?p=e69262a5">notifications-service</a></li><li><a href="/project?p=f99f8b86">legacy-billing</a></li><li><hr></li><li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>
+<form class="find" action="/search" method="get" role="search"><input type="hidden" name="p" value="4b8c1bae"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
 </div></header>
 <div class="page">
-<div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=f6892abc">Overview<span class="n">4</span></a><a href="/context?p=f6892abc">Rules</a><a href="/memory?p=f6892abc">Memory</a><a href="/start?p=f6892abc" aria-current="page">What agents are told</a><a href="/proposals?p=f6892abc">Proposals<span class="n">2</span></a><a href="/connect?p=f6892abc">Connect</a></nav><div class="acts"><a href="/add?p=f6892abc">Add a rule</a></div></div>
+<div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=4b8c1bae">Overview<span class="n">4</span></a><a href="/context?p=4b8c1bae">Rules</a><a href="/memory?p=4b8c1bae">Memory</a><a href="/start?p=4b8c1bae" aria-current="page">What agents are told</a><a href="/proposals?p=4b8c1bae">Proposals<span class="n">2</span></a><a href="/connect?p=4b8c1bae">Connect</a></nav><div class="acts"><a href="/add?p=4b8c1bae">Add a rule</a></div></div>
 <main class="main">
 <h1 class="visually-hidden">What agents are told for payments-api</h1>
-<p class="tally">8 rules are told to agents, plus an index of 5 remembered decisions and findings.</p><p class="who">This is what your agents are told. Your rules are only told to your own agents.</p><section class="group" aria-labelledby="g-ask"><h2 id="g-ask">Agents are told to ask first</h2><ol class="items"><li class="entry"><p><a href="/rule?p=f6892abc&amp;id=e3d2757f37"><code>http-retries</code></a></p><p class="why">orgdocs/platform and orgdocs/payments disagree. Agents are told to ask before acting on either.</p></li></ol></section><section class="group" aria-labelledby="g-text"><h2 id="g-text">What agents read</h2><pre class="doc" id="start">Team context rules (the narrower scope answers the wider unless locked; always apply):
+<p class="tally">8 rules are told to agents, plus an index of 5 remembered decisions and findings.</p><p class="who">This is what your agents are told. Your rules are only told to your own agents.</p><section class="group" aria-labelledby="g-ask"><h2 id="g-ask">Agents are told to ask first</h2><ol class="items"><li class="entry"><p><a href="/rule?p=4b8c1bae&amp;id=e3d2757f37"><code>http-retries</code></a></p><p class="why">orgdocs/platform and orgdocs/payments disagree. Agents are told to ask before acting on either.</p></li></ol></section><section class="group" aria-labelledby="g-text"><h2 id="g-text">What agents read</h2><pre class="doc" id="start">Team context rules (the narrower scope answers the wider unless locked; always apply):
 - [repo d89577f1d2] Money is stored and passed as integer minor units (cents) with an ISO 4217 currency code; never use floats, because rounding drift broke reconciliation in the March settlement run.
 - [repo 97d2983dbb] Every endpoint that creates a charge or refund must require an `Idempotency-Key` header and store the response for 24 hours, because card-network retries otherwise double-charge.
 - [repo fac934c10b] Database migrations must be backward compatible with the previous release, because we deploy with rolling restarts and `alembic` runs before the new pods are ready.
@@ -239,22 +239,22 @@ Conflicts between scopes (never silently dropped):
 - UNRESOLVED http-retries: [team orgdocs/platform e3d2757f37] &quot;All outbound HTTP calls retry up to 3 times with exponential backoff&quot; vs [team orgdocs/payments 887e6b40e1] &quot;Never retry the card processor&#x27;s `charge` endpoint; use the idempotency key and poll status instead&quot; (sibling scopes have no order). Neither applies yet: ask the user which one to follow before acting on either; it is settled with `reverie context resolve http-retries &quot;&lt;decision&gt;&quot;`.
 If two rules above seem to contradict, ask before acting.
 Possibly outdated team context (a later commit may contradict it; verify):
-- [repo 9c55b68de3] Use `app/clients/ledger.py` for all ledger writes; do not call the ledger service directly from handlers, because it owns retry and outbox semantics.  [commit e44deca2: handlers now call LedgerWriter directly; ledger.py no longer wraps retries]
-- [repo 38b000cf40] Webhook payloads from the card processor must be verified with `verify_signature()` in `app/webhooks/verify.py` before any parsing.  [commit 47d06554: verify_signature no longer exists; verification moved to verify_webhook with a timestamp tolerance]
+- [repo 9c55b68de3] Use `app/clients/ledger.py` for all ledger writes; do not call the ledger service directly from handlers, because it owns retry and outbox semantics.  [commit 905a1dbc: handlers now call LedgerWriter directly; ledger.py no longer wraps retries]
+- [repo 38b000cf40] Webhook payloads from the card processor must be verified with `verify_signature()` in `app/webhooks/verify.py` before any parsing.  [commit 705536d1: verify_signature no longer exists; verification moved to verify_webhook with a timestamp tolerance]
 
 Reverie rules (the user&#x27;s own words; always apply):
 ### Your personal rules
 - Prefer `rg` over `grep` in examples
 
 Rules you stated in earlier sessions:
-- [cd2a70b8] Never run migrations against the production replica; use the primary and the `--dry-run` flag first.
+- [75b2b4fc] Never run migrations against the production replica; use the primary and the `--dry-run` flag first.
 
 Reverie memory index. These are past decisions and findings, not facts: verify against the code. Open one with `reverie show &lt;id&gt;`.
-- [044431da] decision: We chose the transactional outbox over direct publishing to the event bus for payment … (anchor: app/events/outbox.py)
-- [36bb462d] decision: Refunds over 10,000 INR need manager approval in the admin tool. (anchor: app/refunds/policy.py)
-- [e1824e5d] rejected_approach: Rejected: caching merchant fee schedules in process memory; they change intraday and workers disagreed. (anchor: app/fees/schedule.py)
-- [9a5fb89c] preference: Keep handler functions under 40 lines; extract to `app/services/`. (anchor: repo)
-- [8e7be86a] environment: Integration tests need `docker compose up postgres redis` first and take about 90 seconds … (anchor: docker-compose.yml)</pre><p class="gnote">3,523 of 8,000 characters.</p></section>
+- [b6af6c86] decision: We chose the transactional outbox over direct publishing to the event bus for payment … (anchor: app/events/outbox.py)
+- [b0e635f8] decision: Refunds over 10,000 INR need manager approval in the admin tool. (anchor: app/refunds/policy.py)
+- [533cd012] rejected_approach: Rejected: caching merchant fee schedules in process memory; they change intraday and workers disagreed. (anchor: app/fees/schedule.py)
+- [f74837d6] preference: Keep handler functions under 40 lines; extract to `app/services/`. (anchor: repo)
+- [8a52ddfb] environment: Integration tests need `docker compose up postgres redis` first and take about 90 seconds … (anchor: docker-compose.yml)</pre><p class="gnote">3,523 of 8,000 characters.</p></section>
 </main>
 </div>
 </body>

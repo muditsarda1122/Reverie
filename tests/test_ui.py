@@ -188,9 +188,10 @@ def test_disabled_repo_shows_only_that_it_is_off(env, serve, monkeypatch):
     monkeypatch.chdir(repo)
     assert cli.main(["disable"]) == 0
     s = serve(repo)
-    for page in ("/", "/project", "/start", "/context", "/proposals", "/memory", "/search?q=squash"):
+    assert "Turned off</h2>" in req(s, "/")[1]                    # the board lists it, quietly, at the bottom
+    for page in ("/project", "/start", "/context", "/proposals", "/memory", "/search?q=squash"):
         _, body, _ = req(s, page)
-        assert "turned off for this repo" in body, page
+        assert "Reverie is turned off for svc." in body, page
         assert "squash merge" not in body and "integer cents" not in body and "Prefer small PRs" not in body
 
 
@@ -316,8 +317,8 @@ def test_memory_hint_says_this_machine_not_everyone(env, serve, monkeypatch):
 def test_add_page_personal_rule_command_has_user_flag(env, serve):
     """Without --user, `reverie rules add` writes the git-shared <repo>/.reverie/rules.md."""
     _, repo = env
-    body = req(serve(repo), "/add")[1]
-    assert 'reverie rules add --user "Money is integer cents"' in body
+    body = html.unescape(req(serve(repo), "/add")[1])
+    assert 'reverie rules add --user "Prefer rg over grep in examples"' in body
     assert 'reverie rules add "' not in body
 
 
@@ -331,7 +332,7 @@ def test_repo_rules_file_is_shown_labelled_and_counted(env, serve):
     assert "Shared rules file</h2>" in ctx and "Through git, with no owners and no review." in ctx
     assert "Money is integer cents" in ctx and "Prefer small PRs" in ctx
     assert "No team context applies here" not in ctx            # not the empty state any more
-    assert "2 rules in force" in req(s, "/")[1]
+    assert '2 rules <span class="in">in force</span>' in ctx
     assert "This repo's rules (team)" in html.unescape(req(s, "/start")[1])   # same bullets, as delivered
 
 
@@ -363,7 +364,7 @@ def test_rules_in_force_matches_what_the_start_block_gives(env, serve, monkeypat
     given = deliver.startup_text(str(repo), log=False)
     assert given.count("Money is integer cents") == 1            # shown once: the team rule
     # team rule 1 + remembered "paginate" 1 + user-wide preference 1
-    assert "3 rules in force" in req(s, "/")[1]
+    assert '3 rules <span class="in">in force</span>' in req(s, "/context")[1]
 
 
 def test_cli_help_for_ui_no_longer_says_read_only():
@@ -410,12 +411,12 @@ def test_connect_tab_of_a_disabled_project_shows_how_to_turn_it_on(env, serve, m
     s = serve(repo)
     status, body, _ = req(s, "/connect")
     assert status == 200
-    assert "Reverie is turned off for this repo" in body
+    assert "Reverie is turned off for this repo. Step 1 turns it on." in body
     assert "reverie enable" in body and "Turn it on for this project" in body
     assert "reverie install" in body
     assert "squash merge" not in body and "Prefer small PRs" not in body      # still shows no project data
     for page in ("/project", "/context", "/proposals", "/memory", "/start", "/add"):   # the rest stay "off"
-        assert "Nothing is delivered to agents and nothing is shown here" in req(s, page)[1], page
+        assert "Nothing is told to agents and nothing is shown here." in req(s, page)[1], page
 
 
 def test_rules_in_force_counts_only_what_the_start_limit_lets_through(env, serve, monkeypatch):
@@ -437,7 +438,8 @@ def test_rules_in_force_counts_only_what_the_start_limit_lets_through(env, serve
     cut = 55 - handed
     over = req(s, "/project")[1]
     assert f"{cut} more rules apply but were cut by the start limit." in over and "See what agents are told." in over
-    assert f"{handed} rules in force" in req(s, "/")[1] and f"{cut} cut by the start limit" in req(s, "/")[1]
+    rules_page = req(s, "/context")[1]
+    assert f'{handed} rules <span class="in">in force</span>, {cut} more cut by the start limit.' in rules_page
     start = req(s, "/start")[1]
     assert f"{handed} rules are told to agents." in start and f"{cut} more rules apply but were cut" in start
 
@@ -454,8 +456,8 @@ def test_no_cut_note_when_every_rule_fits(env, serve, monkeypatch):
 
 
 def test_the_tab_row_has_counts_only_for_what_waits_on_the_viewer(env, serve, monkeypatch):
-    """Rules and Memory carry no count any more (design.md); the project board still gives the one rules-in-force
-    figure, from the one function that counts them."""
+    """Rules and Memory carry no count any more (design.md); the Rules page gives the one rules-in-force figure,
+    from the one function that counts them."""
     _, repo = env
     (repo / ".reverie" / "context").mkdir(parents=True)
     (repo / ".reverie" / "context" / "rules.md").write_text("## Rules\n- Money is integer cents\n")
@@ -469,4 +471,4 @@ def test_the_tab_row_has_counts_only_for_what_waits_on_the_viewer(env, serve, mo
         body = req(s, page)[1]
         assert re.search(r'>Rules</a>', body) and not re.search(r'Rules<span class="n">', body), page
         assert not re.search(r'Memory<span class="n">', body), page
-    assert "4 rules in force" in req(s, "/")[1]            # 1 team + 2 rules.md + 1 remembered
+    assert '4 rules <span class="in">in force</span>' in req(s, "/context")[1]            # 1 team + 2 rules.md + 1 remembered

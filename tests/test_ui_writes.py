@@ -232,7 +232,7 @@ def test_a_target_the_project_does_not_offer_is_refused(env, serve):
     before = _tree(tmp_path)
     for target in ("personal", "org|../../etc", "team|nope", "../x"):
         page = _follow(s, _add(s, "Rule A", target=target))
-        assert "Refused" in page, target
+        assert "Nothing was saved: this project cannot add to that place." in page, target
     assert _tree(tmp_path) == before
 
 
@@ -293,7 +293,7 @@ def test_owner_add_changes_exactly_one_file(env, serve):
     after = _tree(tmp_path)
     changed = sorted(k for k in set(after) | set(before) if after.get(k) != before.get(k))
     assert changed == [str(repo / ".reverie" / "context" / "rules.md")]
-    assert "Added to rules.md" in page
+    assert "Added to <code>rules.md</code>" in page
     assert "- Always squash merge" in (repo / ".reverie/context/rules.md").read_text()
 
 
@@ -330,7 +330,7 @@ def test_a_refused_add_keeps_a_non_secret_text_for_editing(env, serve):
     _owner(repo)
     s = serve(repo)
     page = _follow(s, _add(s, "Keep me", target="personal"))
-    assert "Refused" in page and ">Keep me</textarea>" in page
+    assert "Nothing was saved: this project cannot add to that place." in page and ">Keep me</textarea>" in page
 
 
 def test_owner_accept_moves_the_proposal_into_the_document(env, serve):
@@ -405,7 +405,7 @@ def test_every_write_redirects_and_the_message_is_shown_once(env, serve):
     assert resp[0] == 303 and urlsplit(resp[2]["Location"]).path == "/add"
     first = _http(s, "GET", resp[2]["Location"])[1]
     again = _http(s, "GET", resp[2]["Location"])[1]
-    assert "Added to rules.md" in first and "Added to rules.md" not in again   # one-shot
+    assert "Added to <code>rules.md</code>" in first and "Added to <code>rules.md</code>" not in again   # one-shot
     for _ in range(3):                                                         # a refresh repeats nothing
         _http(s, "GET", resp[2]["Location"])
     assert (repo / ".reverie/context/rules.md").read_text().count("Rule once") == 1
@@ -418,7 +418,7 @@ def test_screens_show_the_git_identity_the_action_will_use(env, serve):
     prop = _propose_as_dev(repo)
     s = serve(repo)
     add = _http(s, "GET", "/add")[1]
-    assert "Dana Dev &lt;dev@acme.com&gt;" in add
+    assert 'Acting as <span title="dev@acme.com">Dana Dev</span>, from your git identity.' in add
     props = _http(s, "GET", "/proposals")[1]
     assert 'Acting as <span title="dev@acme.com">Dana Dev</span>, from your git identity.' in props
     assert "Waiting on an owner of" in props and "/do/accept" not in props        # a non-owner is shown no decide forms
@@ -473,7 +473,8 @@ def test_headers_forbid_framing_and_cross_origin_forms(env, serve):
         assert re.search(r'action="/do/\w+"', m)
 
 
-NOTE = "It has not been checked for conflicts yet: that happens at the next session start, or now with `reverie context check`."
+NOTE = ("It has not been checked for conflicts yet: that happens at the next session start, or now with "
+        "<code>reverie context check</code>.")
 
 
 def test_add_and_accept_say_the_conflict_check_has_not_run(env, serve):
@@ -482,7 +483,7 @@ def test_add_and_accept_say_the_conflict_check_has_not_run(env, serve):
     _owner(repo)
     s = serve(repo)
     page = _follow(s, _add(s, "Always squash merge"))
-    assert "Added to rules.md" in page and NOTE in page
+    assert "Added to <code>rules.md</code>" in page and NOTE in page
     tok, pid = _form(s, "/proposals")
     page = _follow(s, _http(s, "POST", "/do/accept", {"token": tok, "p": pid, "slug": prop["slug"]}))
     assert "Accepted into rules.md" in page and NOTE in page
@@ -492,7 +493,7 @@ def test_no_conflict_note_when_nothing_is_in_force_or_the_write_is_refused(env, 
     _, repo = env                                       # dev is not an owner: a proposal, not in force
     s = serve(repo)
     page = _follow(s, _add(s, "Prefer small PRs"))
-    assert "Written as a proposal" in page and "checked for conflicts" not in page
+    assert "Proposed: " in page and "checked for conflicts" not in page
     tok, pid = _form(s, "/add")                         # dev is not an owner: Proposals draws no form for them
     page = _follow(s, _http(s, "POST", "/do/reject", {"token": tok, "p": pid, "slug": "nope", "why": "x"}))
     assert "Refused" in page and "checked for conflicts" not in page

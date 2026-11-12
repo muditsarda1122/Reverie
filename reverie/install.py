@@ -762,6 +762,16 @@ def _command_exists(command: str, which=shutil.which) -> bool:
     return which(command) is not None
 
 
+def configured_agent_names(home: Path | None = None) -> list[str]:
+    """The human names of the agents whose config launches Reverie, in AGENTS order: what `reverie status`
+    lists under "MCP server command", and what the UI's Connect page says is set up."""
+    out = []
+    for server in configured_servers(home):
+        agent = _AGENTS_BY_KEY.get(server.agent)
+        out.append(agent.name if agent else server.agent)
+    return out
+
+
 def report_configured_servers(print_fn=print, home: Path | None = None,
                               which=shutil.which) -> bool:
     """``reverie status``: verify every configured harness's server command

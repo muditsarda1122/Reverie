@@ -17,6 +17,7 @@ write path of the UI's own), and both refusing exactly where the CLI refuses:
   the existing redaction; a strict Content-Security-Policy (form-action 'self', no framing); no
   script, no external resource; a submitted secret is refused and never echoed back;
 * the UI never runs the conflict judge; the detached session-start worker and the daily job do;
+* a page or a write that fails is a plain 500 page ("Something went wrong") with no trace and no exception text;
 * no telemetry of any kind: the server logs nothing and reports nothing.
 
 Standard library only.
@@ -29,6 +30,7 @@ import hmac
 import html
 import re
 import secrets
+import shlex
 import threading
 import webbrowser
 from collections.abc import Callable
@@ -39,245 +41,15 @@ from urllib.parse import parse_qs, quote, urlsplit
 from . import context, deliver, redact, rules, spool, usage
 from .ui_style import CSS as DESIGN_CSS
 
-PAGE_SIZE = 100
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors 'none'")
 MAX_BODY = 16 * 1024
 WRITE_PATHS = ("/do/add", "/do/accept", "/do/reject")
 LIMITS = {"text": 1000, "why": 300, "slug": 200, "token": 100, "p": 16, "kind": 16, "target": 120}
 
-# Design: a team workspace. A slim sidebar of projects (the unit people think in), a top bar with
-# the path you are on and search, a project header with tabs, and boards where the work is a set
-# of things to triage (conflicts, outdated rules, proposals, memory by kind). One neutral family,
-# one blue for the current tab, links and the primary action; amber/red/green only mean status.
-CSS = """
-:root{
---canvas:#eceef2;--bg:#fff;--side:#f6f7f9;--sunk:#f4f5f8;--line:#e6e8ee;--line2:#d3d7e0;
---fg:#12151c;--mut:#566070;--faint:#7a8494;
---accent:#1f5bff;--accent-d:#1747cf;--accent-bg:#e9efff;--accent-fg:#1a43b8;
---warn-bg:#fff4dc;--warn-fg:#8a4a00;--bad-bg:#fdeceb;--bad-fg:#a1231f;--ok-bg:#e6f5ec;--ok-fg:#17603a;
---ring:rgba(31,91,255,.35);--ease:cubic-bezier(.22,1,.36,1)}
-@media (prefers-color-scheme:dark){:root{
---canvas:#08090c;--bg:#121419;--side:#0e1014;--sunk:#181b22;--line:#242933;--line2:#343b48;
---fg:#e9ebf0;--mut:#a2abb8;--faint:#7f8997;
---accent:#6f98ff;--accent-d:#8aaaff;--accent-bg:#18264a;--accent-fg:#adc3ff;
---warn-bg:#2b2310;--warn-fg:#f0bd62;--bad-bg:#2d1818;--bad-fg:#f49a95;--ok-bg:#12261a;--ok-fg:#7fd1a1;
---ring:rgba(111,152,255,.45)}}
-*{box-sizing:border-box}
-html{color-scheme:light dark}
-body{margin:0;background:var(--canvas);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
--webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
-::selection{background:var(--accent-bg);color:var(--accent-fg)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
-*{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
-a{color:inherit;text-decoration:none}
-p a,.lede a,.note a{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
-code{font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--sunk);
-border:1px solid var(--line);border-radius:6px;padding:1px 6px;overflow-wrap:anywhere}
-pre{font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:0;padding:20px 22px;
-white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:68vh}
-svg{flex:none}
-
-/* frame: the whole app sits in one inset window on the canvas */
-.app{display:grid;grid-template-columns:264px minmax(0,1fr);min-height:100vh;max-width:1560px;margin:0 auto;
-background:var(--bg)}
-@media (min-width:1200px){body{padding:18px}.app{min-height:calc(100vh - 36px);border-radius:18px;overflow:hidden;
-border:1px solid var(--line)}}
-.side{background:var(--side);border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column;
-gap:6px;position:sticky;top:0;height:100vh;overflow:auto;align-self:start}
-@media (min-width:1200px){.side{height:calc(100vh - 36px)}}
-.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 14px;font-weight:650;font-size:16px;letter-spacing:-.01em}
-.logo{width:28px;height:28px;border-radius:8px;background:var(--fg);color:var(--bg);display:grid;place-items:center}
-.sec{display:flex;align-items:center;justify-content:space-between;padding:14px 10px 6px;font-size:12px;
-font-weight:600;color:var(--faint)}
-.sec a{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:var(--mut);
-transition:background-color .15s var(--ease)}
-.sec a:hover{background:var(--line)}
-.item{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:9px;color:var(--mut);font-weight:520;
-transition:background-color .15s var(--ease),color .15s var(--ease);min-width:0}
-.item span.t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.item:hover{background:var(--sunk);color:var(--fg)}
-.item[aria-current=page]{background:var(--line);color:var(--fg)}
-.tile{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;flex:none}
-.tile.lg{width:44px;height:44px;border-radius:12px;font-size:19px}
-.t0{background:#2f6bff}.t1{background:#16a085}.t2{background:#d9480f}.t3{background:#7c3aed}.t4{background:#0b7285}.t5{background:#c2255c}
-.dot{margin-left:auto;min-width:19px;height:19px;border-radius:10px;padding:0 6px;font-size:11.5px;font-weight:650;
-display:grid;place-items:center;background:var(--warn-bg);color:var(--warn-fg)}
-.foot{margin-top:auto;padding:12px 10px 4px;color:var(--faint);font-size:12.5px;display:flex;gap:8px}
-
-/* top bar */
-.col{min-width:0;display:flex;flex-direction:column}
-.top{display:flex;align-items:center;gap:16px;padding:12px 28px;border-bottom:1px solid var(--line);min-height:62px}
-.crumbs{display:flex;align-items:center;gap:8px;color:var(--faint);min-width:0;white-space:nowrap;overflow:hidden}
-.crumbs b{color:var(--fg);font-weight:600;overflow:hidden;text-overflow:ellipsis}
-.crumbs a:hover{color:var(--fg)}
-.search{margin-left:auto;display:flex;align-items:center;gap:8px;width:min(340px,40vw);height:38px;padding:0 12px;
-border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--faint);
-transition:border-color .15s var(--ease),box-shadow .15s var(--ease)}
-.search:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
-.search input{all:unset;flex:1;min-width:0;color:var(--fg);font-size:14px}
-.search input::placeholder{color:var(--faint)}
-.ro{display:flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:999px;background:var(--sunk);
-color:var(--mut);font-size:12.5px;font-weight:550;white-space:nowrap}
-
-/* page head */
-main{padding:28px 28px 64px;min-width:0}
-.head{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
-.head .who{display:flex;gap:14px;align-items:center;min-width:0;flex:1 1 20rem}
-.head .acts{display:flex;gap:10px;flex-wrap:wrap;margin-left:auto}
-h1{font-size:1.7rem;line-height:1.2;letter-spacing:-.022em;margin:0;font-weight:670;text-wrap:balance}
-.sub{color:var(--mut);margin:4px 0 0;max-width:68ch;overflow-wrap:anywhere}
-.btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 15px;border-radius:999px;font-weight:580;
-font-size:14px;border:1px solid var(--line2);background:var(--bg);color:var(--fg);white-space:nowrap;
-transition:background-color .15s var(--ease),border-color .15s var(--ease)}
-.btn:hover{background:var(--sunk);border-color:var(--faint)}
-.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn.pri:hover{background:var(--accent-d);border-color:var(--accent-d)}
-.tabs{display:flex;gap:4px;margin:22px 0 0;border-bottom:1px solid var(--line);overflow-x:auto}
-.tabs a{display:flex;align-items:center;gap:8px;padding:10px 14px 12px;color:var(--mut);font-weight:550;white-space:nowrap;
-border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s var(--ease)}
-.tabs a:hover{color:var(--fg)}
-.tabs a[aria-current=page]{color:var(--fg);border-bottom-color:var(--accent)}
-.tabs a[aria-current=page] svg{color:var(--accent)}
-.tabs .n{font-size:12px;font-weight:650;min-width:20px;height:20px;border-radius:10px;padding:0 6px;display:grid;
-place-items:center;background:var(--sunk);color:var(--mut)}
-.tabs .n.hot{background:var(--warn-bg);color:var(--warn-fg)}
-
-/* boards */
-.board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(272px,1fr);gap:18px;margin-top:26px;overflow-x:auto;
-padding-bottom:6px;align-items:start}
-.lane{min-width:0}
-.lane>h2{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:620;margin:0 0 12px;padding:0 2px}
-.lane>h2 .c{min-width:22px;height:22px;border-radius:11px;padding:0 7px;display:grid;place-items:center;
-font-size:12px;font-weight:650;background:var(--fg);color:var(--bg)}
-.lane>h2 .c.w{background:var(--warn-bg);color:var(--warn-fg)}.lane>h2 .c.b{background:var(--bad-bg);color:var(--bad-fg)}
-.lane>h2 .c.o{background:var(--ok-bg);color:var(--ok-fg)}.lane>h2 .c.a{background:var(--accent-bg);color:var(--accent-fg)}
-.stack{display:flex;flex-direction:column;gap:12px}
-.card{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:16px;min-width:0;overflow-wrap:anywhere;
-transition:border-color .15s var(--ease),box-shadow .15s var(--ease)}
-a.card:hover,.card:hover{border-color:var(--line2);box-shadow:0 4px 14px rgba(16,24,40,.07)}
-.card h3{margin:0;font-size:15px;font-weight:620;line-height:1.35}
-.card p{margin:6px 0 0;color:var(--mut);font-size:13.5px}
-.card .q{color:var(--fg);font-size:14px}
-.rule{height:1px;background:var(--line);margin:14px 0 12px;border:0}
-.meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--faint);font-size:12.5px}
-.meta .sp{margin-left:auto}
-.who1{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--mut);min-width:0}
-.av{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;color:#fff;flex:none}
-.chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:999px;font-size:12px;font-weight:600;
-background:var(--sunk);color:var(--mut);white-space:nowrap}
-.chip.warn{background:var(--warn-bg);color:var(--warn-fg)}.chip.bad{background:var(--bad-bg);color:var(--bad-fg)}
-.chip.ok{background:var(--ok-bg);color:var(--ok-fg)}.chip.acc{background:var(--accent-bg);color:var(--accent-fg)}
-details{margin-top:12px}
-summary{cursor:pointer;color:var(--accent);font-weight:580;font-size:13px;list-style:none;display:inline-flex;gap:6px;
-align-items:center;border-radius:6px}
-summary::-webkit-details-marker{display:none}
-summary::before{content:"";width:6px;height:6px;border-right:1.75px solid currentColor;border-bottom:1.75px solid currentColor;
-transform:rotate(-45deg);transition:transform .15s var(--ease);margin-right:2px}
-details[open] summary::before{transform:rotate(45deg)}
-.cmd{display:block;margin-top:8px;padding:10px 12px;background:var(--sunk);border:1px solid var(--line);border-radius:10px;
-font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere;user-select:all}
-.cmd.big{font-size:13.5px;padding:13px 15px}
-.empty{margin-top:26px;border:1px dashed var(--line2);border-radius:16px;padding:40px 24px;text-align:center;
-display:flex;flex-direction:column;align-items:center;gap:8px}
-.empty .ico{width:44px;height:44px;border-radius:12px;background:var(--sunk);display:grid;place-items:center;color:var(--faint)}
-.empty b{font-size:1.05rem}.empty p{margin:0;color:var(--mut);max-width:50ch}
-.lane .empty{margin:0;padding:22px 14px;border-radius:14px;font-size:13.5px;color:var(--faint)}
-
-/* tables and docs */
-.panel{margin-top:26px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--bg)}
-.scroll{overflow-x:auto}
-table{border-collapse:collapse;width:100%;font-size:14px}
-th{text-align:left;font-size:12px;font-weight:600;color:var(--faint);background:var(--side);padding:10px 16px;
-border-bottom:1px solid var(--line);white-space:nowrap}
-td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
-tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--side)}
-td .s{display:block;color:var(--faint);font-size:12px;margin-top:2px}
-.marks{display:flex;flex-wrap:wrap;gap:6px}
-.pager{display:flex;align-items:center;gap:10px;color:var(--mut);margin:18px 0 0}
-.pager a{padding:6px 14px;border:1px solid var(--line2);border-radius:999px;font-weight:580;color:var(--fg)}
-.pager a:hover{background:var(--sunk)}
-.steps{counter-reset:s;display:grid;gap:14px;margin:26px 0 0;padding:0;list-style:none;max-width:46rem}
-.steps>li{counter-increment:s;display:grid;grid-template-columns:30px minmax(0,1fr);gap:4px 14px}
-.steps>li::before{content:counter(s);width:28px;height:28px;border-radius:50%;background:var(--accent-bg);
-color:var(--accent-fg);font-weight:700;font-size:13px;display:grid;place-items:center;grid-row:span 3}
-.steps b{font-weight:620;align-self:center}.steps p{margin:0;color:var(--mut);font-size:14px}
-.note{margin-top:44px;color:var(--faint);font-size:12.5px}
-.hint{margin-top:18px;color:var(--mut);font-size:13.5px}
-.statline{display:flex;gap:22px;flex-wrap:wrap;margin-top:22px;color:var(--mut);font-size:13.5px}
-.statline b{color:var(--fg);font-size:15px;margin-right:5px}
-
-/* forms and flash */
-.flash{margin:20px 0 0;padding:12px 16px;border-radius:12px;font-weight:550;overflow-wrap:anywhere}
-.flash.ok{background:var(--ok-bg);color:var(--ok-fg)}.flash.bad{background:var(--bad-bg);color:var(--bad-fg)}
-form.f{display:grid;gap:12px;margin-top:12px}
-form.f label{display:grid;gap:5px;font-size:13px;font-weight:600;color:var(--mut)}
-form.f textarea,form.f input[type=text],form.f select{font:inherit;font-size:14px;font-weight:400;color:var(--fg);
-background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:9px 11px;width:100%}
-form.f textarea{min-height:84px;resize:vertical}
-form.f textarea:focus,form.f input:focus,form.f select:focus{outline:2px solid var(--accent);outline-offset:1px}
-.btn.bad{border-color:var(--bad-fg);color:var(--bad-fg);background:var(--bg)}
-button.btn{cursor:pointer;font-family:inherit}
-.who{color:var(--mut);font-size:13px}
-.acts2{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
-.acts2 form.f{margin:0;flex:1 1 220px}
-@media (max-width:900px){
-.app{grid-template-columns:minmax(0,1fr)}
-.side{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);flex-direction:row;overflow-x:auto;
-align-items:center;padding:10px 12px;gap:4px}
-.brand{padding:0 8px 0 4px}.sec,.foot{display:none}
-.item{white-space:nowrap}
-.top{padding:10px 16px}.search{display:none}
-main{padding:20px 16px 48px}.board{grid-auto-flow:row;grid-auto-columns:minmax(0,1fr)}}
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
-"""
-
-# icons: authored, 24px grid, 1.75 stroke, one weight everywhere
-_ICONS = {
-    "grid": '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/>'
-            '<rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
-    "eye": '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/>',
-    "users": '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.4-3 2.6-4.8 5.5-4.8s5.1 1.8 5.5 4.8"/>'
-             '<path d="M15.5 5.8a3 3 0 0 1 0 5.4"/><path d="M17.5 14.6c1.8.6 2.7 2 3 4.4"/>',
-    "inbox": '<path d="M3.5 13.5 6 6h12l2.5 7.5"/><path d="M3.5 13.5V18a1 1 0 0 0 1 1h15a1 1 0 0 0 1-1v-4.5H15a3 3 0 0 1-6 0Z"/>',
-    "layers": '<path d="m12 4 8.5 4.5L12 13 3.5 8.5 12 4Z"/><path d="m3.5 12.5 8.5 4.5 8.5-4.5"/><path d="m3.5 16.5 8.5 4.5 8.5-4.5"/>',
-    "list": '<path d="M9 7h11M9 12h11M9 17h11"/><path d="M4.5 7h.01M4.5 12h.01M4.5 17h.01"/>',
-    "check": '<circle cx="12" cy="12" r="9"/><path d="m8 12.3 2.8 2.8L16.2 9.5"/>',
-    "alert": '<path d="M12 4 21 19.5H3L12 4Z"/><path d="M12 10v4.2"/><path d="M12 16.9v.1"/>',
-    "lock": '<rect x="5" y="10.5" width="14" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
-    "off": '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6 18.4 18.4"/>',
-    "plus": '<path d="M12 5v14M5 12h14"/>',
-    "search": '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/>',
-    "plug": '<path d="M9 4v5M15 4v5"/><path d="M6.5 9h11v3a5.5 5.5 0 0 1-11 0V9Z"/><path d="M12 17.5V21"/>',
-    "folder": '<path d="M3.5 7.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.2h8a1.5 1.5 0 0 1 1.5 1.5v7.8a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V7.5Z"/>',
-    "chev": '<path d="m9 6 6 6-6 6"/>',
-    "logo": '<path d="M5 17.5V6.5l7 3.5 7-3.5v11l-7-3.5-7 3.5Z"/>',
-}
-
-
-def icon(name: str, size: int = 18) -> str:
-    return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-            f'stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-            f'{_ICONS[name]}</svg>')
-
-
 def esc(value: object, *, redacted: bool = True) -> str:
     text = redact.redact(str(value)) if redacted else str(value)
     return html.escape(text, quote=True)
-
-
-def _clip(text: str, n: int = 300) -> str:
-    one = " ".join(str(text).split())
-    return one if len(one) <= n else one[: n - 1] + "…"
-
-
-def _hue(text: str) -> int:
-    return hashlib.sha1(text.encode()).digest()[0] % 6
-
-
-def _avatar(who: str) -> str:
-    name = (who.split("<")[0].strip() or who.strip() or "?")
-    return f'<span class="av t{_hue(name)}" title="{esc(who)}">{esc(name[:1].upper())}</span>'
 
 
 # ---------------------------------------------------------------------------
@@ -351,10 +123,6 @@ def rules_in_force(d: dict) -> tuple[int, int]:
     return told_counts(d)
 
 
-def _attention(d: dict) -> int:
-    return len(d["unresolved"]) + len(d["stale_team"]) + len(d["stale_mem"]) + len(d["proposals"])
-
-
 # ---------------------------------------------------------------------------
 # projects: only repos Reverie already knows (plus the one it was started in), by opaque id
 # ---------------------------------------------------------------------------
@@ -395,153 +163,11 @@ def _u(path: str, proj: dict | None = None, **q: str) -> str:
     return path + ("?" + "&".join(f"{k}={quote(str(v))}" for k, v in args) if args else "")
 
 
-# ---------------------------------------------------------------------------
-# frames
-# ---------------------------------------------------------------------------
-
-def _doc(title: str, side_proj: dict | None, plist: list[dict], active: str, crumbs: list[str],
-         inner: str) -> str:
-    projs = "".join(
-        f'<a class=item href="{_u("/project", p)}"{" aria-current=page" if (side_proj and p["id"] == side_proj["id"]) else ""}>'
-        f'<span class="tile t{_hue(p["name"])}">{esc(p["name"][:1].upper())}</span>'
-        f'<span class=t>{esc(p["name"])}</span></a>' for p in plist[:40])
-    pid = f'<input type=hidden name=p value="{side_proj["id"]}">' if side_proj else ""
-    cr = " ".join(crumbs)
-    return (
-        "<!doctype html><html lang=en><head><meta charset=utf-8>"
-        "<meta name=viewport content='width=device-width,initial-scale=1'>"
-        f"<title>{esc(title)} · Reverie</title><style>{CSS}</style></head><body><div class=app>"
-        f"<aside class=side><div class=brand><span class=logo>{icon('logo', 16)}</span>Reverie</div>"
-        f'<a class=item href="/"{" aria-current=page" if active == "/" else ""}>{icon("grid")}<span class=t>All projects</span></a>'
-        f'<a class=item href="/new"{" aria-current=page" if active == "/new" else ""}>{icon("plus")}<span class=t>Add a project</span></a>'
-        f'<div class=sec><span>Projects</span></div>{projs}'
-        f"<div class=foot>{icon('lock', 15)}<span>Local only. It writes only when you press a button, with the CLI's own rules.</span></div></aside>"
-        f'<div class=col><div class=top><div class=crumbs>{cr}</div>'
-        f'<form class=search action="/search" method=get role=search>{icon("search", 16)}{pid}'
-        f'<input name=q type=search placeholder="Search rules and memory" aria-label="Search rules and memory" '
-        f'maxlength=120></form></div><main>{inner}'
-        f'<p class=note>Everything here is also a command; the page calls the same functions and refuses what the CLI refuses.</p></main></div>'
-        f"</div></body></html>")
-
-
-def _crumb_link(label: str, href: str) -> str:
-    return f'<a href="{href}">{esc(label)}</a><span>/</span>'
-
-
-def shell(title: str, sub: str, body: str, active: str, *, plist: list[dict], actions: str = "") -> str:
-    head = (f'<div class=head><div class=who><div><h1>{esc(title)}</h1>'
-            + (f'<p class=sub>{sub}</p>' if sub else "") + f'</div></div><div class=acts>{actions}</div></div>')
-    return _doc(title, None, plist, active, [f"<b>{esc(title)}</b>"], head + body)
-
-
-TABS = (("/project", "Overview", "grid"), ("/context", "Rules", "users"), ("/memory", "Memory", "layers"),
-        ("/start", "What agents are told", "eye"), ("/proposals", "Proposals", "inbox"),
-        ("/connect", "Connect", "plug"))
-
-
-def frame(proj: dict, plist: list[dict], d: dict | None, tab: str, body: str, *, title: str = "") -> str:
-    d = d or {}
-    n_att = _attention(d) if d else 0
-    counts = {"/project": (n_att, True), "/proposals": (len(d.get("proposals", [])), True),
-              "/context": (rules_in_force(d)[0] if d else 0, False), "/memory": (len(d.get("mem", [])), False)}
-    tabs = ""
-    for path, label, ico in TABS:
-        n, hot = counts.get(path, (0, False))
-        badge = f'<span class="n{" hot" if hot and n else ""}">{n}</span>' if n else ""
-        cur = ' aria-current="page"' if path == tab else ""
-        tabs += f'<a href="{_u(path, proj)}"{cur}>{icon(ico, 16)}{esc(label)}{badge}</a>'
-    head = (f'<div class=head><div class=who><span class="tile lg t{_hue(proj["name"])}">'
-            f'{esc(proj["name"][:1].upper())}</span><div><h1>{esc(proj["name"])}</h1>'
-            f'<p class=sub>{esc(proj["path"])}</p></div></div><div class=acts>'
-            f'<a class=btn href="{_u("/connect", proj)}">{icon("plug", 16)}Connect an agent</a>'
-            f'<a class="btn pri" href="{_u("/add", proj)}">{icon("plus", 16)}Add a rule</a></div></div>'
-            f'<nav class=tabs aria-label="Project">{tabs}</nav>')
-    label = next((lab for p, lab, _ in TABS if p == tab), title)
-    crumbs = [_crumb_link("Projects", "/"), _crumb_link(proj["name"], _u("/project", proj)),
-              f"<b>{esc(title or label)}</b>"]
-    return _doc(f'{proj["name"]} · {title or label}', proj, plist, "", crumbs, head + body)
-
-
-def _empty(ico: str, title: str, text: str) -> str:
-    return (f'<div class=empty><span class=ico>{icon(ico, 20)}</span><b>{esc(title)}</b><p>{text}</p></div>')
-
-
-def _cmd(*commands: str, label: str = "How to settle it") -> str:
-    lines = "".join(f"<code class=cmd>{c}</code>" for c in commands)
-    return f"<details><summary>{esc(label)}</summary>{lines}</details>"
-
-
 def _pslug(slug: str) -> str:
     """A safe fragment id for a proposal card, the same on Overview (link) and Proposals (target)."""
     return "p-" + hashlib.sha1(slug.encode()).hexdigest()[:10]
 
 
-def _owner(item) -> str:
-    return _safe(lambda: context.owner_text(item), "")
-
-
-def _lane(title: str, tone: str, cards: list[str], empty: str = "") -> str:
-    inner = "".join(cards) if cards else f'<div class=empty>{esc(empty)}</div>'
-    return f'<section class=lane><h2>{esc(title)}<span class="c {tone}">{len(cards)}</span></h2><div class=stack>{inner}</div></section>'
-
-
-def _disabled(proj: dict, plist: list[dict], tab: str) -> str:
-    return frame(proj, plist, None, tab, _empty(
-        "off", "Reverie is turned off for this repo",
-        "Nothing is delivered to agents and nothing is shown here. Turn it back on with "
-        "<code>reverie enable</code>."), title="Turned off")
-
-
-# ---------------------------------------------------------------------------
-# pages
-# ---------------------------------------------------------------------------
-
-def projects_page(root: str, query=None) -> str:
-    _, _, plist = _target(root, query)
-    lanes: dict[str, list[str]] = {"attn": [], "ok": [], "off": []}
-    for p in plist:
-        off = is_disabled(p["path"])
-        d = None if off else collect(p["path"])
-        link = _u("/project", p)
-        head = (f'<div style="display:flex;gap:12px;align-items:center"><span class="tile lg t{_hue(p["name"])}">'
-                f'{esc(p["name"][:1].upper())}</span><div style="min-width:0"><h3>{esc(p["name"])}</h3>'
-                f'<p style="margin:2px 0 0">{esc(p["path"])}</p></div></div>')
-        if off:
-            lanes["off"].append(f'<a class=card href="{link}">{head}<hr class=rule><div class=meta>'
-                                f'{icon("off", 15)}Reverie is turned off for this repo</div></a>')
-            continue
-        assert d is not None
-        n = _attention(d)
-        chips = []
-        if d["unresolved"]:
-            chips.append(f'<span class="chip bad">{len(d["unresolved"])} conflict{"s" if len(d["unresolved"]) != 1 else ""}</span>')
-        out = len(d["stale_team"]) + len(d["stale_mem"])
-        if out:
-            chips.append(f'<span class="chip warn">{out} outdated</span>')
-        if d["proposals"]:
-            chips.append(f'<span class="chip acc">{len(d["proposals"])} proposal{"s" if len(d["proposals"]) != 1 else ""}</span>')
-        in_force, cut = rules_in_force(d)
-        cut_note = f'<span>{cut} cut by the start limit</span><span>·</span>' if cut else ""
-        foot = (f'<hr class=rule><div class=meta><span>{in_force} rules in force</span><span>·</span>{cut_note}'
-                f'<span>{len(d["mem"])} remembered</span></div>')
-        card = (f'<a class=card href="{link}">{head}'
-                + (f'<div class=marks style="margin-top:12px">{"".join(chips)}</div>' if chips else "")
-                + foot + "</a>")
-        lanes["attn" if n else "ok"].append(card)
-    board = (_lane("Needs attention", "w", lanes["attn"], "Nothing waiting on anyone.")
-             + _lane("All clear", "o", lanes["ok"], "No project is fully clear yet.")
-             + (_lane("Turned off", "", lanes["off"]) if lanes["off"] else ""))
-    return shell("Projects", "Every repo Reverie knows on this machine, sorted by what needs a person.",
-                 f'<div class=board>{board}</div>', "/", plist=plist,
-                 actions=f'<a class="btn pri" href="/new">{icon("plus", 16)}Add a project</a>')
-
-
-def _chips(marks: list[str]) -> str:
-    return "".join(f'<span class="chip {"bad" if m == "conflict" else "warn" if "outdated" in m else ""}">'
-                   f'{esc(m)}</span>' for m in marks)
-
-
-_KIND_ORDER = ("rule", "preference", "decision")
 KIND_NAMES = {"rule": "Rules", "preference": "Preferences", "decision": "Decisions",
               "rejected_approach": "Rejected approaches", "environment": "Environment",
               "observation": "Observations", "open_question": "Open questions",
@@ -550,101 +176,6 @@ KIND_NAMES = {"rule": "Rules", "preference": "Preferences", "decision": "Decisio
 
 def _kind_name(kind: str) -> str:
     return KIND_NAMES.get(kind) or kind.replace("_", " ").capitalize()
-
-
-def _mcard(m: dict) -> str:
-    meta = m.get("meta") or {}
-    use = ", ".join(f"{k.lower()}={v}" for k, v in sorted((meta.get("usage") or {}).items()))
-    flags = [f for f, on in (("possibly outdated", deliver.is_stale_flagged(m)),
-                             ("challenged", bool(meta.get("challenged")))) if on]
-    src = str(m.get("source") or m.get("origin") or "")
-    return (f'<article class=card><p class=q style="margin:0">{esc(_clip(m.get("text", "")))}</p>'
-            + (f'<div class=marks style="margin-top:10px">{_chips(flags)}</div>' if flags else "")
-            + f'<hr class=rule><div class=meta><span class=chip>{esc(src or "unknown")}</span>'
-              + (f'<span>{esc(use)}</span>' if use else "")
-              + f'<span class=sp><code>{esc(str(m.get("id", ""))[:8])}</code></span></div></article>')
-
-
-def connect_page(root: str, proj: dict, plist: list[dict]) -> str:
-    off = is_disabled(root)
-    state = ('<span class="chip warn">Reverie is turned off for this repo</span>' if off
-             else '<span class="chip ok">Reverie is on for this repo</span>')
-    p = esc(proj["path"])
-    body = (f'<p class=hint>{state}</p><ol class=steps>'
-            f'<li><b>Set up your agent once per machine</b><p>This adds Reverie to the agents you use '
-            f'(Claude Code, Codex and others it finds).</p><code class="cmd big">reverie install</code></li>'
-            f'<li><b>Turn it on for this project</b><p>Reverie is on by default. Use this to turn it back on '
-            f'after <code>reverie disable</code>.</p><code class="cmd big">cd {p} &amp;&amp; reverie enable</code></li>'
-            f'<li><b>Start a session and check</b><p>Open your agent in the project. What it receives is on '
-            f'the “What agents are told” tab.</p><code class="cmd big">reverie status</code></li>'
-            f'<li><b>Share rules with your team</b><p>Point the repo at a shared folder of markdown rules in '
-            f'<code>.reverie/context.toml</code>; everyone who opens the project gets them.</p>'
-            f'<code class="cmd big">reverie context</code></li></ol>')
-    return frame(proj, plist, None, "/connect", body, title="Connect an agent")
-
-
-def add_page(root: str, proj: dict, plist: list[dict], st: State | None = None,
-             flash: dict | None = None) -> str:
-    def way(title: str, text: str, cmd: str) -> str:
-        return (f'<article class=card><h3>{esc(title)}</h3><p>{text}</p><code class="cmd big">{cmd}</code></article>')
-    flash = flash or {}
-    opts = "".join(f'<option value="{esc(v)}">{esc(lab)}</option>' for v, lab in _targets(root))
-    ids = [f"{lab}: {_who(Path(f), root)}" for lab, f in
-           [(f"{lay} {context.scope_name(fo)}", fo) for lay, fos in context.sources(root).items() for fo in fos]]
-    who = (f"<p class=who>You would act as <b>{esc(_safe(lambda: _who(Path(root) / '.reverie' / 'context', root), '?'))}</b> "
-           f"(this repo's git identity). If a CODEOWNERS entry covers the document and you are not an owner, "
-           f"this becomes a proposal the owners review.</p>"
-           + (f"<p class=who>Shared folders use their own git identity: {esc('; '.join(ids))}</p>" if ids else ""))
-    form = (_form_open(proj, st, "/do/add")
-            + f'<label>The rule<textarea name=text maxlength={LIMITS["text"]} required>{esc(flash.get("text", ""))}'
-              f'</textarea></label>'
-              '<label>Kind<select name=kind><option value=rule>Rule (always delivered)</option>'
-              '<option value=guidance>Guidance (delivered when relevant)</option></select></label>'
-              f'<label>Where<select name=target>{opts}</select></label>'
-              f'<label>Why (optional)<input type=text name=why maxlength={LIMITS["why"]} '
-              f'value="{esc(flash.get("why", ""))}"></label>'
-              '<div><button class="btn pri" type=submit>Add</button></div></form>')
-    cards = (f'<article class=card><h3>A rule or guidance for the team</h3>{who}{form}'
-             '<p class=hint>The same as <code>reverie context add</code>. A rule that looks like a secret is refused '
-             'and not kept.</p></article>'
-             + way("A rule only you follow", "Stays on your machine and is delivered to your agents. "
-                   "Still a command.", 'reverie rules add --user "Money is integer cents"')
-             + way("Turn a rule you already use into a team proposal",
-                   "Takes a rule from your own rules or memory and proposes it to the team. Still a command.",
-                   'reverie context propose "Money is integer cents"'))
-    return frame(proj, plist, None, "/add",
-                 _banner(flash or None) + f'<div class=board style="grid-auto-columns:minmax(272px,1fr)">{cards}</div>',
-                 title="Add a rule")
-
-
-def new_page(root: str, query=None) -> str:
-    _, _, plist = _target(root, query)
-    body = ('<ol class=steps>'
-            '<li><b>Open a terminal in the project</b><p>Any git repo works.</p><code class="cmd big">cd path/to/your/repo</code></li>'
-            '<li><b>Turn Reverie on there</b><p>It then appears in the sidebar the next time this page '
-            'is opened.</p><code class="cmd big">reverie enable</code></li>'
-            '<li><b>Connect an agent</b><p>One time per machine.</p><code class="cmd big">reverie install</code></li>'
-            '</ol>')
-    return shell("Add a project", "Projects are repos. Reverie finds them once you use it in them.", body, "/new",
-                 plist=plist)
-
-
-def search_page(root: str, proj: dict, plist: list[dict], q: str) -> str:
-    d = collect(root)
-    q = " ".join(q.split())[:120]
-    needle = q.lower()
-    if not needle:
-        return frame(proj, plist, d, "/search", _empty("search", "Type something to search",
-                     "Searches the team rules and the remembered items of this project."), title="Search")
-    rule_hits = [i for i in d["res"].items if needle in i.text.lower()]
-    mem_hits = [m for m in d["mem"] if needle in str(m.get("text", "")).lower()]
-    team = [f'<article class=card><span class=chip>{esc(i.label)}</span><p class=q style="margin-top:10px">'
-            f'{esc(_clip(i.text))}</p><div class=meta style="margin-top:8px">{esc(i.file)}</div></article>'
-            for i in rule_hits[:50]]
-    mems = [_mcard(m) for m in mem_hits[:50]]
-    body = (f'<p class=hint>Results for “{esc(q)}” in {esc(proj["name"])}.</p><div class=board>'
-            + _lane("Team rules", "a", team, "No match") + _lane("Memory", "", mems, "No match") + "</div>")
-    return frame(proj, plist, d, "/search", body, title="Search")
 
 
 # ---------------------------------------------------------------------------
@@ -823,7 +354,7 @@ def waiting(root: str, d: dict) -> dict:
             "counts": {"/project": you, "/proposals": sum(1 for x in props if x["mine"])}}
 
 
-_TITLE_WORD = {"Overview": "of", "Rules": "of", "Memory": "of", "What agents are told": "in"}
+_TITLE_WORD = {"Overview": "of", "Rules": "of", "Memory": "of", "What agents are told": "in", "Add a rule": "to"}
 
 
 def _frame(root: str, proj: dict, plist: list[dict], d: dict, w: dict, tab: str, body: str, title: str, h1: str,
@@ -835,7 +366,10 @@ def _frame(root: str, proj: dict, plist: list[dict], d: dict, w: dict, tab: str,
 def _flash_html(flash: dict | None) -> str:
     if not flash:
         return ""
-    return f'<p class="flash" role="status">{esc(flash["msg"]).replace("in force", "<span class=\"in\">in force</span>")}</p>'
+    if "html" in flash:                          # built from escaped parts by do_write (a rule quoted, names, a result link)
+        return f'<p class="flash" role="status">{flash["html"]}</p>'
+    msg = _backtick_cmds(esc(flash["msg"])).replace("in force", "<span class=\"in\">in force</span>")
+    return f'<p class="flash" role="status">{msg}</p>'
 
 
 def _backtick_cmds(text: str) -> str:
@@ -1510,7 +1044,7 @@ def _mem_li(m: dict, pid: str, label: str = "") -> str:
             + f'<p class="meta">{"".join(bits)}</p>' + (f'<p class="todo">{fix}</p>' if fix else "") + "</li>")
 
 
-def memory_page(root: str, proj: dict, plist: list[dict], page: int = 1) -> str:
+def memory_page(root: str, proj: dict, plist: list[dict]) -> str:
     """Every remembered item except rules (those are on Rules: each item is listed on exactly one tab)."""
     d = collect(root)
     w = waiting(root, d)
@@ -1560,6 +1094,253 @@ def _kind_label(m: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# stage 3: the board, Add a project, Connect, Add a rule, Search, Turned off, Not found, Something went wrong
+# ---------------------------------------------------------------------------
+
+def _or_list(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " or " + parts[-1]
+
+
+def _block(cmd: str) -> str:
+    return f'<pre class="block-cmd">{esc(cmd)}</pre>'
+
+
+def _enable_cmd(proj: dict) -> str:
+    return f"cd {shlex.quote(proj['path'])} && reverie enable"
+
+
+def waiting_words(w: dict) -> tuple[int, str]:
+    """(how many wait on the viewer, 'N waiting on you: 2 proposals, 1 conflict, ...') from the same waiting() as the tab counts."""
+    props = sum(1 for x in w["props"] if x["mine"])
+    conflicts = sum(1 for x in w["conflicts"] if x["mine"])
+    outdated = sum(1 for x in w["outdated"] if x["mine"])
+    parts = [_n(k, one, many) for k, one, many in ((props, "proposal", "proposals"), (conflicts, "conflict", "conflicts"),
+                                                   (outdated, "possibly outdated rule", "possibly outdated rules")) if k]
+    total = props + conflicts + outdated
+    return total, f"{total} waiting on you: {', '.join(parts)}." if total else ""
+
+
+def projects_page(root: str, query=None, st: State | None = None) -> str:
+    """The board: only what waits on the viewer, per project; projects with Reverie turned off sit quietly at the bottom."""
+    plist = projects(root)
+    flash = st.take(((query or {}).get("done") or [""])[0]) if st else None
+    waits: list[tuple[dict, int, str]] = []
+    clear: list[dict] = []
+    off: list[dict] = []
+    for p in plist:
+        if is_disabled(p["path"]):
+            off.append(p)
+            continue
+        n, words = waiting_words(waiting(p["path"], collect(p["path"])))
+        (waits.append((p, n, words)) if n else clear.append(p))
+    waits.sort(key=lambda t: -t[1])
+    if waits:
+        tally = (f"{len(waits)} project has something waiting on you." if len(waits) == 1
+                 else f"{len(waits)} projects have something waiting on you.")
+    else:
+        tally = "Nothing is waiting on you in any project."
+    link = lambda p, cls="": f'<a{cls} href="{_u("/project", p)}">{esc(p["name"])}</a>'      # noqa: E731
+    out = ['<p class="topacts"><a href="/new">Add a project</a></p>']
+    if flash and not flash.get("ok", True):
+        out.append(f'<p class="err" role="alert">{esc(flash["msg"])}</p>')
+    out.append(f'<p class="tally">{tally}</p>')
+    if waits:
+        out.append('<section class="group" aria-labelledby="g-wait"><h2 id="g-wait">Waiting on you</h2><ol class="items">'
+                   + "".join(f'<li class="entry"><p class="proj">{link(p)}</p><p class="why">{esc(words)}</p></li>' for p, _n_, words in waits)
+                   + "</ol></section>")
+    if clear:
+        out.append('<section class="group" aria-labelledby="g-clear"><h2 id="g-clear">Nothing waiting</h2><ul class="plain">'
+                   + "".join(f"<li>{link(p)}</li>" for p in clear) + "</ul></section>")
+    if off:
+        out.append('<section class="group" aria-labelledby="g-off"><h2 id="g-off" class="dim">Turned off</h2><ul class="plain dim">'
+                   + "".join(f'<li>{link(p, " class=" + chr(34) + "dim" + chr(34))}</li>' for p in off) + "</ul></section>")
+    return layout(title="Projects, Reverie", proj=None, plist=plist, body="".join(out))
+
+
+def _step(title: str, text: str, cmd: str) -> str:
+    return f"<li><h2>{title}</h2><p>{text}</p>{_block(cmd)}</li>"
+
+
+STEP_INSTALL = ("Set up your agent once per machine", "This adds Reverie to the agents you use (Claude Code, Codex and others it finds).",
+                "reverie install")
+
+
+def new_page(root: str, query=None) -> str:
+    plist = projects(root)
+    body = ('<h1 class="ask">Add a project</h1><p class="who">Projects are repos. A repo appears here once Reverie has seen it.</p>'
+            '<ol class="steps">' + _step(*STEP_INSTALL)
+            + _step("Use Reverie in the repo", "Open your agent in the repo, or run this there. Reverie is on by default, so either one "
+                    "makes the repo appear here the next time this page is opened.", "cd path/to/your/repo && reverie enable")
+            + "</ol>")
+    return layout(title="Add a project, Reverie", proj=None, plist=plist, body=body)
+
+
+def connect_page(root: str, proj: dict, plist: list[dict]) -> str:
+    """Only the steps that apply: turning Reverie on is step 1 when it is off, and absent when it is on."""
+    from . import install
+    off = is_disabled(root)
+    agents = _safe(install.configured_agent_names, [])
+    steps = [_step("Turn it on for this project", "Reverie is on by default; this turns it back on after <code>reverie disable</code>.",
+                   _enable_cmd(proj))] if off else []
+    steps += [_step(*STEP_INSTALL),
+              _step("Start a session and check", "Open your agent in the project. What it receives is on the “What agents are told” tab.",
+                    "reverie status"),
+              _step("Share rules with your team", "Point the repo at a shared folder of markdown rules in "
+                    "<code>.reverie/context.toml</code>; everyone who opens the project gets them.", "reverie context")]
+    tally = "Reverie is turned off for this repo. Step 1 turns it on." if off else "Reverie is on for this repo."
+    who = (f"Set up on this machine: {esc(', '.join(agents))}." if agents else "No agent is set up on this machine yet.")
+    body = f'<p class="tally">{tally}</p><p class="who">{who}</p><ol class="steps">{"".join(steps)}</ol>'
+    counts: dict = {}
+    if not off:
+        counts = waiting(root, collect(root))["counts"]
+    return layout(title=f"Connect an agent to {proj['name']}, Reverie", proj=proj, plist=plist, body=body, tab="/connect",
+                  counts=counts, h1="Connect")
+
+
+def off_page(proj: dict, plist: list[dict], tab: str) -> str:
+    """Every project tab but Connect, for a repo Reverie is turned off in."""
+    body = (f'<p class="tally">Reverie is turned off for {esc(proj["name"])}.</p>'
+            '<p class="who">Nothing is told to agents and nothing is shown here.</p>'
+            f'<p class="why">Turn it back on from a terminal:</p>{_block(_enable_cmd(proj))}')
+    return layout(title=f"{proj['name']}, Reverie", proj=proj, plist=plist, body=body, tab=tab, counts={}, h1="Turned off")
+
+
+def not_found_page(plist: list[dict]) -> str:
+    return layout(title="Not found, Reverie", proj=None, plist=plist, body=(
+        '<p class="tally">That page does not exist.</p><p class="go"><a href="/">Back to all projects</a></p>'))
+
+
+def error_page() -> str:
+    """A 500: no trace, no exception text, nothing read from disk. Only what to do next."""
+    return layout(title="Something went wrong, Reverie", proj=None, plist=[], body=(
+        '<p class="tally">Something went wrong.</p><p class="who">This page could not be built. The CLI still works.</p>'
+        f'<p class="why">Reload the page. If it keeps failing, run this in a terminal:</p>{_block("reverie status")}'
+        '<p class="go"><a href="/">Back to all projects</a></p>'))
+
+
+# ---- Search ---------------------------------------------------------------------------------------------------
+
+SEARCH_CAP = 100
+
+
+def search_page(root: str, proj: dict, plist: list[dict], q: str) -> str:
+    d = collect(root)
+    w = waiting(root, d)
+    q = " ".join(q.split())[:120]
+    needle = q.lower()
+
+    def page(body: str) -> str:
+        return layout(title="Search, Reverie", proj=proj, plist=plist, body=body, counts=w["counts"], h1="Search", q=q)
+    if not needle:
+        return page('<p class="tally">Type something to search.</p>'
+                    '<p class="who">Searches the team rules and the remembered items of this project.</p>')
+    rules_hit = [r for r in d["records"] if needle in r["text"].lower()]
+    mem_hit = [m for m in d["mem"] if m.get("kind") != "rule" and needle in str(m.get("text", "")).lower()]
+    total = len(rules_hit) + len(mem_hit)
+    if not total:
+        return page(f'<p class="tally">No rules or memory items match “{esc(q)}”.</p>'
+                    '<p class="who">Search looks for those words in the text of team rules and remembered items.</p>')
+    ctx = _ctx(root, proj)
+    ctx["owners_of_conflict"] = _owner_fn(w, ctx)
+    out = [f'<p class="tally">{_n(total, "result", "results")} for “{esc(q)}”.</p>']
+    if rules_hit:
+        out.append('<section class="group" aria-labelledby="g-r"><h2 id="g-r">Rules</h2><ol class="items">'
+                   + "".join(rule_li(r, ctx) for r in rules_hit[:SEARCH_CAP]) + "</ol></section>")
+    if mem_hit:
+        out.append('<section class="group" aria-labelledby="g-m"><h2 id="g-m">Memory</h2><ol class="items">'
+                   + "".join(_mem_li(m, proj["id"], _kind_label(m)) for m in mem_hit[:SEARCH_CAP]) + "</ol></section>")
+    if len(rules_hit) > SEARCH_CAP or len(mem_hit) > SEARCH_CAP:
+        out.append(f'<p class="gnote">Showing the first {SEARCH_CAP} in each group. Search for more words to narrow it.</p>')
+    return page("".join(out))
+
+
+# ---- Add a rule -----------------------------------------------------------------------------------------------
+
+FOLDER_WORD = {"org": "Organisation folder", "team": "Team folder"}
+
+
+def add_targets(root: str) -> list[dict]:
+    """Every place a rule can be added: this repo, then each configured shared folder (the CLI's own target_folder)."""
+    out = [{"value": "repo", "folder": context.target_folder(root, "repo"), "repo": True, "title": "This repo"}]
+    for layer, folders in context.sources(root).items():
+        for f in folders:
+            scope = context.scope_name(f)
+            out.append({"value": f"{layer}|{scope}", "folder": f, "repo": False,
+                        "title": f'{FOLDER_WORD.get(layer, layer.capitalize() + " folder")} <code>{esc(scope)}</code>'})
+    return out
+
+
+def _review_of(doc: Path) -> tuple[str, list[str]]:
+    """What context.add would do for this document: 'open' (nobody owns it), 'direct' (you own it) or 'waits' (a proposal)."""
+    owners = _safe(lambda: context.owners_of(doc), [])
+    if not owners:
+        return "open", []
+    return ("direct" if _safe(lambda: context.is_owner(doc), False) else "waits"), owners
+
+
+def _add_note(t: dict, names: dict, me: "Viewer") -> str:
+    """The true consequence of adding here as this viewer: from the same ownership test context.add applies."""
+    rule_doc, guide_doc = Path(t["folder"]) / "rules.md", Path(t["folder"]) / "guidance.md"
+    r, r_owners = _review_of(rule_doc)
+    g, g_owners = _review_of(guide_doc)
+    lead = "Everyone on this repo" if t["repo"] else "Everyone whose repos use this folder"
+    who = lambda owners, sep=", ": (people_html(owners, names, me) if sep == ", " else _or_list([person_html(o, names, me) for o in owners]))  # noqa: E731
+    if r == "open":
+        note = f"{lead}, from the next session. No CODEOWNERS entry covers it, so there is no review."
+    elif r == "direct":
+        note = f"{lead}, from the next session. No review: you are an owner of <code>rules.md</code> ({who(r_owners)})."
+    else:
+        note = (f"{lead}. A rule waits until an owner of <code>rules.md</code> accepts it ({who(r_owners, ' or ')}); "
+                + ("guidance is added straight away." if g != "waits" else
+                   f"guidance waits for an owner of <code>guidance.md</code> ({who(g_owners, ' or ')})."))
+    if r != "waits" and g == "waits":
+        note += f" Guidance waits for an owner of <code>guidance.md</code> ({who(g_owners, ' or ')})."
+    return note + f" Reverie edits the file{'' if t['repo'] else ' there'} and does not commit it."
+
+
+def add_page(root: str, proj: dict, plist: list[dict], st: State | None = None, flash: dict | None = None) -> str:
+    d = collect(root)
+    w = waiting(root, d)
+    ctx = _ctx(root, proj)
+    names, me = ctx["names"], ctx["me"]
+    flash = flash or {}
+    bad_flash = bool(flash) and not flash.get("ok", True)
+    err = (f'<p class="err" id="add-error" role="alert">{esc(flash["msg"])}</p>' if bad_flash else "")
+    bad = flash.get("bad", "") if bad_flash else ""
+    invalid = ' aria-invalid="true" aria-describedby="add-error"'
+    targets = add_targets(root)
+    chosen = flash.get("target") if flash.get("target") in {t["value"] for t in targets} else "repo"
+    opts = "".join(
+        f'<label class="opt"><input type="radio" name="target" value="{esc(t["value"])}"'
+        f'{" checked" if t["value"] == chosen else ""}{invalid if bad == "target" else ""}><span><b>{t["title"]}</b>'
+        f'<span class="d">{_add_note(t, names, me)}</span></span></label>' for t in targets)
+    kinds = "".join(
+        f'<label class="opt"><input type="radio" name="kind" value="{v}"{" checked" if v == (flash.get("kind") or "rule") else ""}>'
+        f'<span><b>{title}</b><span class="d">{note}</span></span></label>'
+        for v, title, note in (("rule", "A rule", "Agents are told it at the start of every session."),
+                               ("guidance", "Guidance", "Agents see a pointer to it and open it when it is relevant.")))
+    form = ('<form class="addf" method="post" action="/do/add">'
+            f'<input type="hidden" name="token" value="{html.escape(st.token if st else "")}">'
+            f'<input type="hidden" name="p" value="{esc(proj["id"])}">{err}'
+            f'<div><label class="visually-hidden" for="text">The rule</label><textarea id="text" name="text" '
+            f'maxlength="{LIMITS["text"]}" required{invalid if bad == "text" else ""}>{esc(flash.get("text", ""))}</textarea></div>'
+            f'<fieldset><legend>Who is told</legend>{opts}</fieldset><fieldset><legend>How agents get it</legend>{kinds}</fieldset>'
+            f'<label class="why-in">Why (optional)<input type="text" name="why" maxlength="{LIMITS["why"]}" '
+            f'value="{esc(flash.get("why", ""))}"><span class="d">Only a proposal keeps this: the owners read it next to the rule. '
+            f'A direct add does not save it.</span></label><div><button class="btn" type="submit">Add rule</button></div></form>')
+    terminal = ('<section class="subtle"><details class="cmd"><summary>From a terminal</summary><p>The same as this form:</p>'
+                + _block('reverie context add "Money is stored as integer cents" --why "rounding drift"')
+                + "<p>Only for your own agents, in every repo:</p>"
+                + _block('reverie rules add --user "Prefer rg over grep in examples"')
+                + "<p>Turn a rule you already use into a team proposal:</p>"
+                + _block('reverie context propose "Money is stored as integer cents"')
+                + "</details><p>A rule that looks like a secret is refused and not kept.</p></section>")
+    banner = _flash_html(flash) if flash and not bad_flash else ""
+    body = (banner + '<h1 class="ask">What should agents know about this repo?</h1>' + acting_html(me) + form + terminal)
+    return _frame(root, proj, plist, d, w, "/add", body, "Add a rule", "")
+
+
+# ---------------------------------------------------------------------------
 # writes: the CSRF token, one-shot messages, and the three actions (all through the CLI's functions)
 # ---------------------------------------------------------------------------
 
@@ -1583,36 +1364,44 @@ class State:
         return self._flash.pop(fid, None)
 
 
-def _who(folder: Path, root: str) -> str:
-    """The git identity an action in ``folder`` will use (what the CLI would use)."""
-    cwd = folder if folder.exists() else Path(root)
-    name = spool._git(["config", "user.name"], cwd).strip()
-    mail = spool._git(["config", "user.email"], cwd).strip()
-    if not name and not mail:
-        return "no git identity is set here"
-    return f"{name} <{mail}>" if mail else name
-
-
-def _targets(root: str) -> list[tuple[str, str]]:
-    out = [("repo", f"This project ({Path(root).name}/.reverie/context)")]
-    for layer, folders in context.sources(root).items():
-        out += [(f"{layer}|{context.scope_name(f)}", f"{layer}: {context.scope_name(f)}") for f in folders]
-    return out
-
-
-def _form_open(proj: dict, st: State | None, action: str) -> str:
-    return (f'<form class=f method=post action="{action}"><input type=hidden name=token '
-            f'value="{html.escape(st.token if st else "")}"><input type=hidden name=p value="{esc(proj["id"])}">')
-
-
-def _banner(flash: dict | None) -> str:
-    if not flash:
-        return ""
-    return f'<div class="flash {"ok" if flash["ok"] else "bad"}" role=status>{esc(flash["msg"])}</div>'
-
-
 CHECK_LATER = (" It has not been checked for conflicts yet: that happens at the next session start, "
                "or now with `reverie context check`.")
+NOT_SAVED = "Nothing was saved: "
+
+
+def _do_add(root: str, proj: dict, form: dict[str, str], back) -> str:
+    """The Add form, through context.add (the CLI's function). Every refusal starts with "Nothing was saved:", is reached by
+    a direct POST exactly as by the form, and never carries a secret back to the page."""
+    text, why = " ".join(form.get("text", "").split()), form.get("why", "")
+    choice, kind = form.get("target", "repo"), form.get("kind", "rule")
+    keep = {"text": text, "why": why, "target": choice, "kind": kind}
+    if not text:
+        return back(False, NOT_SAVED + "write the rule first.", bad="text", why=why, target=choice, kind=kind)
+    if redact.contains_secret(text) or redact.contains_secret(why):
+        return back(False, NOT_SAVED + "this looks like it contains a secret. Remove the value and try again. "
+                                       "The text was cleared on purpose.", bad="text")
+    if choice not in {t["value"] for t in add_targets(root)}:
+        return back(False, NOT_SAVED + "this project cannot add to that place. Pick another option.", bad="target", **keep)
+    layer, _, scope = choice.partition("|")
+    rule = kind != "guidance"
+    try:
+        added = context.add(root, text, layer=layer, scope=scope, rule=rule, why=why)
+    except ValueError as exc:
+        return back(False, NOT_SAVED + str(exc), bad="text", **keep)
+    except Exception:
+        return back(False, NOT_SAVED + "that did not work. The CLI still does.", bad="text", **keep)
+    names, me = known_people(root), Viewer(root)
+    quoted = f"“{rule_html(text)}”"
+    check = _backtick_cmds(esc(CHECK_LATER))
+    if added.proposal:
+        doc = "rules.md" if rule else "guidance.md"
+        owners = _or_list([person_html(o, names, me) for o in added.owners])
+        h = (f'Proposed: {quoted} It waits for an owner of <code>{esc(doc)}</code>: {owners}. It is not in force yet. '
+             f'<a href="{esc(_u("/proposals", proj))}">See the proposal</a>')
+        return back(True, f"Proposed: {text}", html=h)
+    h = (f'Added to <code>{esc(added.path.name)}</code>: {quoted} It applies from the next session.{check} '
+         f'<a href="{esc(_u("/context", proj))}">See it in Rules</a>')
+    return back(True, f"Added to {added.path.name}: {text}", html=h)
 
 
 def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
@@ -1620,30 +1409,20 @@ def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
     (Host, Origin, token, size) are done by the handler before this is called."""
     plist = projects(root)
     proj = next((x for x in plist if x["id"] == form.get("p", "")), None)
+    adding = path == "/do/add"
+    no = NOT_SAVED if adding else "Refused: "
     if proj is None:
-        return _u("/", None, done=st.put(False, "Refused: that project is not known to Reverie."))
+        return _u("/", None, done=st.put(False, f"{no}that project is not known to Reverie."))
     target = proj["path"]
-    page = "/add" if path == "/do/add" else "/proposals"
+    page = "/add" if adding else "/proposals"
     back = lambda ok, msg, **keep: _u(page, proj, done=st.put(ok, msg, **keep))   # noqa: E731
     if is_disabled(target):
-        return back(False, "Refused: Reverie is turned off for this project. Turn it on first.")
-    text, why = form.get("text", ""), form.get("why", "")
+        return back(False, f"{no}Reverie is turned off for this project. Turn it on first.")
+    why = form.get("why", "")
     with st.lock:
         try:
-            if path == "/do/add":
-                if redact.contains_secret(text) or redact.contains_secret(why):
-                    return back(False, "Refused: this looks like it contains a secret, so nothing was saved. "
-                                       "Remove the value and try again.")
-                choice = form.get("target", "repo")
-                if choice not in dict(_targets(target)):
-                    return back(False, "Refused: that is not a place this project can add to.", text=text, why=why)
-                layer, _, scope = choice.partition("|")
-                added = context.add(target, text, layer=layer, scope=scope,
-                                    rule=form.get("kind", "rule") != "guidance", why=why)
-                if added.proposal:
-                    return back(True, f"Written as a proposal ({added.path.name}). The owners "
-                                      f"({', '.join(added.owners)}) review it; it is not in force yet.")
-                return back(True, f"Added to {added.path.name}. It applies from the next session." + CHECK_LATER)
+            if adding:
+                return _do_add(target, proj, form, back)
             slug = form.get("slug", "")
             # exact name only: the CLI matches a prefix, and "" is a prefix of every proposal
             if slug not in {x["slug"] for x in context.proposals(target)}:
@@ -1659,7 +1438,7 @@ def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
             dest = context.reject(target, slug, why)
             return back(True, f"Rejected. The reason is kept in proposals/rejected/{dest.name}.")
         except ValueError as exc:
-            return back(False, f"Refused: {exc}", **({"text": text, "why": why} if path == "/do/add" else {}))
+            return back(False, f"Refused: {exc}")
         except Exception:
             return back(False, "That did not work, and nothing was changed. The CLI still does.")
 
@@ -1669,7 +1448,8 @@ def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 
 PROJECT_PAGES: dict[str, Callable[..., str]] = {"/project": overview, "/start": start, "/context": rules_page,
-                 "/proposals": proposals_page, "/connect": connect_page, "/add": add_page}
+                 "/proposals": proposals_page, "/connect": connect_page, "/add": add_page, "/memory": memory_page}
+TAB_PATHS = ("/project", "/context", "/memory", "/start", "/proposals", "/connect")
 
 
 def render(root: str, path: str, query: dict[str, list[str]] | None = None,
@@ -1682,32 +1462,26 @@ def render(root: str, path: str, query: dict[str, list[str]] | None = None,
             return 404, layout(title="No such project, Reverie", proj=None, plist=plist, body=(
                 '<p class="tally">No project with that id.</p><p class="go"><a href="/">Back to all projects</a></p>'))
         if path in ("/", "/repos"):
-            return 200, projects_page(root, query)
+            return 200, projects_page(root, query, st)
         if path == "/new":
             return 200, new_page(root, query)
-        if path in ("/memory", "/search", "/rule") or path in PROJECT_PAGES:
+        if path in ("/search", "/rule") or path in PROJECT_PAGES:
             if path != "/connect" and is_disabled(target):    # Connect is how you turn it back on
-                tab = path if path in dict((p, 1) for p, _, _ in TABS) else "/project"
-                return 200, _disabled(proj, plist, tab)
+                if st:                                        # a refusal waiting for this page is shown nowhere else
+                    st.take(((query or {}).get("done") or [""])[0])
+                return 200, off_page(proj, plist, path if path in TAB_PATHS else "/project")
             if path == "/rule":
                 rid = ((query or {}).get("id") or [""])[0]
                 return rule_page(target, proj, plist, rid if ID_OK.match(rid) else "")
-            if path == "/memory":
-                try:
-                    page = int((query or {}).get("page", ["1"])[0])
-                except ValueError:
-                    page = 1
-                return 200, memory_page(target, proj, plist, page)
             if path == "/search":
                 return 200, search_page(target, proj, plist, ((query or {}).get("q") or [""])[0])
             if path in ("/add", "/proposals"):
                 flash = st.take(((query or {}).get("done") or [""])[0]) if st else None
                 return 200, PROJECT_PAGES[path](target, proj, plist, st, flash)
             return 200, PROJECT_PAGES[path](target, proj, plist)
-        return 404, shell("Not found", 'No such page. <a href="/">Back to all projects</a>', "", "", plist=plist)
+        return 404, not_found_page(plist)
     except Exception:
-        return 500, shell("Something went wrong", "This page could not be built. The CLI still works.", "", "",
-                          plist=[])
+        return 500, error_page()
 
 
 # ---------------------------------------------------------------------------
@@ -1746,7 +1520,10 @@ def make_handler(root: str, allowed_hosts: set[str], state: State | None = None)
                 self._reply(403, "forbidden", head)
                 return
             parts = urlsplit(self.path)
-            code, body = render(root, parts.path, parse_qs(parts.query), st)
+            try:
+                code, body = render(root, parts.path, parse_qs(parts.query), st)
+            except Exception:                         # render guards itself; this keeps even a parse error off the wire
+                code, body = 500, error_page()
             self._reply(code, body, head)
 
         def do_GET(self) -> None:
@@ -1793,7 +1570,11 @@ def make_handler(root: str, allowed_hosts: set[str], state: State | None = None)
                 if not hmac.compare_digest(form.get("token", "").encode(), st.token.encode()):
                     self._reply(403, "forbidden: missing or wrong token")
                 else:
-                    where = do_write(root, st, path, form)
+                    try:
+                        where = do_write(root, st, path, form)
+                    except Exception:
+                        self._reply(500, error_page())
+                        return
                     self._reply(303, "see other", extra={"Location": where})
 
         do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_TRACE = do_CONNECT = _no

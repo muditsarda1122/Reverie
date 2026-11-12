@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `reverie ui` is redesigned (the "Ink" design, `design.md`). The project board shows only what waits on you; each project has Overview, Rules, Memory, What agents are told, Proposals and Connect tabs; every rule and remembered item has its own page (`/rule`); Search groups Rules and Memory; Add says what will happen to a rule before you add it, with a link to the result; Turned off, Not found and Something went wrong have their own pages (a failure shows no trace). Names come from git identities, with the email in a tooltip. Still no JavaScript and no external resources, and every check the server made before (token, host, origin, size, ownership, secrets, turned off) is unchanged.
+- `reverie show` prints more of an item: when it was remembered, last verified, how agents have used it (in words), a challenged line, and for a team rule the conflict reason, the winner and the commit message that made it stale.
+- The start text now records which limit cut each rule (line limit, character budget, rules-file limit, whole-text limit) through `deliver.startup_report`; `startup_text` returns exactly what it did.
+- Tests run with the `.venv` Python (the embedding tests need `sentence-transformers`); `AGENTS.md` and `CONTRIBUTING.md` say so.
+
 ## [0.2.0] - 2026-10-26
 
 First release since 0.1.0. Reverie is early: see the README for known limits.

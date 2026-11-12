@@ -910,7 +910,8 @@ def M(id, kind, text, source, anchors=(), usage=None, challenged=False, stale=No
 
 def seed_memory(extra: int = 0, cut: int = 0, ids: dict | None = None) -> list[dict]:
     ids = ids or {}
-    sid = lambda t, d: ids.get(t, d)       # ids differ per seed run; the capped run's are read from its capture
+    def sid(t, d):                         # ids differ per seed run; the capped run's are read from its capture
+        return ids.get(t, d)
     ms = [M(sid(MIGR, "932ff77c"), "rule", MIGR, "user_said", status="force"),
           M(sid("Keep handler functions under 40 lines; extract to `app/services/`.", "05394690"), "preference",
             "Keep handler functions under 40 lines; extract to `app/services/`.", "user_said"),
@@ -956,7 +957,7 @@ def mem_li(m: dict, pid: str, label: bool = False) -> str:
     if m["usage"] and usage_words(m["usage"]):
         meta.append(f'<span>{esc(usage_words(m["usage"]))}</span>')
     meta.append(f'<a class="open" href="/rule?p={pid}&amp;id={m["id"]}">Open</a>')
-    return (f'<li class="entry">' + (f'<p class="label">{kind}</p>' if label else "")
+    return ('<li class="entry">' + (f'<p class="label">{kind}</p>' if label else "")
             + f'<p class="rule">{rule_html(m["text"])}</p>' + (f'<p class="why">{why}</p>' if why else "")
             + f'<p class="meta">{"".join(meta)}</p>' + (f'<p class="todo">{fix}</p>' if fix else "") + "</li>")
 
@@ -1198,7 +1199,6 @@ def main() -> None:
                                     body=rules_body([R(bullet_id(RG), RG, "your", path="~/.reverie/rules.md")], NOTIF)))
 
     # extra 3: layout test for the states the seed does not have (invented rule text, not product data)
-    NARROW = "Verify card webhooks before parsing them"
     st = [
         R("aa00000001", "All services log in JSON, one object per line.", "team", "Organisation folder orgdocs/org", path="orgdocs/org/rules.md", locked=True,
           beats=dict(text="Services may log plain text in development.", where="this repo", why="it is locked, so it wins everywhere")),

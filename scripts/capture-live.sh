@@ -37,26 +37,14 @@ for m in re.finditer(r'<li class="entry">(.*?)</li>', page, re.S):
             print(found.group(1)); break
 PY
 }
-linkcheck() {   # linkcheck PORT FILE... : every /rule link on the saved pages must answer 200 on the live server (no 404)
-  python3 - "$@" <<'PY'
-import html, re, sys, urllib.request, urllib.error
-port, files = sys.argv[1], sys.argv[2:]
-seen, bad = set(), 0
-for f in files:
-    for href in re.findall(r'href="(/rule\?[^"]+)"', open(f, encoding="utf-8").read()):
-        href = html.unescape(href)
-        if href in seen:
-            continue
-        seen.add(href)
-        try:
-            code = urllib.request.urlopen(f"http://127.0.0.1:{port}{href}").status
-        except urllib.error.HTTPError as e:
-            code = e.code
-        if code != 200 and "nosuchrule" not in href:
-            print(f"BROKEN {code} {href} (linked from {f})"); bad += 1
-print(f"{len(seen)} distinct /rule links checked, {bad} broken")
-sys.exit(1 if bad else 0)
-PY
+linkcheck() {   # linkcheck PORT FILE... : every internal link on the saved pages must answer 200 on the live server
+  python3 "$ROOT/scripts/crawl-links.py" "$@"
+}
+post() {   # post PATH FIELDS SAVE_AS : submit a form the way a browser does (token from /add), follow the redirect, save the page
+  local tok
+  tok="$(curl -s "http://127.0.0.1:$PORT/add?p=$API" | python3 -c 'import re,sys; print(re.search(r"name=\"token\" value=\"([^\"]+)\"", sys.stdin.read()).group(1))')"
+  curl -s -L -H "Origin: http://127.0.0.1:$PORT" --data-urlencode "token=$tok" --data-urlencode "p=$API" "${@:2:$#-2}" \
+       "http://127.0.0.1:$PORT$1" -o "$OUT/${@: -1}"; echo "saved ${@: -1}"
 }
 D1="$TMP/seed"; start "$D1"
 API="$(pid_of "$D1/payments-api")"; NOTIF="$(pid_of "$D1/notifications-service")"; OFF="$(pid_of "$D1/legacy-billing")"
@@ -78,7 +66,7 @@ for pair in "rule-team:Ledger entries are append-only:rules.html" "rule-conflict
   [ -n "$id" ] && grab "/rule?p=$API&id=$id" "$name.html" || echo "no id for $name" >&2
 done
 grab "/rule?p=$API&id=nosuchrule" not-found-rule.html
-linkcheck "$PORT" "$OUT"/overview.html "$OUT"/overview-arjun.html "$OUT"/overview-priya.html "$OUT"/rules.html "$OUT"/start.html "$OUT"/memory.html
+linkcheck "$PORT" "$OUT"/overview.html "$OUT"/overview-arjun.html "$OUT"/overview-priya.html "$OUT"/proposals*.html "$OUT"/rules.html "$OUT"/start.html "$OUT"/memory.html "$OUT"/rule-*.html
 mv "$D1/home/context" "$D1/home/context.aside"
 grab "/project?p=$NOTIF"   empty-overview.html
 grab "/proposals?p=$NOTIF" empty-proposals.html
@@ -87,6 +75,33 @@ grab "/memory?p=$NOTIF"    empty-memory.html
 grab "/start?p=$NOTIF"     empty-start.html
 mv "$D1/home/context.aside" "$D1/home/context"
 grab "/project?p=deadbeef" unknown-project.html
+grab "/" board.html
+grab "/new" new.html
+grab "/connect?p=$API" connect.html
+grab "/connect?p=$OFF" connect-off.html
+grab "/project?p=$OFF" off.html
+grab "/context?p=$OFF" off-rules.html
+grab "/nosuchpage" not-found.html
+grab "/search?p=$API&q=ledger" search.html
+grab "/search?p=$API&q=refund" search-both.html
+grab "/search?p=$API&q=kubernetes" search-empty.html
+grab "/search?p=$API&q=" search-blank.html
+python3 -c 'from reverie import ui; print(ui.error_page(), end="")' > "$OUT/error.html"; echo "saved error.html (ui.error_page(): a 500 cannot be forced on the live server)"
+grab "/add?p=$API" add.html
+post /do/add --data-urlencode "text=" --data-urlencode "kind=rule" --data-urlencode "target=repo" add-error.html
+post /do/add --data-urlencode "text=Run \`ruff\` before every commit and fix what it reports." --data-urlencode "kind=rule" \
+     --data-urlencode "target=nowhere" --data-urlencode "why=the linter catches what reviews miss" add-error-kept.html
+post /do/add --data-urlencode "text=The key is sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" --data-urlencode "kind=rule" \
+     --data-urlencode "target=repo" add-error-secret.html
+post /do/add --data-urlencode "text=Run \`ruff\` before every commit and fix what it reports." --data-urlencode "kind=rule" \
+     --data-urlencode "target=repo" add-done.html
+as "$D1" arjun
+grab "/add?p=$API" add-arjun.html
+post /do/add --data-urlencode "text=Run \`ruff\` before every commit and fix what it reports." --data-urlencode "kind=rule" \
+     --data-urlencode "target=repo" add-arjun-done.html
+as "$D1" mudit
+linkcheck "$PORT" "$OUT"/board.html "$OUT"/new.html "$OUT"/connect.html "$OUT"/connect-off.html "$OUT"/off.html "$OUT"/search*.html "$OUT"/add*.html \
+          "$OUT"/not-found.html "$OUT"/error.html "$OUT"/unknown-project.html
 D2="$TMP/seed-capped"; start "$D2" --extra-repo-rules 35
 API2="$(pid_of "$D2/payments-api")"
 grab "/project?p=$API2" overview-capped.html
