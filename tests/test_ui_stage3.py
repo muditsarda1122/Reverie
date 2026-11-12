@@ -317,7 +317,7 @@ def test_add_a_project_puts_install_first_and_describes_how_a_repo_appears(env, 
     body = _main(get(s, "/new")[1])
     assert '<h1 class="ask">Add a project</h1>' in body
     assert "Projects are repos. A repo appears here once Reverie has seen it." in body
-    assert _steps(body) == ["Set up your agent once per machine", "Use Reverie in the repo"]
+    assert _steps(body)[1] == "Use Reverie in the repo" and len(_steps(body)) == 2
     assert body.index("reverie install") < body.index("reverie enable")
     assert "Reverie is on by default, so either one makes the repo appear here the next time this page is opened." in body
     assert "<title>Add a project, Reverie</title>" in get(s, "/new")[1]
@@ -328,13 +328,12 @@ def test_connect_shows_only_the_steps_that_apply(env, serve):
     s = serve(repo)
     body = _main(get(s, "/connect")[1])
     assert '<p class="tally">Reverie is on for this repo.</p>' in body
-    assert _steps(body) == ["Set up your agent once per machine", "Start a session and check", "Share rules with your team"]
+    assert _steps(body)[1:] == ["Start a session and check", "Share rules with your team"]
     assert "Turn it on" not in body and "reverie enable" not in body
     assert cli.main(["disable"]) == 0
     body = _main(get(s, "/connect")[1])
     assert '<p class="tally">Reverie is turned off for this repo. Step 1 turns it on.</p>' in body
-    assert _steps(body) == ["Turn it on for this project", "Set up your agent once per machine", "Start a session and check",
-                            "Share rules with your team"]
+    assert _steps(body)[0] == "Turn it on for this project" and _steps(body)[2:] == ["Start a session and check", "Share rules with your team"]
     assert "this turns it back on after <code>reverie disable</code>" in body
     assert "Connect an agent to svc, Reverie" in get(s, "/connect")[1]                    # Connect is the one tab that works while off
 
@@ -348,6 +347,28 @@ def test_connect_names_the_agents_install_has_configured_and_none_when_there_are
     names = [a.name for a in install.AGENTS][:2]
     assert f"Set up on this machine: {', '.join(names)}." in get(s, "/connect")[1]
     assert install.configured_agent_names() == names                                       # the CLI's own names
+
+
+def test_connect_step_one_reads_as_not_undone_when_an_agent_is_set_up_and_names_only_what_install_supports(env, serve, monkeypatch):
+    s = serve(env[1])
+    supported = install.supported_agent_names()
+    assert supported == [a.name for a in install.AGENTS] and len(supported) >= 4
+    listing = ", ".join(supported[:-1]) + " and " + supported[-1]
+    monkeypatch.setattr(install, "configured_servers", lambda home=None: [])
+    body = _main(get(s, "/connect")[1])
+    assert _steps(body)[0] == "Set up your agent once per machine"
+    assert f"This adds Reverie to the agents you use that it finds on this machine ({listing})." in body
+    assert "others it finds" not in body and "already set up" not in body
+    keys = [a.key for a in install.AGENTS][:2]
+    monkeypatch.setattr(install, "configured_servers", lambda home=None: [SimpleNamespace(agent=k) for k in keys])
+    body = _main(get(s, "/connect")[1])
+    names = [a.name for a in install.AGENTS][:2]
+    assert _steps(body)[0] == "Set up another agent"
+    assert f"{names[0]} and {names[1]} are already set up. Run this again after you install another agent" in body
+    assert f"({listing})" in body and "Set up your agent once per machine" not in body
+    monkeypatch.setattr(install, "configured_servers", lambda home=None: [SimpleNamespace(agent=keys[0])])
+    assert f"{names[0]} is already set up." in _main(get(s, "/connect")[1])
+    assert f"({listing})" in _main(get(s, "/new")[1]) and "Set up another agent" in _main(get(s, "/new")[1])
 
 
 def test_the_repo_path_is_shell_quoted_even_with_spaces_and_quotes(tmp_path, monkeypatch, serve):

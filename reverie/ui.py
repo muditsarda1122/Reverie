@@ -1161,14 +1161,27 @@ def _step(title: str, text: str, cmd: str) -> str:
     return f"<li><h2>{title}</h2><p>{text}</p>{_block(cmd)}</li>"
 
 
-STEP_INSTALL = ("Set up your agent once per machine", "This adds Reverie to the agents you use (Claude Code, Codex and others it finds).",
-                "reverie install")
+def _and_list(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _install_step(agents: list[str]) -> str:
+    """Step "set up an agent", from what `reverie install` can set up and what is already set up on this machine."""
+    from . import install
+    can = esc(_and_list(_safe(install.supported_agent_names, [])))
+    if agents:
+        names = esc(_and_list(agents))
+        return _step("Set up another agent", f"{names} {'is' if len(agents) == 1 else 'are'} already set up. Run this again after you "
+                     f"install another agent: it adds Reverie to the ones it finds on this machine ({can}).", "reverie install")
+    return _step("Set up your agent once per machine", f"This adds Reverie to the agents you use that it finds on this machine ({can}).",
+                 "reverie install")
 
 
 def new_page(root: str, query=None) -> str:
+    from . import install
     plist = projects(root)
     body = ('<h1 class="ask">Add a project</h1><p class="who">Projects are repos. A repo appears here once Reverie has seen it.</p>'
-            '<ol class="steps">' + _step(*STEP_INSTALL)
+            '<ol class="steps">' + _install_step(_safe(install.configured_agent_names, []))
             + _step("Use Reverie in the repo", "Open your agent in the repo, or run this there. Reverie is on by default, so either one "
                     "makes the repo appear here the next time this page is opened.", "cd path/to/your/repo && reverie enable")
             + "</ol>")
@@ -1182,7 +1195,7 @@ def connect_page(root: str, proj: dict, plist: list[dict]) -> str:
     agents = _safe(install.configured_agent_names, [])
     steps = [_step("Turn it on for this project", "Reverie is on by default; this turns it back on after <code>reverie disable</code>.",
                    _enable_cmd(proj))] if off else []
-    steps += [_step(*STEP_INSTALL),
+    steps += [_install_step(agents),
               _step("Start a session and check", "Open your agent in the project. What it receives is on the “What agents are told” tab.",
                     "reverie status"),
               _step("Share rules with your team", "Point the repo at a shared folder of markdown rules in "

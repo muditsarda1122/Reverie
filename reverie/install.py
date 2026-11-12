@@ -762,6 +762,11 @@ def _command_exists(command: str, which=shutil.which) -> bool:
     return which(command) is not None
 
 
+def supported_agent_names() -> list[str]:
+    """The agents `reverie install` can set up today, by their human names, in install order."""
+    return [agent.name for agent in AGENTS]
+
+
 def configured_agent_names(home: Path | None = None) -> list[str]:
     """The human names of the agents whose config launches Reverie, in AGENTS order: what `reverie status`
     lists under "MCP server command", and what the UI's Connect page says is set up."""
