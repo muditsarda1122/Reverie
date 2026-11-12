@@ -454,9 +454,32 @@ def test_every_project_tab_but_connect_shows_the_off_page_and_leaks_nothing(env,
         assert "Ledger rows" not in page and "Refunds need" not in page and "<form class=\"addf\"" not in page, path
         assert "<title>svc, Reverie</title>" in page and '<h1 class="visually-hidden">Turned off for svc</h1>' in page
         assert '<span class="n">' not in page                                              # no counts: nothing is read
+        assert "Add a rule" not in page and 'class="acts"' not in page                     # no way to start a write from here
     assert "Reverie is turned off for this repo. Step 1 turns it on." in get(s, f"/connect?p={pid}")[1]
     tabs = re.findall(r'<nav class="tabs".*?</nav>', get(s, f"/context?p={pid}")[1], re.S)[0]
     assert 'aria-current="page">Rules' in tabs                                              # the tab you are on stays marked
+
+
+def test_add_and_search_of_a_turned_off_project_read_nothing_from_it(env, serve, monkeypatch):
+    repo = _search_env(env)
+    s = serve(repo)
+    pid = ui._pid(str(repo))
+    assert cli.main(["disable"]) == 0
+
+    def boom(*a, **k):
+        raise AssertionError("read the project")
+    for name in ("collect", "waiting", "known_people", "rule_records", "add_targets", "search_page", "add_page"):
+        monkeypatch.setattr(ui, name, boom)
+    monkeypatch.setattr(ui.context, "resolve", boom)
+    monkeypatch.setattr(ui.deliver, "memory", boom)
+    for url in (f"/add?p={pid}", f"/search?p={pid}&q=ledger", f"/search?p={pid}&q=<b>"):
+        status, page, _ = get(s, url)
+        assert status == 200 and "Reverie is turned off for svc." in page, url
+        assert "<form class=\"addf\"" not in page and "<textarea" not in page and "result" not in _main(page), url
+        assert 'name="q" type="search"' in page and "ledger" not in _main(page)
+    # Connect, the one tab that works while off, also offers no Add
+    status, page, _ = get(s, f"/connect?p={pid}")
+    assert status == 200 and "Add a rule" not in page
 
 
 # --- Not found, Something went wrong ----------------------------------------------------------------------------------

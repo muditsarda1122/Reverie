@@ -299,15 +299,15 @@ def _tabs_html(proj: dict, counts: dict, active: str) -> str:
 
 
 def layout(*, title: str, proj: dict | None, plist: list[dict], body: str, tab: str = "", counts: dict | None = None,
-         h1: str | None = None, desc: str = "", q: str = "") -> str:
+         h1: str | None = None, desc: str = "", q: str = "", acts: bool = True) -> str:
     """The shared shell: top bar (wordmark, project switcher, search), the tab row, the page."""
     menu = "".join(
         f'<li><a href="{_u("/project", p)}"' + (' aria-current="page"' if proj and p["id"] == proj["id"] else "")
         + f">{esc(p['name'])}</a></li>" for p in plist[:40])
     pid = f'<input type="hidden" name="p" value="{esc(proj["id"])}">' if proj else ""
     value = f' value="{esc(q)}"' if q else ""
-    tabrow = (f'<div class="tabrow">{_tabs_html(proj, counts or {}, tab)}<div class="acts">'
-              f'<a href="{_u("/add", proj)}">Add a rule</a></div></div>') if proj else ""
+    add = f'<div class="acts"><a href="{_u("/add", proj)}">Add a rule</a></div>' if acts else ""      # not offered while Reverie is off
+    tabrow = f'<div class="tabrow">{_tabs_html(proj, counts or {}, tab)}{add}</div>' if proj else ""
     hidden = f'<h1 class="visually-hidden">{esc(h1)} for {esc(proj["name"])}</h1>' if (h1 and proj) else ""
     return (f'<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
             f'<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>{esc(title)}</title>\n'
@@ -1194,7 +1194,7 @@ def connect_page(root: str, proj: dict, plist: list[dict]) -> str:
     if not off:
         counts = waiting(root, collect(root))["counts"]
     return layout(title=f"Connect an agent to {proj['name']}, Reverie", proj=proj, plist=plist, body=body, tab="/connect",
-                  counts=counts, h1="Connect")
+                  counts=counts, h1="Connect", acts=not off)
 
 
 def off_page(proj: dict, plist: list[dict], tab: str) -> str:
@@ -1202,7 +1202,7 @@ def off_page(proj: dict, plist: list[dict], tab: str) -> str:
     body = (f'<p class="tally">Reverie is turned off for {esc(proj["name"])}.</p>'
             '<p class="who">Nothing is told to agents and nothing is shown here.</p>'
             f'<p class="why">Turn it back on from a terminal:</p>{_block(_enable_cmd(proj))}')
-    return layout(title=f"{proj['name']}, Reverie", proj=proj, plist=plist, body=body, tab=tab, counts={}, h1="Turned off")
+    return layout(title=f"{proj['name']}, Reverie", proj=proj, plist=plist, body=body, tab=tab, counts={}, h1="Turned off", acts=False)
 
 
 def not_found_page(plist: list[dict]) -> str:
