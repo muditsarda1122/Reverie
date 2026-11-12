@@ -89,6 +89,27 @@ def test_add_tells_a_non_owner_it_becomes_a_proposal_and_an_owner_it_does_not(en
     assert "waits until an owner" not in page
 
 
+def test_the_why_field_shows_only_when_an_option_can_lead_to_a_proposal(env, serve):
+    tmp_path, repo = env
+    s = serve(repo)
+    page = get(s, "/add")[1]                                                              # a non-owner: a proposal is possible
+    assert 'name="why"' in page and "Only a proposal keeps this" in page
+    _as(repo, OWNER, "Lee Lead")
+    page = get(s, "/add")[1]                                                              # an owner: every option is direct
+    assert 'name="why"' not in page and "Only a proposal keeps this" not in page and "Why (optional)" not in page
+    tok, pid = _form(s, "/add")                                                           # hiding the field is not the check: a posted why is still dropped
+    _follow(s, _http(s, "POST", "/do/add", {"token": tok, "p": pid, "text": "Direct rule", "kind": "rule", "target": "repo", "why": "ignored"}))
+    assert "ignored" not in (repo / ".reverie/context/rules.md").read_text()
+
+
+def test_the_terminal_examples_put_why_only_where_it_is_kept(env, serve):
+    s = serve(env[1])
+    page = html.unescape(get(s, "/add")[1])
+    assert 'reverie context add "Money is stored as integer cents"</pre>' in page
+    assert 'reverie context propose "Money is stored as integer cents" --why "rounding drift"</pre>' in page
+    assert "context add \"Money is stored as integer cents\" --why" not in page
+
+
 def test_when_only_rules_md_is_owned_guidance_is_added_straight_away_and_the_page_says_so(env, serve):
     tmp_path, repo = env
     (repo / "CODEOWNERS").write_text("/.reverie/context/rules.md lead@acme.com\n")
@@ -127,7 +148,7 @@ def test_an_owners_add_goes_straight_in_and_the_why_is_not_kept(env, serve):
     assert link and "Run <code>ruff</code> before every commit" in get(s, link.group(1))[1]
     stored = (repo / ".reverie/context/rules.md").read_text()
     assert "- Run `ruff` before every commit" in stored and "a very specific reason" not in stored    # the page said so: a direct add keeps no why
-    assert "Only a proposal keeps this" in get(s, "/add")[1]
+    assert 'name="why"' not in get(s, "/add")[1]                                           # every option is a direct add: no Why field
 
 
 def test_a_team_folder_is_offered_with_its_own_note_and_written_to(env, serve):

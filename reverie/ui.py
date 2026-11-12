@@ -1278,6 +1278,12 @@ def _review_of(doc: Path) -> tuple[str, list[str]]:
     return ("direct" if _safe(lambda: context.is_owner(doc), False) else "waits"), owners
 
 
+def _leads_to_proposal(t: dict) -> bool:
+    """Whether adding here, as this viewer, can end as a proposal (a rule or guidance waiting for an owner): context.add's test."""
+    folder = Path(t["folder"])
+    return any(_review_of(folder / doc)[0] == "waits" for doc in ("rules.md", "guidance.md"))
+
+
 def _add_note(t: dict, names: dict, me: "Viewer") -> str:
     """The true consequence of adding here as this viewer: from the same ownership test context.add applies."""
     rule_doc, guide_doc = Path(t["folder"]) / "rules.md", Path(t["folder"]) / "guidance.md"
@@ -1319,21 +1325,22 @@ def add_page(root: str, proj: dict, plist: list[dict], st: State | None = None, 
         f'<span><b>{title}</b><span class="d">{note}</span></span></label>'
         for v, title, note in (("rule", "A rule", "Agents are told it at the start of every session."),
                                ("guidance", "Guidance", "Agents see a pointer to it and open it when it is relevant.")))
+    why_field = (f'<label class="why-in">Why (optional)<input type="text" name="why" maxlength="{LIMITS["why"]}" '
+                 f'value="{esc(flash.get("why", ""))}"><span class="d">Only a proposal keeps this: the owners read it next to the rule. '
+                 f'A direct add does not save it.</span></label>') if any(_leads_to_proposal(t) for t in targets) else ""
     form = ('<form class="addf" method="post" action="/do/add">'
             f'<input type="hidden" name="token" value="{html.escape(st.token if st else "")}">'
             f'<input type="hidden" name="p" value="{esc(proj["id"])}">{err}'
             f'<div><label class="visually-hidden" for="text">The rule</label><textarea id="text" name="text" '
             f'maxlength="{LIMITS["text"]}" required{invalid if bad == "text" else ""}>{esc(flash.get("text", ""))}</textarea></div>'
             f'<fieldset><legend>Who is told</legend>{opts}</fieldset><fieldset><legend>How agents get it</legend>{kinds}</fieldset>'
-            f'<label class="why-in">Why (optional)<input type="text" name="why" maxlength="{LIMITS["why"]}" '
-            f'value="{esc(flash.get("why", ""))}"><span class="d">Only a proposal keeps this: the owners read it next to the rule. '
-            f'A direct add does not save it.</span></label><div><button class="btn" type="submit">Add rule</button></div></form>')
+            + why_field + '<div><button class="btn" type="submit">Add rule</button></div></form>')
     terminal = ('<section class="subtle"><details class="cmd"><summary>From a terminal</summary><p>The same as this form:</p>'
-                + _block('reverie context add "Money is stored as integer cents" --why "rounding drift"')
+                + _block('reverie context add "Money is stored as integer cents"')
                 + "<p>Only for your own agents, in every repo:</p>"
                 + _block('reverie rules add --user "Prefer rg over grep in examples"')
-                + "<p>Turn a rule you already use into a team proposal:</p>"
-                + _block('reverie context propose "Money is stored as integer cents"')
+                + "<p>Turn a rule you already use into a team proposal. A proposal keeps the reason:</p>"
+                + _block('reverie context propose "Money is stored as integer cents" --why "rounding drift"')
                 + "</details><p>A rule that looks like a secret is refused and not kept.</p></section>")
     banner = _flash_html(flash) if flash and not bad_flash else ""
     body = (banner + '<h1 class="ask">What should agents know about this repo?</h1>' + acting_html(me) + form + terminal)
