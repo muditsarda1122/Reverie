@@ -108,7 +108,7 @@ def name(key: str) -> str:
     return f'<span title="{esc(e)}">{esc(n)}</span>'
 
 
-def people(emails: list[str], me: str) -> str:
+def people(emails: list[str], me: str, sep: str = ", ") -> str:
     """Names with the email in a title attribute; the viewer is 'First (you)'; an unknown email is shown as is."""
     by_email = {e: (k, n) for k, (n, e) in PEOPLE.items()}
     out = []
@@ -119,7 +119,7 @@ def people(emails: list[str], me: str) -> str:
         k, n = by_email[e]
         label = f"{n.split()[0]} (you)" if k == me else n
         out.append(f'<span title="{esc(e)}">{esc(label)}</span>')
-    return ", ".join(out)
+    return sep.join(out)
 
 
 def mine(p: dict, me: str) -> bool:
@@ -274,6 +274,26 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .doc { width: 100%; max-width: 80ch; margin: var(--space-md) 0 0; padding: var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.55; color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .meta .cmd summary { min-height: 0; }
 .meta .cmd pre { margin-top: var(--space-xs); }
+.ask { max-width: 40rem; font-size: 1.9rem; line-height: 1.2; }
+.addf { display: grid; gap: var(--space-lg); margin-top: var(--space-lg); max-width: 52rem; }
+.addf textarea { width: 100%; min-height: 9rem; padding: var(--space-md); font-family: var(--font-serif); font-size: var(--text-xl); line-height: 1.4; color: var(--color-ink); background: var(--color-paper); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); resize: vertical; }
+.addf [aria-invalid="true"] { border: 2px solid var(--color-ink); }
+.addf fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.addf legend { padding: 0; margin-bottom: var(--space-xs); font-weight: 600; }
+.opt { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); gap: 0 var(--space-sm); padding-block: var(--space-xs); cursor: pointer; }
+.opt input { margin: 0.3rem 0 0; accent-color: var(--color-ink); width: 1.1rem; height: 1.1rem; }
+.opt b { font-weight: 600; }
+.opt span { color: var(--color-ink-2); }
+.opt span b { color: var(--color-ink); }
+.addf .opt .d { display: block; color: var(--color-muted); font-size: var(--text-sm); }
+.addf .why-in { display: grid; gap: var(--space-2xs); color: var(--color-muted); font-size: var(--text-sm); }
+.addf .why-in input { min-height: 2.5rem; padding: 0 var(--space-sm); font: inherit; color: var(--color-ink); background: var(--color-paper); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); }
+.err { max-width: 65ch; margin-top: var(--space-lg); font-weight: 600; color: var(--color-ink); }
+.addf .err { margin: 0; }
+.subtle { margin-top: var(--space-xl); }
+.addf .why-in .d { color: var(--color-muted); }
+.subtle .cmd p { margin-top: var(--space-md); }
+.subtle p { margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); }
 .back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
 .back a { font-weight: 400; color: var(--color-muted); }
 .back a:hover { color: var(--color-ink); }
@@ -312,6 +332,8 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
   .find input[type=search] { width: 100%; }
   .menu { left: 0; }
   .bigrule { font-size: 1.5rem; }
+  .ask { font-size: 1.5rem; }
+  .addf textarea { font-size: var(--text-lg); }
   .facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-3xs) 0; }
   .facts dd { margin-bottom: var(--space-sm); }
   .tabs { gap: 0 var(--space-md); }
@@ -969,6 +991,62 @@ def memory_body(ms: list[dict], pid: str, index: int, note: str = "") -> str:
     return "".join(out)
 
 
+# ---- Add -----------------------------------------------------------------------------------------------------
+TEAM_FOLDERS = [("team|orgdocs/platform", "orgdocs/platform"), ("team|orgdocs/payments", "orgdocs/payments")]
+
+
+def add_body(me: str, flash: str = "", error: tuple[str, str] | None = None, text: str = "", why: str = "") -> str:
+    """The Add page. ``error`` is (server message, the field it is about: text | target | kind)."""
+    owner = PEOPLE[me][1] in DOCS["rules.md"]
+    err_id = "add-error"
+
+    def bad(field: str) -> str:
+        return f' aria-invalid="true" aria-describedby="{err_id}"' if error and error[1] == field else ""
+
+    if owner:
+        repo_d = (f"Everyone on this repo, from the next session. No review: you are an owner of "
+                  f"<code>rules.md</code> ({people(DOCS['rules.md'], me)}). Reverie edits the file and does not commit it.")
+    else:
+        repo_d = (f"Everyone on this repo. A rule waits until an owner of <code>rules.md</code> accepts it "
+                  f"({people(DOCS['rules.md'], me, ' or ')}); guidance is added straight away. Reverie edits the file and does not commit it.")
+    opts = [("repo", "This repo", repo_d)]
+    for v, folder in TEAM_FOLDERS:
+        opts.append((v, f"Team folder <code>{esc(folder)}</code>",
+                     "Everyone whose repos use this folder, from the next session. No CODEOWNERS entry covers it, so there is no review. "
+                     "Reverie edits the file there and does not commit it."))
+    radios = "".join(
+        f'<label class="opt"><input type="radio" name="target" value="{esc(v)}"{" checked" if i == 0 else ""}{bad("target")}>'
+        f'<span><b>{lab}</b><span class="d">{d}</span></span></label>' for i, (v, lab, d) in enumerate(opts))
+    kinds = "".join(
+        f'<label class="opt"><input type="radio" name="kind" value="{v}"{" checked" if v == "rule" else ""}>'
+        f'<span><b>{lab}</b><span class="d">{d}</span></span></label>' for v, lab, d in
+        (("rule", "A rule", "Agents are told it at the start of every session."),
+         ("guidance", "Guidance", "Agents see a pointer to it and open it when it is relevant.")))
+    err = f'<p class="err" id="{err_id}" role="alert">{esc(error[0])}</p>' if error else ""
+    form = (f'<form class="addf" method="post" action="/do/add">'
+            f'<input type="hidden" name="token" value="{TOKEN}"><input type="hidden" name="p" value="{API}">{err}'
+            f'<div><label class="visually-hidden" for="text">The rule</label>'
+            f'<textarea id="text" name="text" maxlength="1000" required{bad("text")}>{esc(text)}</textarea></div>'
+            f'<fieldset><legend>Who is told</legend>{radios}</fieldset>'
+            f'<fieldset><legend>How agents get it</legend>{kinds}</fieldset>'
+            f'<label class="why-in">Why (optional)<input type="text" name="why" maxlength="300" value="{esc(why)}">'
+            f'<span class="d">Only a proposal keeps this: the owners read it next to the rule. A direct add does not save it.</span></label>'
+            f'<div><button class="btn" type="submit">Add rule</button></div></form>')
+    cmds = ('<section class="subtle"><details class="cmd"><summary>From a terminal</summary>'
+            '<p>The same as this form:</p>'
+            '<pre class="block-cmd">reverie context add "Money is stored as integer cents" --why "rounding drift"</pre>'
+            '<p>Only for your own agents, in every repo:</p>'
+            '<pre class="block-cmd">reverie rules add --user "Prefer rg over grep in examples"</pre>'
+            '<p>Turn a rule you already use into a team proposal:</p>'
+            '<pre class="block-cmd">reverie context propose "Money is stored as integer cents"</pre></details>'
+            '<p>A rule that looks like a secret is refused and not kept.</p></section>')
+    return (flash + '<h1 class="ask">What should agents know about this repo?</h1>'
+            f'<p class="who">Acting as {name(me)}, from your git identity.</p>' + form + cmds)
+
+
+EX_RULE = "Run `ruff` before every commit and fix what it reports."
+
+
 def write(fname: str, html_text: str) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / fname).write_text(html_text, encoding="utf-8")
@@ -1069,6 +1147,26 @@ def main() -> None:
                                       body=memory_body(stale_demo, API, 3,
                                                        '<p class="testnote">Layout test: items the seed does not have (possibly outdated, with and without a commit message). The text is invented and is not product data.</p>'),
                                       **mp))
+
+    # Add: the form as an owner and as a non-owner, the refusals, and the page after a successful add
+    adesc = "Add a rule or guidance for this repo or a team folder."
+    ap = dict(title="Add a rule to payments-api, Reverie", pid=API, repo="payments-api", active="/add", h1=None,
+              counts=counts_for("mudit", WAITING), desc=adesc)
+    write("add.html", shell(body=add_body("mudit"), **ap))
+    write("add-arjun.html", shell(**{**ap, "counts": counts_for("arjun", WAITING)}, body=add_body("arjun")))
+    write("add-error.html", shell(body=add_body("mudit", error=("Nothing was saved: write the rule first.", "text")), **ap))
+    write("add-error-kept.html", shell(body=add_body(
+        "mudit", error=("Nothing was saved: this project cannot add to that place. Pick another option.", "target"), text=EX_RULE,
+        why="the linter catches what reviews miss"), **ap))
+    write("add-error-secret.html", shell(body=add_body(
+        "mudit", error=("Nothing was saved: this looks like it contains a secret. Remove the value and try again. The text was cleared on purpose.", "text")), **ap))
+    check = ('It has not been checked for conflicts yet: that happens at the next session start, or now with '
+             '<code>reverie context check</code>.')
+    write("add-done.html", shell(body=add_body("mudit", flash=(
+        f'<p class="flash" role="status">Added to <code>rules.md</code>: “{rule_html(EX_RULE)}” It applies from the next session. {check} <a href="/context?p={API}">See it in Rules</a></p>')), **ap))
+    write("add-arjun-done.html", shell(**{**ap, "counts": counts_for("arjun", WAITING)}, body=add_body("arjun", flash=(
+        f'<p class="flash" role="status">Proposed: “{rule_html(EX_RULE)}” It waits for an owner of <code>rules.md</code>: '
+        f'{people(DOCS["rules.md"], "arjun", " or ")}. It is not in force yet. <a href="/proposals?p={API}">See the proposal</a></p>'))))
     # Rule page: one page per case (read-only; commands shown quietly)
     ldesc = "One rule: where it comes from, its status and what to do about it."
     pg = dict(pid=API, repo="payments-api", h1=None, counts=counts_for("mudit", WAITING), desc=ldesc)

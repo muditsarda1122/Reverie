@@ -148,6 +148,26 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .doc { width: 100%; max-width: 80ch; margin: var(--space-md) 0 0; padding: var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.55; color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .meta .cmd summary { min-height: 0; }
 .meta .cmd pre { margin-top: var(--space-xs); }
+.ask { max-width: 40rem; font-size: 1.9rem; line-height: 1.2; }
+.addf { display: grid; gap: var(--space-lg); margin-top: var(--space-lg); max-width: 52rem; }
+.addf textarea { width: 100%; min-height: 9rem; padding: var(--space-md); font-family: var(--font-serif); font-size: var(--text-xl); line-height: 1.4; color: var(--color-ink); background: var(--color-paper); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); resize: vertical; }
+.addf [aria-invalid="true"] { border: 2px solid var(--color-ink); }
+.addf fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.addf legend { padding: 0; margin-bottom: var(--space-xs); font-weight: 600; }
+.opt { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); gap: 0 var(--space-sm); padding-block: var(--space-xs); cursor: pointer; }
+.opt input { margin: 0.3rem 0 0; accent-color: var(--color-ink); width: 1.1rem; height: 1.1rem; }
+.opt b { font-weight: 600; }
+.opt span { color: var(--color-ink-2); }
+.opt span b { color: var(--color-ink); }
+.addf .opt .d { display: block; color: var(--color-muted); font-size: var(--text-sm); }
+.addf .why-in { display: grid; gap: var(--space-2xs); color: var(--color-muted); font-size: var(--text-sm); }
+.addf .why-in input { min-height: 2.5rem; padding: 0 var(--space-sm); font: inherit; color: var(--color-ink); background: var(--color-paper); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); }
+.err { max-width: 65ch; margin-top: var(--space-lg); font-weight: 600; color: var(--color-ink); }
+.addf .err { margin: 0; }
+.subtle { margin-top: var(--space-xl); }
+.addf .why-in .d { color: var(--color-muted); }
+.subtle .cmd p { margin-top: var(--space-md); }
+.subtle p { margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); }
 .back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
 .back a { font-weight: 400; color: var(--color-muted); }
 .back a:hover { color: var(--color-ink); }
@@ -186,6 +206,8 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
   .find input[type=search] { width: 100%; }
   .menu { left: 0; }
   .bigrule { font-size: 1.5rem; }
+  .ask { font-size: 1.5rem; }
+  .addf textarea { font-size: var(--text-lg); }
   .facts { grid-template-columns: minmax(0, 1fr); gap: var(--space-3xs) 0; }
   .facts dd { margin-bottom: var(--space-sm); }
   .tabs { gap: 0 var(--space-md); }

@@ -78,6 +78,11 @@ Plain, short, specific, in the product's words. No marketing, no exclamation mar
 - Possibly outdated rules and rules in an unresolved conflict are told to agents with "verify" or "ask first", and are not counted as in force.
 - The character note uses the configured limit: "3,523 of 8,000 characters."
 
+## Forms
+- One question as the page's only visible heading, phrased for what the form does. The main control is the field for what the person types, in the serif face (it is the thing itself); choices are radio options with one plain sentence each, saying who is told and whether anyone approves; one bordered submit button, with a neutral label ("Add rule") when its effect depends on a choice and there is no JavaScript.
+- **Refusal wording.** The server refuses exactly as before; only the words change. A refusal starts with "Nothing was saved:", is a full sentence, and says what to do ("Nothing was saved: write the rule first."). A refusal that is a specific reason keeps that reason after the colon. A success message ends with a link to the result, in the style of "Decide" and "View" ("See it in Rules", "See the proposal").
+- Refusals: the server's message sits above the field in bold ink (no red), the typed text is kept wherever the server keeps it, and the field has `aria-invalid="true"` and `aria-describedby`. Never show a destination or action the viewer cannot use.
+
 ## One home
 - **Every item is listed on exactly one tab.** Rules lists every rule, including remembered ones; Memory lists the other kinds (decisions, rejected approaches, preferences, environment) and says "<n> rules you stated are listed under Rules." (linked to `/context`, omitted at zero). A remembered rule's own page has Rules active and "Back to Rules"; a remembered decision's has Memory active and "Back to Memory".
 - Commands live on the item's own page, each with a plain sentence; a list shows a command only where it is the one fix for an item that needs a look (a sentence ending the item).

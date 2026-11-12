@@ -89,6 +89,44 @@ Static pages built by `python3 design/tools/build_after.py` from the seed in `de
 - Port: the old page paged its items (`PAGE_SIZE`); the grouping needs all of them, or the same pager per group, and must leave out kind `rule` (those go to Rules).
 - Dropped from the old page: the id column (the id is on the item's page), the lane-per-kind board and the "Open one with reverie show <id>" hint.
 
+## Add (`/add?p=<project>`; the form posts to `/do/add`)
+| File | Shows |
+|---|---|
+| `add.html` | As Mudit (an owner of `rules.md`): "No review: you are an owner" |
+| `add-arjun.html` | As Arjun (owns nothing): "A rule waits until an owner of rules.md accepts it (Priya Nair or Mudit Sarda); guidance is added straight away" |
+| `add-error.html` | Empty text: "Refused: text is empty" above the field, which is marked `aria-invalid` and `aria-describedby` |
+| `add-error-kept.html` | "Refused: that is not a place this project can add to." with the typed text and reason kept; the destination radios are marked |
+| `add-error-secret.html` | The secret refusal: the text is **not** kept, as in `ui.py` |
+| `add-done.html` | After a direct add: the flash quotes the rule, then a blank form |
+| `add-arjun-done.html` | After a proposal: the flash quotes the rule and names the owners |
+
+The typed rule text in the error and done pages is an example, not product data.
+
+- Field names, method and action are exactly the old ones (`token`, `p`, `text`, `kind`, `target`, `why`; POST `/do/add`). The old selects (`kind`, `target`) are radio groups with the same names and values (`repo`, `team|orgdocs/platform`, `team|orgdocs/payments`; `rule`, `guidance`). The wiring check passes.
+- The one visible heading is the question "What should agents know about this repo?"; the form creates a rule or guidance, so it does not say "always". The rule text field is a large serif textarea. The submit is the bordered button with the neutral label "Add rule", because what happens depends on the radios and there is no JavaScript.
+- Each destination carries one plain sentence on who is told and whether anyone reviews. All destinations are usable by every viewer, so no radio is disabled and no reason is given.
+- **"Your rules" is not a destination.** The form cannot write to `~/.reverie/rules.md`; that stays the quiet command `reverie rules add --user`. The other quiet commands are `reverie context add` (the same as the form) and `reverie context propose`.
+- The form cannot pick a document or a path scope: a rule goes to `rules.md` and guidance to `guidance.md`. In the seed no CODEOWNERS entry covers `guidance.md`, so guidance from a non-owner is added directly; that is said on the radio.
+- **Reworded flash (for the port):** the old messages are "Added to rules.md. It applies from the next session. ..." and "Written as a proposal (<slug>.md). The owners (<emails>) review it; it is not in force yet." The new ones quote the rule and name the owners (name, email in the title, "you" for the viewer). The wording is a design change; the refusals' messages stay as in `ui.py`.
+- **Server behaviour worth knowing:** there is no "too long" refusal (each field is silently cut to its limit: text 1000, why 300); the secret and Reverie-off refusals do not keep the typed text; whitespace in the text is collapsed to single spaces.
+- **Refusal wording (words only; the server still refuses exactly as before):**
+
+| Old (`ui.py`) | New |
+|---|---|
+| Refused: that project is not known to Reverie. | Nothing was saved: Reverie does not know that project. Open it from the project list. |
+| Refused: Reverie is turned off for this project. Turn it on first. | Nothing was saved: Reverie is turned off for this project. Turn it on with `reverie enable`, then try again. |
+| Refused: this looks like it contains a secret, so nothing was saved. Remove the value and try again. | Nothing was saved: this looks like it contains a secret. Remove the value and try again. The text was cleared on purpose. |
+| Refused: that is not a place this project can add to. | Nothing was saved: this project cannot add to that place. Pick another option. |
+| Refused: text is empty | Nothing was saved: write the rule first. |
+| Refused: <specific reason from `context.add`>, e.g. "no team source configured: add [sources] team = [...] to .reverie/context.toml" | Nothing was saved: <the same reason>, then what to do. |
+| That did not work, and nothing was changed. The CLI still does. | Nothing was saved: something went wrong. Try again, or add it with `reverie context add`. |
+
+- Success messages end with a link: "See it in Rules" (`/context`) after a direct add, "See the proposal" (`/proposals`) after a proposal.
+- **What `why` does:** it is written into a proposal file for the owners (shown on Proposals as "Why: ..."). A direct add (`_append`) does not store it. The page says so under the field.
+- **Where the change goes:** `context.add` edits (or creates) the file in the chosen folder and never runs `git commit`; the git identity only decides whether the writer is an owner and names the proposer. Each destination says "Reverie edits the file and does not commit it."
+- The three terminal commands sit behind "From a terminal"; the secret line stays visible.
+- Dropped from the old page: the "Shared folders use their own git identity: ..." line (each team destination says it instead) and the two cards, now the quiet commands.
+
 ## Rules this screen follows (from the review)
 - One quiet metadata line under the why, at every width: name, date, document name, "only under <paths>". The full path (`.reverie/context/<name>`) is the document's title attribute; the proposer's email is the name's title attribute. "Waiting on an owner of ..." also shows names (email in the title, "you" for the viewer); an email is printed only when no name is known for it. CODEOWNERS gives only emails, so the port must look names up.
 - No repo path on this page (the switcher names the repo).
