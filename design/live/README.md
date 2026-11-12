@@ -44,3 +44,8 @@ Visible differences from the mockups (text diff of every page pair, and a pixel 
 7. **A refusal after an unknown project** (a POST naming a project the server does not know) now ends on the board with the line "Nothing was saved: that project is not known to Reverie." The mockups have no such state.
 8. **Stage-1 and stage-2 fix carried over:** the Proposals accept message now shows `reverie context check` as code (the mockup did; stage 1 showed backticks).
 9. **Pixel comparison (19 pages x 3 widths x light and dark):** identical except `connect` (the agents line, difference 2), `connect-off` and `off` (the real path wraps onto more lines, so those pages are 31 px taller at 1440 and 900, difference 3), `search-both` (one remembered id, difference 1) and a one-pixel anti-aliasing difference in two dark `add-error-kept` shots. Everything else is identical.
+
+
+## Screenshots are not in git
+
+`screenshots/` is gitignored (about 35 MB per folder). Regenerate it with `SHOOT_DIR=design/live node design/tools/shoot.mjs` (needs `puppeteer-core` and Chrome, see above); it writes 1440, 900 and 390 wide, light and dark, one PNG each.

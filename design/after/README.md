@@ -175,3 +175,8 @@ The typed rule text in the error and done pages is an example, not product data.
 
 ## Tooling
 - `puppeteer-core` lives outside the repo at `~/.cache/reverie-design-tools/puppeteer` (installed with `npm i puppeteer-core` there). `design/tools/shoot.mjs` finds it there; for Hallmark's render tier set `HALLMARK_PUPPETEER="$HOME/.cache/reverie-design-tools/puppeteer"`. Chrome is taken from `/Applications/Google Chrome.app` or `CHROME_PATH`.
+
+
+## Screenshots are not in git
+
+`screenshots/` is gitignored (about 35 MB per folder). Regenerate it with `node design/tools/shoot.mjs` (needs `puppeteer-core` and Chrome, see above); it writes 1440, 900 and 390 wide, light and dark, one PNG each.

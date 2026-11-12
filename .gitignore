@@ -56,3 +56,6 @@ docs/EC_TECHNICAL_REFERENCE.md
 find-orgs.sh
 # Hallmark working folder (screenshots, before/after records)
 .hallmark/
+
+# --- Design review screenshots (regenerate: see design/after/README.md and design/live/README.md) ---
+design/*/screenshots/
