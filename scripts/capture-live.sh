@@ -24,6 +24,40 @@ start() {
 grab() { curl -s "http://127.0.0.1:$PORT$1" -o "$OUT/$2"; echo "saved $2"; }       # no -f: 404 and 500 pages are pages too
 as() { "$SEED" --dir "$1" --as "$2" >/dev/null 2>&1; }
 
+rid() {   # rid PAGE_HTML TEXT_FRAGMENT -> the id in the Open link that follows that rule text (HTML tags and entities ignored)
+  python3 - "$1" "$2" <<'PY'
+import html, re, sys
+page = open(sys.argv[1], encoding="utf-8").read()
+for m in re.finditer(r'<li class="entry">(.*?)</li>', page, re.S):
+    block = m.group(1)
+    first = re.search(r'<p class="rule">(.*?)</p>', block, re.S)
+    if first and sys.argv[2] in html.unescape(re.sub(r"<[^>]+>", "", first.group(1))):
+        found = re.search(r'/rule\?p=[0-9a-f]{8}&amp;id=([^"]+)"', block)
+        if found:
+            print(found.group(1)); break
+PY
+}
+linkcheck() {   # linkcheck PORT FILE... : every /rule link on the saved pages must answer 200 on the live server (no 404)
+  python3 - "$@" <<'PY'
+import html, re, sys, urllib.request, urllib.error
+port, files = sys.argv[1], sys.argv[2:]
+seen, bad = set(), 0
+for f in files:
+    for href in re.findall(r'href="(/rule\?[^"]+)"', open(f, encoding="utf-8").read()):
+        href = html.unescape(href)
+        if href in seen:
+            continue
+        seen.add(href)
+        try:
+            code = urllib.request.urlopen(f"http://127.0.0.1:{port}{href}").status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        if code != 200 and "nosuchrule" not in href:
+            print(f"BROKEN {code} {href} (linked from {f})"); bad += 1
+print(f"{len(seen)} distinct /rule links checked, {bad} broken")
+sys.exit(1 if bad else 0)
+PY
+}
 D1="$TMP/seed"; start "$D1"
 API="$(pid_of "$D1/payments-api")"; NOTIF="$(pid_of "$D1/notifications-service")"; OFF="$(pid_of "$D1/legacy-billing")"
 for who in mudit arjun priya; do
@@ -33,12 +67,31 @@ for who in mudit arjun priya; do
   grab "/proposals?p=$API" "proposals$sfx.html"
 done
 as "$D1" mudit
+grab "/context?p=$API" rules.html
+grab "/memory?p=$API"  memory.html
+grab "/start?p=$API"   start.html
+for pair in "rule-team:Ledger entries are append-only:rules.html" "rule-conflict:All outbound HTTP calls:rules.html" \
+            "rule-outdated:do not call the ledger service:rules.html" "rule-remembered:Never run migrations:rules.html" \
+            "rule-remembered-challenged:Refunds over 10,000 INR:memory.html"; do
+  name="${pair%%:*}"; rest="${pair#*:}"; src="${rest##*:}"; frag="${rest%:*}"
+  id="$(rid "$OUT/$src" "$frag")"
+  [ -n "$id" ] && grab "/rule?p=$API&id=$id" "$name.html" || echo "no id for $name" >&2
+done
+grab "/rule?p=$API&id=nosuchrule" not-found-rule.html
+linkcheck "$PORT" "$OUT"/overview.html "$OUT"/overview-arjun.html "$OUT"/overview-priya.html "$OUT"/rules.html "$OUT"/start.html "$OUT"/memory.html
 mv "$D1/home/context" "$D1/home/context.aside"
 grab "/project?p=$NOTIF"   empty-overview.html
 grab "/proposals?p=$NOTIF" empty-proposals.html
+grab "/context?p=$NOTIF"   empty-rules.html
+grab "/memory?p=$NOTIF"    empty-memory.html
+grab "/start?p=$NOTIF"     empty-start.html
 mv "$D1/home/context.aside" "$D1/home/context"
 grab "/project?p=deadbeef" unknown-project.html
 D2="$TMP/seed-capped"; start "$D2" --extra-repo-rules 35
 API2="$(pid_of "$D2/payments-api")"
 grab "/project?p=$API2" overview-capped.html
+grab "/context?p=$API2" rules-capped.html
+grab "/memory?p=$API2"  memory-capped.html
+grab "/start?p=$API2"   start-capped.html
+linkcheck "$PORT" "$OUT"/overview-capped.html "$OUT"/rules-capped.html "$OUT"/memory-capped.html "$OUT"/start-capped.html
 echo "seeds were in $TMP (throwaway)"

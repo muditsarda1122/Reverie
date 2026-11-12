@@ -19,7 +19,7 @@ pip install -e ".[dev]"
 ## Test commands
 
 ```bash
-pytest -q                      # ~990 tests, fully offline; live tests self-skip
+pytest -q                      # ~990 tests, fully offline; live tests self-skip (or .venv/bin/python -m pytest -q)
 ruff check reverie tests bench conftest.py
 mypy                           # config in pyproject.toml
 ```
@@ -29,7 +29,7 @@ the configured provider's key is set. `REVERIE_HOME` redirects the brain
 directory to a temp path for isolation. The tests import the installed
 package — the editable install above is required.
 
-The first `pytest` run needs the embedding model cached, because the tests
+Run `pytest` with the virtualenv's Python (`.venv/bin/python -m pytest`), not a system Python: without `sentence-transformers` the embedding tests fail. CI installs the same way, so it matches. The first `pytest` run needs the embedding model cached, because the tests
 run offline: run the product once, or download `all-MiniLM-L6-v2`.
 
 Run all three before opening a pull request; CI runs them on Linux and macOS.

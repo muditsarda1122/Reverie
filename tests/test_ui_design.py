@@ -7,9 +7,9 @@ import threading
 from pathlib import Path
 
 import pytest
+from test_ui_writes import _follow, _form, _http, _tree
 
 from reverie import context, ui
-from test_ui_writes import _follow, _form, _http, _tree
 
 OWNER = "lead@acme.com"
 

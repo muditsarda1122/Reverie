@@ -590,7 +590,7 @@ def _conflict_lines(res: Resolved) -> list[str]:
     return lines
 
 
-def render(root: str, *, budget: int = 3600, rule_chars: int = 300) -> str:
+def render(root: str, *, budget: int = 3600, rule_chars: int = 300, trace=None) -> str:
     """The team-context block for a session start: rules always (bounded),
     conflicts shown, guidance as pointers. '' when nothing applies."""
     try:
@@ -636,12 +636,21 @@ def render(root: str, *, budget: int = 3600, rule_chars: int = 300) -> str:
                          f"{_one(it.text, 90)}")
     out: list[str] = []
     used = 0
+    cut = False
     for ln in lines:
         if used + len(ln) + 1 > budget:
             out.append(f"(…{len(lines) - len(out)} more lines; `reverie context list`)")
+            cut = True
             break
         out.append(ln)
         used += len(ln) + 1
+    if trace is not None:                    # every team rule: its line is in the text, or it was cut by the budget
+        kept = len(out) - (1 if cut else 0)
+        for it in rules:
+            idx = next((i for i, ln in enumerate(lines) if ln.startswith("- ") and f" {it.id}]" in ln), -1)
+            told = 0 <= idx < kept
+            trace.add("team", it.id, it.text, told, "" if told else
+                      f"the team rules block holds at most about {budget:,} characters", "" if told else "characters")
     return "\n".join(out)
 
 
@@ -691,9 +700,14 @@ def show(root: str, id_prefix: str) -> str:
         if it.id in {x.id for x in c.items}:
             lines.append(f"conflict {c.key} ({c.status}): "
                          + " vs ".join(f"{_tag(x)}" for x in c.items))
+            if c.reason:
+                lines.append(f"conflict reason: {c.reason}")
+            if c.winner is not None:
+                lines.append(f"winner: {_tag(c.winner)}")
     if it.id in res.stale:
         st = res.stale[it.id]
-        lines.append(f"possibly outdated: commit {st.get('commit', '')[:8]}: {st.get('reason', '')}")
+        msg = f" ({st['message']})" if st.get("message") else ""
+        lines.append(f"possibly outdated: commit {st.get('commit', '')[:8]}{msg}: {st.get('reason', '')}")
     return "\n".join(lines)
 
 

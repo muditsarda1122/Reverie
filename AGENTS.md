@@ -78,6 +78,10 @@ brain directory for isolation.
 
 These commands were verified from a clean virtualenv with Python 3.12.
 
+Run the tests with that environment's Python (`.venv/bin/python -m pytest -q`), never a system or conda
+Python: the embedding tests need `sentence-transformers` and fail with `EmbeddingError` without it. CI
+installs the same way (`pip install -e ".[dev]"` plus the cached embedding model).
+
 ## Before you commit
 
 1. `pytest -q`, `ruff check reverie tests bench conftest.py` and `mypy` all

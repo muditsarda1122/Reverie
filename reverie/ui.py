@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-from . import context, deliver, redact, rules, spool
+from . import context, deliver, redact, rules, spool, usage
 from .ui_style import CSS as DESIGN_CSS
 
 PAGE_SIZE = 100
@@ -332,28 +332,23 @@ def collect(root: str) -> dict:
                  and (m["kind"] == "rule"
                       or (m["kind"] == "preference" and m.get("repo_key") is None
                           and m.get("origin") == "item"))]
-    return {
+    d = {
         "res": res, "mem": mem, "stale_mem": stale_mem, "team_rules": team_rules,
         "personal": personal, "repo_rules": repo_rules, "mem_rules": mem_rules,
         "unresolved": [c for c in res.conflicts if c.status == "unresolved"],
         "stale_team": [i for i in res.items if i.id in res.stale],
         "proposals": _safe(lambda: context.proposals(root), []),
         "rejected": _safe(lambda: context.rejected(root), []),
-        "start": _safe(lambda: deliver.startup_text(root, log=False, mem=mem), ""),
     }
+    d["start"], d["trace"] = _safe(lambda: deliver.startup_report(root, log=False, mem=mem), ("", deliver.StartTrace()))
+    d["records"] = _safe(lambda: rule_records(root, d), [])
+    return d
 
 
 def rules_in_force(d: dict) -> tuple[int, int]:
-    """(given, cut): rules agents actually receive in the start block, and rules that apply but were
-    left out of it by its line and size limits. A rule counts as given when its text is in the block."""
-    flat = " ".join(d["start"].split())
-    texts = ([i.text for i in d["team_rules"]] + list(d["personal"]) + list(d["repo_rules"]))
-    total = len(texts) + len(d["mem_rules"])
-    if not flat:
-        return total, 0                       # no block to compare with: nothing is known to be cut
-    given = sum(1 for t in texts if " ".join(t.split())[:60] in flat)
-    given += sum(1 for m in d["mem_rules"] if f"[{m['id'][:8]}]" in flat)
-    return given, total - given
+    """(told, cut): the rules agents are handed in the start text, and rules that apply but were cut by one of its
+    limits. Counted from the start-text trace, the same numbers Rules and What agents are told show."""
+    return told_counts(d)
 
 
 def _attention(d: dict) -> int:
@@ -541,66 +536,9 @@ def projects_page(root: str, query=None) -> str:
                  actions=f'<a class="btn pri" href="/new">{icon("plus", 16)}Add a project</a>')
 
 
-def start(root: str, proj: dict, plist: list[dict]) -> str:
-    d = collect(root)
-    text = d["start"]
-    given, cut = rules_in_force(d)
-    cut_hint = (f'<p class=hint>{given} rules in force · {cut} cut by the start limit: they apply here but '
-                f'do not fit in what agents are handed. <code>reverie rules list</code> shows them all.</p>'
-                ) if cut else ""
-    intro = ("<p class=hint>This is exactly what an agent is handed when a session starts in this repo. "
-             "Viewing it here is not a delivery and is not counted as one.</p>")
-    if text:
-        body = (intro + f'<div class=panel><pre id=start>{esc(text, redacted=False)}</pre></div>'
-                f'<p class=hint>{len(text)} characters.</p>' + cut_hint)
-    else:
-        body = intro + _empty("eye", "Nothing.", "No rules or memory apply here yet, so an agent starts with a clean slate.")
-    return frame(proj, plist, d, "/start", body)
-
-
 def _chips(marks: list[str]) -> str:
     return "".join(f'<span class="chip {"bad" if m == "conflict" else "warn" if "outdated" in m else ""}">'
                    f'{esc(m)}</span>' for m in marks)
-
-
-def context_page(root: str, proj: dict, plist: list[dict]) -> str:
-    d = collect(root)
-    res = d["res"]
-    shared = _lane("Shared rules file: no owners, no review", "",
-                   [f'<article class=card><p class=q style="margin:0">{esc(b)}</p></article>'
-                    for b in d["repo_rules"]]) if d["repo_rules"] else ""
-    shared_note = ('<p class=hint>These bullets come from <code>.reverie/rules.md</code>: a file shared through git '
-                   'with no owners and no review. Agents are told them as this repo\'s rules.</p>'
-                   f'<div class=board style="grid-auto-columns:minmax(272px,420px)">{shared}</div>') if shared else ""
-    if not res.items:
-        return frame(proj, plist, d, "/context", shared_note or _empty(
-            "users", "No team context applies here",
-            "Put markdown in <code>.reverie/context/</code> (see <code>reverie context</code>) "
-            "to share rules with a team."))
-    rows = []
-    lost = {o.id for c in res.conflicts for o in c.overridden}
-    for it in res.items:
-        marks = [m for m, on in (("locked", it.locked), ("conflict", it.id in lost),
-                                 ("possibly outdated", it.id in res.stale),
-                                 ("also a shared rule: hidden here", it.id in res.hidden),
-                                 (f"only under {', '.join(it.paths)}", bool(it.paths))) if on]
-        rows.append(f"<tr><td><span class=chip>{esc(it.label)}</span></td><td>{esc(it.kind)}</td>"
-                    f"<td>{esc(_clip(it.text))}<span class=s>{esc(it.file)}</span></td>"
-                    f"<td><div class=marks>{_chips(marks)}</div></td><td><code>{esc(it.id)}</code></td></tr>")
-    conf = []
-    for c in res.conflicts:
-        names = "".join(f"<p class=q>{esc(x.label)}: “{esc(_clip(x.text, 120))}”</p>" for x in c.items)
-        conf.append(f'<article class=card><span class="chip {"bad" if c.status == "unresolved" else "ok"}">'
-                    f'{esc(c.status)}</span><h3 style="margin-top:10px"><code>{esc(c.key)}</code></h3>{names}'
-                    + (f"<p>{esc(c.reason)}</p>" if c.reason else "") + "</article>")
-    hint = context.contradiction_hint(res)
-    body = (('<div class=board style="grid-auto-columns:minmax(272px,420px)">'
-             + _lane("Conflicts", "b", conf) + "</div>") if conf else "")
-    body += (f'<p class=hint>Hint shown to agents: {esc(hint)}</p>' if hint else "")
-    body += ('<div class="panel scroll"><table><thead><tr><th>Applies to</th><th>Kind</th><th>Rule</th>'
-             f'<th>Marks</th><th>Id</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>')
-    body += shared_note
-    return frame(proj, plist, d, "/context", body)
 
 
 _KIND_ORDER = ("rule", "preference", "decision")
@@ -625,30 +563,6 @@ def _mcard(m: dict) -> str:
             + f'<hr class=rule><div class=meta><span class=chip>{esc(src or "unknown")}</span>'
               + (f'<span>{esc(use)}</span>' if use else "")
               + f'<span class=sp><code>{esc(str(m.get("id", ""))[:8])}</code></span></div></article>')
-
-
-def memory_page(root: str, proj: dict, plist: list[dict], page: int = 1) -> str:
-    d = collect(root)
-    mem = d["mem"]
-    if not mem:
-        return frame(proj, plist, d, "/memory", _empty(
-            "layers", "Nothing remembered for this repo yet",
-            "Decisions and findings from agent sessions appear here once Reverie has captured some."))
-    pages = max(1, -(-len(mem) // PAGE_SIZE))
-    page = min(max(page, 1), pages)
-    chunk = mem[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
-    kinds = [k for k in _KIND_ORDER if any(m.get("kind") == k for m in chunk)]
-    kinds += sorted({str(m.get("kind")) for m in chunk} - set(kinds))
-    lanes = "".join(_lane(_kind_name(k), "",
-                          [_mcard(m) for m in chunk if str(m.get("kind")) == k]) for k in kinds)
-    nav = ""
-    if pages > 1:
-        nav = (f'<div class=pager><span>Page {page} of {pages}</span>'
-               + (f'<a href="{_u("/memory", proj, page=str(page - 1))}">Previous</a>' if page > 1 else "")
-               + (f'<a href="{_u("/memory", proj, page=str(page + 1))}">Next</a>' if page < pages else "") + "</div>")
-    body = (f'<p class=hint>{len(mem)} item(s) remembered on this machine for this repo. '
-            f'Open one with <code>reverie show &lt;id&gt;</code>.</p><div class=board>{lanes}</div>{nav}')
-    return frame(proj, plist, d, "/memory", body)
 
 
 def connect_page(root: str, proj: dict, plist: list[dict]) -> str:
@@ -898,9 +812,13 @@ def waiting(root: str, d: dict) -> dict:
             "counts": {"/project": you, "/proposals": sum(1 for x in props if x["mine"])}}
 
 
-def _frame(root: str, proj: dict, plist: list[dict], d: dict, w: dict, tab: str, body: str, title: str, h1: str) -> str:
-    return layout(title=f"{title} {'of' if title == 'Overview' else 'for'} {proj['name']}, Reverie", proj=proj, plist=plist, body=body, tab=tab,
-                counts=w["counts"], h1=h1)
+_TITLE_WORD = {"Overview": "of", "Rules": "of", "Memory": "of", "What agents are told": "in"}
+
+
+def _frame(root: str, proj: dict, plist: list[dict], d: dict, w: dict, tab: str, body: str, title: str, h1: str,
+           full_title: str = "") -> str:
+    return layout(title=full_title or f"{title} {_TITLE_WORD.get(title, 'for')} {proj['name']}, Reverie", proj=proj, plist=plist,
+                  body=body, tab=tab, counts=w["counts"], h1=h1)
 
 
 def _flash_html(flash: dict | None) -> str:
@@ -953,7 +871,7 @@ def _outdated_item(x: dict, ctx: dict) -> str:
         m = x["m"]
         st = (m.get("meta") or {}).get("stale") or {}
         text, ident, reason = str(m.get("text", "")), str(m.get("id", ""))[:8], str(st.get("reason", ""))
-        meta = [f'<span>Remembered</span>']
+        meta = ['<span>Remembered</span>']
         commit, message = str(st.get("commit", "")), str(st.get("message", ""))
         tail = (f'<p class="todo">Check the code, then keep it with <code>reverie stale keep {esc(ident)}</code> or '
                 f'forget it with <code>reverie undo {esc(ident)}</code>.</p>')
@@ -1077,6 +995,557 @@ def proposals_page(root: str, proj: dict, plist: list[dict], st: State | None = 
 
 
 # ---------------------------------------------------------------------------
+# stage 2: Rules, the Rule page, What agents are told, Memory (design.md; one record per rule feeds all of them)
+# ---------------------------------------------------------------------------
+
+CUT_FALLBACK = "it did not fit in what agents are told"
+ID_OK = re.compile(r"^[0-9A-Za-z_-]{1,64}$")
+SAID = {"user_said": "You said it", "agent_inferred": "An agent inferred it"}
+
+
+def bullet_id(text: str) -> str:
+    """Bullets in a rules file have no id of their own: a stable one is the hash of their text."""
+    return hashlib.sha1(" ".join(text.split()).lower().encode()).hexdigest()[:10]
+
+
+def usage_words(u: dict) -> str:
+    return usage.words(u)
+
+
+def _clip1(text: str, n: int = 64) -> str:
+    t = " ".join(text.split())
+    return t if len(t) <= n else t[:n].rsplit(" ", 1)[0] + "…"
+
+
+def _quote(text: str) -> str:
+    return f"“{rule_html(_clip1(text))}”"
+
+
+def plain_conflict_reason(reason: str) -> str:
+    """The judge's or the resolver's reason, in plain words."""
+    low = (reason or "").lower()
+    if "sibling scopes have no order" in low:
+        return "both come from team folders at the same level, so neither one wins."
+    if "two locks contradict" in low:
+        return "both are locked, so neither one wins."
+    return (reason or "the two rules say different things.").rstrip(".") + "."
+
+
+def _overridden_why(c) -> str:
+    if c.status == "locked":
+        return "it is locked, so it wins everywhere"
+    if "resolved by" in (c.reason or ""):
+        return c.reason.split(";")[-1].strip()
+    return "it is more specific, so it answers this one"
+
+
+def _where_label(it) -> str:
+    return it.scope or "this repo" if it.layer in ("org", "team") else "this repo"
+
+
+def _conflict_who(owners: list[str], mine: bool, names: dict, me: "Viewer") -> str:
+    if not owners:
+        return "No CODEOWNERS entry covers either document, so anyone can settle it."
+    if mine:
+        return "You own one of the documents, so you can settle it."
+    return f"Waiting on an owner: {people_html(owners, names, me)}."
+
+
+def _memory_state(m: dict, shared: set[str], fate: dict) -> tuple[str, str]:
+    """(status, reason) of a remembered item: outdated / hidden / cut / challenged / force."""
+    meta = m.get("meta") or {}
+    if deliver.is_stale_flagged(m):
+        return "outdated", str((meta.get("stale") or {}).get("reason", ""))
+    if m.get("kind") == "rule" and context.norm(m.get("text") or "") in shared:
+        return "hidden", ""
+    f = fate.get(("memory", m.get("id")))
+    if f is not None and not f["told"]:
+        return "cut", f["reason"] or CUT_FALLBACK
+    return ("challenged" if meta.get("challenged") else "force"), ""
+
+
+def rule_records(root: str, d: dict) -> list[dict]:
+    """Every rule that applies here, one record each, with its state: in force (told to agents), possibly
+    outdated, in an unresolved conflict, overridden, hidden (a copy of a team rule) or cut. Rules, the Rule page,
+    What agents are told and Search all read these; the told/cut state comes from the start-text trace."""
+    res, trace = d["res"], d["trace"]
+    fate = {(r["source"], r["key"]): r for r in trace.rules}
+    conf: dict[str, tuple] = {}
+    for c in res.conflicts:
+        if c.status == "unresolved":
+            for it in c.overridden:
+                conf[it.id] = ("conflict", c, next((x for x in c.overridden if x.id != it.id), None))
+        else:
+            for lo in c.overridden:
+                conf[lo.id] = ("overridden", c, c.winner)
+            if c.winner is not None and c.overridden:
+                conf.setdefault(c.winner.id, ("beats", c, c.overridden[0]))
+    recs: list[dict] = []
+    for it in res.items:
+        f = Path(it.file)
+        rec = {"id": it.id, "text": it.text, "kind": "team", "item": it, "group": "your" if it.layer == "personal" else "team",
+               "sub": _source_label(it) if it.layer != "personal" else "", "doc": f.name, "path": _doc_path(f, root),
+               "paths": ", ".join(it.paths), "locked": it.locked, "guidance": it.kind != "rule", "status": "force", "reason": "",
+               "other": None, "note": "", "layer": it.layer}
+        if it.id in res.stale:
+            rec["status"], rec["reason"] = "outdated", str(res.stale[it.id].get("reason", ""))
+        elif it.id in conf:
+            role, c, other = conf[it.id]
+            rec["conflict"] = c
+            rec["other"] = other
+            if role == "conflict":
+                rec["status"] = "conflict"
+            elif role == "overridden":
+                rec["status"], rec["reason"] = "overridden", _overridden_why(c)
+            else:
+                rec["beats"] = other
+                rec["reason"] = _overridden_why(c)
+        if rec["status"] == "force" and it.id in res.hidden:
+            rec["status"] = "hidden"
+        elif rec["status"] == "force" and not rec["guidance"]:
+            fa = fate.get(("team", it.id))
+            if fa is not None and not fa["told"]:
+                rec["status"], rec["reason"] = "cut", fa["reason"] or CUT_FALLBACK
+        recs.append(rec)
+    for src, group, path, bullets in (("rules_file_user", "your", "~/.reverie/rules.md", d["personal"]),
+                                      ("rules_file_repo", "shared", ".reverie/rules.md", d["repo_rules"])):
+        for b in bullets:
+            fa = fate.get((src, b))
+            cut = fa is not None and not fa["told"]
+            recs.append({"id": bullet_id(b), "text": b, "kind": "file", "item": None, "group": group, "sub": "",
+                         "doc": "rules.md", "path": path, "paths": "", "locked": False, "guidance": False,
+                         "status": "cut" if cut else "force", "reason": ((fa or {}).get("reason") or CUT_FALLBACK) if cut else "",
+                         "other": None, "note": "", "layer": "personal" if group == "your" else "repo"})
+    shared = {context.norm(i.text) for i in res.effective if i.kind == "rule" and i.layer != "personal" and i.id not in res.stale}
+    for m in d["mem"]:
+        if m.get("kind") != "rule":
+            continue
+        status, reason = _memory_state(m, shared, fate)
+        recs.append({"id": str(m.get("id", ""))[:8], "text": str(m.get("text", "")), "kind": "memory", "item": m,
+                     "group": "remembered", "sub": "", "doc": "", "path": "", "paths": "", "locked": False, "guidance": False,
+                     "status": status, "reason": reason, "other": None, "note": "", "layer": "memory"})
+    return recs
+
+
+def _split_ids(recs: list[dict]) -> dict[str, dict]:
+    return {r["id"]: r for r in recs}
+
+
+def told_counts(d: dict) -> tuple[int, int]:
+    """(told, cut): the rules agents are handed, and the rules that apply but were cut. One count, from the start-text trace."""
+    rs = d["trace"].rules
+    told = sum(1 for r in rs if r["told"])
+    return told, len(rs) - told
+
+
+def _st_label(rec: dict) -> str:
+    return {"outdated": "Possibly outdated", "conflict": "Conflict", "overridden": "Overridden",
+            "hidden": "Hidden: same as a team rule", "cut": "Cut by the start limit", "challenged": "Challenged"}.get(rec["status"], "")
+
+
+def rule_li(r: dict, ctx: dict) -> str:
+    names, me = ctx["names"], ctx["me"]
+    pid = ctx["pid"]
+    st, extra = r["status"], ""
+    label = _st_label(r)
+    if st == "force" and r.get("beats") is not None:
+        b = r["beats"]
+        extra = f'<p class="note">Overrides {_quote(b.text)} in {esc(_where_label(b))}: {esc(r["reason"])}.</p>'
+    elif st == "outdated":
+        extra = f'<p class="note">A later change to the code may contradict it: {esc(r["reason"])}.</p>'
+    elif st == "conflict":
+        o, c = r["other"], r["conflict"]
+        owners = ctx["owners_of_conflict"](c)
+        extra = (f'<p class="note">Disagrees with {_quote(o.text) if o else "another rule"} in {esc(_where_label(o) if o else "")}. '
+                 f'Agents are told to ask before acting on either. {_conflict_who(owners[0], owners[1], names, me)}</p>')
+    elif st == "overridden":
+        o = r["other"]
+        extra = f'<p class="note">Overridden by {_quote(o.text)} in {esc(_where_label(o))}: {esc(r["reason"])}.</p>'
+    elif st == "hidden":
+        extra = ('<p class="note">Agents are told the team rule, not this copy. The copy comes back if the team rule '
+                 'is removed.</p>')
+    elif st == "cut":
+        extra = f'<p class="note">It applies here but was cut, because {esc(r["reason"])}.</p>'
+    elif st == "challenged":
+        extra = ('<p class="note">Agents contradicted it repeatedly, so agents are now told to confirm or fix it '
+                 'before relying on it.</p>')
+    meta = [f'<span class="st">{label}</span>'] if label else []
+    if r["kind"] == "memory":
+        meta.append(f'<span>{esc(SAID.get(str((r["item"] or {}).get("source", "")), "Remembered"))}</span>')
+    elif r["doc"]:
+        meta.append(f'<span title="{esc(r["path"])}"><code>{esc(r["doc"])}</code></span>')
+    if r["guidance"]:
+        meta.append("<span>Guidance</span>")
+    if r["paths"]:
+        meta.append(f'<span>only under <code>{esc(r["paths"])}</code></span>')
+    if r["locked"]:
+        meta.append("<span>locked</span>")
+    meta.append(f'<a class="open" href="/rule?p={esc(pid)}&amp;id={quote(r["id"])}">Open rule</a>')
+    return (f'<li class="entry"><p class="rule">{rule_html(r["text"])}</p><p class="meta">{"".join(meta)}</p>{extra}</li>')
+
+
+def _rule_list(rs: list[dict], ctx: dict) -> str:
+    if len(rs) <= 10:
+        return f'<ol class="items">{"".join(rule_li(r, ctx) for r in rs)}</ol>'
+    top = [r for r in rs if r["status"] != "force"]          # exceptions stay visible above the fold
+    rest = [r for r in rs if r["status"] == "force"]
+    out = f'<ol class="items">{"".join(rule_li(r, ctx) for r in top)}</ol>' if top else ""
+    if rest:
+        out += (f'<details class="fold"><summary>{len(rest)} {"more " if top else "rules "}in force</summary>'
+                f'<ol class="items">{"".join(rule_li(r, ctx) for r in rest)}</ol></details>')
+    return out
+
+
+def _team_order(r: dict) -> int:
+    it = r["item"]
+    return {"org": 0, "team": 1}.get(it.layer, 2)          # org, team, then this repo; the order inside is the loader's
+
+
+def rules_page(root: str, proj: dict, plist: list[dict]) -> str:
+    d = collect(root)
+    w = waiting(root, d)
+    ctx = _ctx(root, proj)
+    ctx["owners_of_conflict"] = _owner_fn(w, ctx)
+    recs = d["records"]
+    told, cut = told_counts(d)
+    tally = (f'{told} {"rule" if told == 1 else "rules"} <span class="in">in force</span>' if told
+             else 'No rules <span class="in">in force</span>')
+    tally += (f', {cut} more cut by the start limit. <a href="{_u("/start", proj)}">See what agents are told.</a>' if cut else ".")
+    out = [f'<p class="tally">{tally}</p>']
+
+    def section(key: str, title: str, gnote: str, inner: str) -> None:
+        out.append(f'<section class="group" aria-labelledby="g-{key}"><h2 id="g-{key}">{title}</h2>'
+                   + (f'<p class="gnote">{gnote}</p>' if gnote else "") + inner + "</section>")
+    team = sorted((r for r in recs if r["group"] == "team"), key=_team_order)
+    if team:
+        subs: dict[str, list[dict]] = {}
+        for r in team:
+            subs.setdefault(r["sub"], []).append(r)
+        inner = ""
+        for k, rs in subs.items():
+            if k == "This repo":
+                label = "This repo, <code>.reverie/context</code>"
+            else:
+                head, _, folder = k.partition(" folder ")
+                label = f'{esc(head)} folder <code>{esc(folder)}</code>'
+            inner += f'<h3 class="sub">{label}</h3>{_rule_list(rs, ctx)}'
+        section("team", "Team rules", "", inner)
+    for key, title, gnote in (("shared", "Shared rules file", "Through git, with no owners and no review."),
+                              ("your", "Your rules", "Only your agents are told these, in every repo."),
+                              ("remembered", "Remembered", "Rules remembered on this machine for this repo.")):
+        g = [r for r in recs if r["group"] == key]
+        if key == "your":
+            g.sort(key=lambda r: r["kind"] != "file")                  # the rules file's bullets first, then personal documents
+        if g:
+            section(key, title, gnote, _rule_list(g, ctx))
+    if not recs:
+        out.append('<p class="who">No rules apply here yet. Put markdown in <code>.reverie/context/</code> to share rules '
+                   'with a team, or use Add a rule.</p>')
+    return _frame(root, proj, plist, d, w, "/context", "".join(out), "Rules", "Rules")
+
+
+def _owner_fn(w: dict, ctx: dict):
+    """A function from a Conflict to (owners of its documents, whether the viewer may settle it), from waiting()."""
+    by_key = {x["c"].key: x for x in w["conflicts"]}
+    return lambda c: ((by_key[c.key]["owners"], by_key[c.key]["mine"]) if c.key in by_key else ([], True))
+
+
+# ---- the Rule page ------------------------------------------------------------------------------------------
+
+def _fact(dt: str, dd: str) -> str:
+    return f"<dt>{dt}</dt><dd>{dd}</dd>"
+
+
+LAYER_WORD = {"org": "Organisation", "team": "Team", "repo": "This repo", "personal": "Yours", "memory": "Remembered on this machine"}
+
+
+def _other_block(it, pid: str, root: str, lead: str) -> str:
+    where = (f'<span>{esc(_source_label(it))}</span>{_doc_span(Path(it.file), root)}'
+             + (f'<span>only under <code>{esc(", ".join(it.paths))}</code></span>' if it.paths else ""))
+    return (f'<div class="other"><p class="why">{lead}</p><p class="rule">{rule_html(it.text)}</p><p class="meta">{where}'
+            f'<a class="open" href="/rule?p={esc(pid)}&amp;id={quote(it.id)}">Open rule</a></p></div>')
+
+
+def _memory_facts(m: dict, ctx: dict) -> str:
+    meta = m.get("meta") or {}
+    anchor = m.get("anchor") or {}
+    rows = [_fact("Said by", esc(SAID.get(str(m.get("source", "")), "Remembered")))]
+    if m.get("evidence"):
+        rows.append(_fact("Evidence", f'<span class="quote">“{rule_html(str(m["evidence"]))}”</span>'))
+    if m.get("created_at"):
+        rows.append(_fact("Remembered", esc(str(m["created_at"])[:10])))
+    anchors = [*(anchor.get("files") or []), *(f"{s}" for s in (anchor.get("symbols") or []))]
+    if anchors:
+        rows.append(_fact("Anchored to", ", ".join(f'<code>{esc(a)}</code>' for a in anchors)))
+    if m.get("grounding_commit"):
+        rows.append(_fact("Grounded on commit", f'<code>{esc(str(m["grounding_commit"])[:7])}</code>'))
+    if m.get("last_verified"):
+        rows.append(_fact("Last verified", esc(str(m["last_verified"])[:10])))
+    words = usage_words(meta.get("usage") or {})
+    if words:
+        rows.append(_fact("Used by agents", esc(words[0].upper() + words[1:] + ".")))
+    st = meta.get("stale") or {}
+    if st:
+        rows.append(_fact("Possibly outdated", f'A later change to the code may contradict it: {esc(str(st.get("reason", "")))}.'))
+        if st.get("commit"):
+            rows.append(_fact("Commit", f'<code>{esc(str(st["commit"])[:7])}</code>'
+                                        + (f' {esc(str(st["message"]))}' if st.get("message") else "")))
+    return "".join(rows)
+
+
+def rule_page(root: str, proj: dict, plist: list[dict], rid: str) -> tuple[int, str]:
+    """One rule, or one remembered item, by id. Read-only; commands are shown, never run."""
+    d = collect(root)
+    w = waiting(root, d)
+    ctx = _ctx(root, proj)
+    pid = proj["id"]
+    recs = d["records"]
+    rec = _split_ids(recs).get(rid)
+    mem = None
+    if rec is None:                                             # a remembered item that is not a rule
+        mem = next((m for m in d["mem"] if str(m.get("id", ""))[:8] == rid), None)
+        if mem is None:
+            body = (f'<p class="back"><a href="{_u("/context", proj)}">Back to Rules</a></p>'
+                    f'<p class="tally">No rule with that id in {esc(proj["name"])}.</p>')
+            return 404, _frame(root, proj, plist, d, w, "/context", body, "Rule not found", "", "Rule not found, Reverie")
+    ctx["res"], ctx["proj"] = d["res"], proj
+    if rec is not None and rec["kind"] == "memory":
+        mem = rec["item"]
+    if mem is not None:
+        is_rule = mem.get("kind") == "rule"
+        tab, home = ("/context", ("Rules", "/context")) if is_rule else ("/memory", ("Memory", "/memory"))
+        status = ""
+        if rec is not None:
+            status = _st_label(rec)
+        else:
+            meta = mem.get("meta") or {}
+            status = "Possibly outdated" if deliver.is_stale_flagged(mem) else ("Challenged" if meta.get("challenged") else "")
+        heading = "Remembered rule" if is_rule else ("Remembered decision" if mem.get("kind") == "decision" else "Remembered item")
+        sec = f'<section class="sec"><h2>{heading}</h2><dl class="facts">{_memory_facts(mem, ctx)}</dl>'
+        if (mem.get("meta") or {}).get("challenged"):
+            sec += ('<p class="why">Challenged: agents contradicted it repeatedly, so agents are now told to confirm or fix it '
+                    'before relying on it. See the tally with <code>reverie usage</code>.</p>')
+        sec += "</section>"
+        i = str(mem.get("id", ""))[:8]
+        cmds = [("Print this item in a terminal.", f"reverie show {i}"),
+                ("Forget it. It can be restored.", f"reverie undo {i}\nreverie undo {i} --restore"),
+                ("Make it apply in every repo, not only this one. Take it back with --demote.",
+                 f"reverie promote {i}\nreverie promote {i} --demote")]
+        if deliver.is_stale_flagged(mem):
+            cmds.append(("Keep it as it is and clear the possibly-outdated flag.", f"reverie stale keep {i}"))
+        sec += ('<section class="sec"><h2>Commands</h2>' + "".join(
+            f'<p class="why">{esc(t)}</p><pre class="block-cmd">{esc(c)}</pre>' for t, c in cmds) + "</section>")
+        text, ident = str(mem.get("text", "")), i
+    else:
+        assert rec is not None
+        tab, home = "/context", ("Rules", "/context")
+        text, ident = rec["text"], rec["id"]
+        status = _st_label(rec)
+        sec = _team_sections(rec, ctx, w, root)
+    body = (f'<p class="back"><a href="{home[1]}?p={esc(pid)}">Back to {home[0]}</a></p>'
+            f'<h1 class="bigrule">{rule_html(text)}</h1>' + (f'<p class="status">{esc(status)}</p>' if status else "") + sec
+            + f'<p class="idline">Id <code>{esc(ident)}</code>. Open it from a terminal with <code>reverie show {esc(ident)}</code>.</p>')
+    word = ("Remembered decision " if (mem is not None and mem.get("kind") == "decision") else "Rule ")
+    return 200, _frame(root, proj, plist, d, w, tab, body, "Rule", "", f"{word}{ident}, Reverie")
+
+
+def _team_sections(rec: dict, ctx: dict, w: dict, root: str) -> str:
+    names, me, pid = ctx["names"], ctx["me"], ctx["pid"]
+    it = rec["item"]
+    rows = []
+    if rec["kind"] == "team":
+        owners = _safe(lambda: context.owners_of(Path(it.file)), [])
+        folder = ".reverie/context" if it.layer == "repo" else (it.scope or "")
+        rows = [_fact("Source", esc(LAYER_WORD.get(it.layer, it.layer))), _fact("Folder", f'<code>{esc(folder)}</code>'),
+                _fact("Document", f'<code>{esc(rec["path"])}</code>')]
+        if it.section:
+            rows.append(_fact("Section", esc(it.section)))
+        rows.append(_fact("Owners", people_html(owners, names, me) if owners else "No CODEOWNERS entry covers it."))
+    else:
+        rows = [_fact("Source", "Yours" if rec["group"] == "your" else "This repo (the shared rules file)"),
+                _fact("Document", f'<code>{esc(rec["path"])}</code>'),
+                _fact("Owners", "None: a file shared through git has no owners and no review." if rec["group"] == "shared"
+                      else "Only you: it applies to your agents in every repo.")]
+    if rec["paths"]:
+        rows.append(_fact("Applies to", f'only under <code>{esc(rec["paths"])}</code>'))
+    if rec["locked"]:
+        rows.append(_fact("Locked", "It cannot be overridden inside its scope."))
+    out = f'<section class="sec"><h2>Where it comes from</h2><dl class="facts">{"".join(rows)}</dl></section>'
+    st = rec["status"]
+    if st == "conflict":
+        c, o = rec["conflict"], rec["other"]
+        owners, mine = _owner_fn(w, ctx)(c)
+        out += ('<section class="sec"><h2>Conflict</h2>'
+                + _other_block(o, pid, root, f'Disagrees with this rule. Conflict <code>{esc(c.key)}</code>: {esc(plain_conflict_reason(c.reason))}')
+                + f'<p class="why">Agents are told to ask before acting on either. {_conflict_who(owners, mine, names, me)}</p>'
+                f'<pre class="block-cmd">reverie context resolve {esc(c.key)} "your decision"</pre></section>')
+    elif st == "overridden":
+        c, o = rec["conflict"], rec["other"]
+        out += ('<section class="sec"><h2>Overridden</h2>' + _other_block(o, pid, root, "Overridden by this rule.")
+                + f'<p class="why">Why it wins: {esc(rec["reason"])}.</p>'
+                f'<p class="absent">The conflict is <code>{esc(c.key)}</code>. An overridden rule is kept in its document and is not told to agents.</p></section>')
+    elif rec.get("beats") is not None:
+        c, o = rec["conflict"], rec["beats"]
+        out += ('<section class="sec"><h2>Overrides</h2>' + _other_block(o, pid, root, "This rule overrides:")
+                + f'<p class="why">Why it wins: {esc(rec["reason"])}.</p></section>')
+    elif st == "outdated":
+        stale = ctx["res"].stale.get(it.id, {}) if it is not None else {}
+        rows2 = [_fact("Reason", f'A later change to the code may contradict it: {esc(rec["reason"])}.')]
+        if stale.get("commit"):
+            rows2.append(_fact("Commit", f'<code>{esc(str(stale["commit"])[:7])}</code>'
+                                         + (f' {esc(str(stale["message"]))}' if stale.get("message") else "")))
+        rows2.append(_fact("What to do", f'Check the code, then edit or remove the rule in <code>{esc(rec["path"])}</code>.'))
+        out += f'<section class="sec"><h2>Possibly outdated</h2><dl class="facts">{"".join(rows2)}</dl></section>'
+    elif st == "cut":
+        out += (f'<section class="sec"><h2>Cut by the start limit</h2><p class="why">It applies here but was cut, because '
+                f'{esc(rec["reason"])}. <a href="{_u("/start", ctx["proj"])}">See what agents are told.</a></p></section>')
+    elif st == "hidden":
+        out += ('<section class="sec"><h2>Hidden</h2><p class="why">Agents are told the team rule, not this copy. The copy '
+                'comes back if the team rule is removed.</p></section>')
+    return out
+
+
+# ---- What agents are told -------------------------------------------------------------------------------------
+
+def start(root: str, proj: dict, plist: list[dict]) -> str:
+    d = collect(root)
+    w = waiting(root, d)
+    trace = d["trace"]
+    text = d["start"]
+    told, cut = told_counts(d)
+    tally = f"{told} {'rule is' if told == 1 else 'rules are'} told to agents"
+    if trace.index:
+        tally += f", plus an index of {trace.index} remembered decisions and findings"
+    tally += "."
+    cut_rules = [r for r in trace.rules if not r["told"]]
+    reasons = sorted({r["reason"] for r in cut_rules})
+    if cut_rules:
+        tally += f" {cut} more {'rule applies but was' if cut == 1 else 'rules apply but were'} cut"
+        tally += f", because {reasons[0]}." if len(reasons) == 1 else "."
+    out = [f'<p class="tally">{tally}</p>',
+           '<p class="who">This is what your agents are told. Your rules are only told to your own agents.</p>']
+    pid = proj["id"]
+    if cut_rules:
+        li = ""
+        for r in cut_rules:
+            rid = r["key"] if r["source"] == "team" else (str(r["key"])[:8] if r["source"] == "memory" else bullet_id(r["text"]))
+            mem_item = next((m for m in d["mem"] if m.get("id") == r["key"]), None) if r["source"] == "memory" else None
+            src = (SAID.get(str((mem_item or {}).get("source", "")), "Remembered") if r["source"] == "memory"
+                   else ("Team rule" if r["source"] == "team" else "Rules file"))
+            why = f'<span>Cut because {esc(r["reason"])}</span>' if len(reasons) > 1 else ""
+            li += (f'<li class="entry"><p class="rule">{rule_html(r["text"])}</p><p class="meta"><span>{src}</span>{why}'
+                   f'<a class="open" href="/rule?p={esc(pid)}&amp;id={quote(rid)}">Open rule</a></p></li>')
+        out.append('<section class="group" aria-labelledby="g-cut"><h2 id="g-cut">Cut by the start limit</h2>'
+                   f'<ol class="items">{li}</ol>'
+                   f'<p class="gnote">The start text lists at most {deliver.MAX_RULE_LINES} remembered rules for this repo, '
+                   f'{deliver.MAX_WIDE_LINES} of your rules that apply in every repo and {deliver.MAX_OUTDATED_LINES} possibly outdated '
+                   f'ones, and stops at {trace.cap:,} characters. <code>reverie rules list</code> shows every rule that applies.</p></section>')
+    if d["unresolved"]:
+        li = "".join(
+            f'<li class="entry"><p><a href="/rule?p={esc(pid)}&amp;id={quote(c.overridden[0].id)}"><code>{esc(c.key)}</code></a></p>'
+            f'<p class="why">{esc(_where_label(c.overridden[0]))} and {esc(_where_label(c.overridden[1]))} disagree. '
+            'Agents are told to ask before acting on either.</p></li>' for c in d["unresolved"] if len(c.overridden) > 1)
+        if li:
+            out.append(f'<section class="group" aria-labelledby="g-ask"><h2 id="g-ask">Agents are told to ask first</h2><ol class="items">{li}</ol></section>')
+    if text:
+        out.append('<section class="group" aria-labelledby="g-text"><h2 id="g-text">What agents read</h2>'
+                   f'<pre class="doc" id="start">{esc(text, redacted=False)}</pre><p class="gnote">{len(text):,} of {trace.cap:,} characters.</p></section>')
+    else:
+        out.append('<p class="why">Nothing is told to agents here. They start with a clean slate.</p>')
+    return _frame(root, proj, plist, d, w, "/start", "".join(out), "What agents are told", "What agents are told")
+
+
+# ---- Memory ---------------------------------------------------------------------------------------------------
+
+MEM_KINDS = [("decision", "Decisions", "Decision"), ("rejected_approach", "Rejected approaches", "Rejected approach"),
+             ("preference", "Preferences", "Preference"), ("environment", "Environment", "Environment")]
+
+
+def _mem_look(m: dict) -> tuple[str, str]:
+    """(why it needs a look, the one command that fixes it), or ("", "")."""
+    meta = m.get("meta") or {}
+    i = esc(str(m.get("id", ""))[:8])
+    if deliver.is_stale_flagged(m):
+        st = meta.get("stale") or {}
+        msg = f" {esc(str(st['message']))}" if st.get("message") else ""
+        commit = f' Commit <code>{esc(str(st["commit"])[:7])}</code>{msg}.' if st.get("commit") else ""
+        return (f'A later change to the code may contradict it: {esc(str(st.get("reason", "")))}.{commit}',
+                f'If it is still true, keep it with <code>reverie stale keep {i}</code>. If not, forget it with <code>reverie undo {i}</code>.')
+    if meta.get("challenged"):
+        return ("Agents contradicted it repeatedly, so agents are now told to confirm or fix it before relying on it.",
+                f'If it is wrong, forget it with <code>reverie undo {i}</code>. It can be restored.')
+    return "", ""
+
+
+def _mem_li(m: dict, pid: str, label: str = "") -> str:
+    why, fix = _mem_look(m)
+    meta_d = m.get("meta") or {}
+    anchor = m.get("anchor") or {}
+    bits = [f'<span>{esc(SAID.get(str(m.get("source", "")), "Remembered"))}</span>']
+    files = [*(anchor.get("files") or []), *(anchor.get("symbols") or [])]
+    if files:
+        bits.append("<span>" + ", ".join(f'<code title="{esc(a)}">{esc(a)}</code>' for a in files) + "</span>")
+    if m.get("created_at"):
+        bits.append(f'<span>{esc(str(m["created_at"])[:10])}</span>')
+    words = usage_words(meta_d.get("usage") or {})
+    if words:
+        bits.append(f"<span>{esc(words)}</span>")
+    bits.append(f'<a class="open" href="/rule?p={esc(pid)}&amp;id={quote(str(m.get("id", ""))[:8])}">Open</a>')
+    return ('<li class="entry">' + (f'<p class="label">{esc(label)}</p>' if label else "")
+            + f'<p class="rule">{rule_html(str(m.get("text", "")))}</p>' + (f'<p class="why">{why}</p>' if why else "")
+            + f'<p class="meta">{"".join(bits)}</p>' + (f'<p class="todo">{fix}</p>' if fix else "") + "</li>")
+
+
+def memory_page(root: str, proj: dict, plist: list[dict], page: int = 1) -> str:
+    """Every remembered item except rules (those are on Rules: each item is listed on exactly one tab)."""
+    d = collect(root)
+    w = waiting(root, d)
+    pid = proj["id"]
+    allm = d["mem"]
+    rules_n = sum(1 for m in allm if m.get("kind") == "rule")
+    ms = [m for m in allm if m.get("kind") != "rule"]
+    if not ms and not rules_n:
+        body = ('<p class="tally">Nothing remembered for this repo yet.</p>'
+                '<p class="who">Decisions and findings from agent sessions appear here once Reverie has captured some.</p>')
+        return _frame(root, proj, plist, d, w, "/memory", body, "Memory", "Memory")
+    look = [m for m in ms if _mem_look(m)[0]]
+    rest = [m for m in ms if not _mem_look(m)[0]]
+    n = len(ms)
+    if n:
+        told = min(d["trace"].index, n)
+        tally = f"{n} remembered {'item' if n == 1 else 'items'}."
+        if told:
+            tally += f" {told} {'is' if told == 1 else 'are'} told to agents in an index."
+        if look:
+            tally += f" {len(look)} {'needs' if len(look) == 1 else 'need'} a look."
+    else:
+        tally = "No decisions or findings remembered yet."
+    out = [f'<p class="tally">{tally}</p>']
+    if rules_n:
+        out.append(f'<p class="who">{rules_n} {"rule you stated is" if rules_n == 1 else "rules you stated are"} listed under '
+                   f'<a href="{_u("/context", proj)}">Rules</a>.</p>')
+    if look:
+        out.append('<section class="group" aria-labelledby="g-look"><h2 id="g-look">Needs a look</h2><ol class="items">'
+                   + "".join(_mem_li(m, pid, _kind_label(m)) for m in look) + "</ol></section>")
+    known = {k for k, _t, _l in MEM_KINDS}
+    groups = list(MEM_KINDS) + [(k, _kind_name(k), _kind_name(k).rstrip("s")) for k in sorted({str(m.get("kind")) for m in rest} - known)]
+    for kind, title, _lab in groups:
+        g = [m for m in rest if str(m.get("kind")) == kind]
+        if not g:
+            continue
+        items = "".join(_mem_li(m, pid) for m in g)
+        inner = (f'<details class="fold"><summary>{len(g)} items</summary><ol class="items">{items}</ol></details>'
+                 if len(g) > 10 else f'<ol class="items">{items}</ol>')
+        out.append(f'<section class="group" aria-labelledby="g-{esc(kind)}"><h2 id="g-{esc(kind)}">{esc(title)}</h2>{inner}</section>')
+    return _frame(root, proj, plist, d, w, "/memory", "".join(out), "Memory", "Memory")
+
+
+def _kind_label(m: dict) -> str:
+    k = str(m.get("kind"))
+    return {kk: ll for kk, _t, ll in MEM_KINDS}.get(k) or _kind_name(k).rstrip("s")
+
+
+# ---------------------------------------------------------------------------
 # writes: the CSRF token, one-shot messages, and the three actions (all through the CLI's functions)
 # ---------------------------------------------------------------------------
 
@@ -1185,7 +1654,7 @@ def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
 # routing
 # ---------------------------------------------------------------------------
 
-PROJECT_PAGES: dict[str, Callable[..., str]] = {"/project": overview, "/start": start, "/context": context_page,
+PROJECT_PAGES: dict[str, Callable[..., str]] = {"/project": overview, "/start": start, "/context": rules_page,
                  "/proposals": proposals_page, "/connect": connect_page, "/add": add_page}
 
 
@@ -1202,10 +1671,13 @@ def render(root: str, path: str, query: dict[str, list[str]] | None = None,
             return 200, projects_page(root, query)
         if path == "/new":
             return 200, new_page(root, query)
-        if path == "/memory" or path == "/search" or path in PROJECT_PAGES:
+        if path in ("/memory", "/search", "/rule") or path in PROJECT_PAGES:
             if path != "/connect" and is_disabled(target):    # Connect is how you turn it back on
                 tab = path if path in dict((p, 1) for p, _, _ in TABS) else "/project"
                 return 200, _disabled(proj, plist, tab)
+            if path == "/rule":
+                rid = ((query or {}).get("id") or [""])[0]
+                return rule_page(target, proj, plist, rid if ID_OK.match(rid) else "")
             if path == "/memory":
                 try:
                     page = int((query or {}).get("page", ["1"])[0])

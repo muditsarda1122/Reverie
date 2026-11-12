@@ -152,3 +152,14 @@ def report(conn, repo_key: str | None) -> list[dict]:
             out.append({"id": it["id"], "text": it["text"], "kind": it["kind"], "usage": u,
                         "total": total, "challenged": bool((it.get("meta") or {}).get("challenged"))})
     return sorted(out, key=lambda r: -r["total"])
+
+
+_WORDS = {"USED": "used", "IGNORED": "ignored", "IRRELEVANT": "not relevant", "CONTRADICTED": "contradicted",
+          "OVERRIDDEN": "overridden"}
+
+
+def words(tally: dict) -> str:
+    """A usage tally in plain words: "used 3 times, contradicted twice" ("" when every count is zero)."""
+    def times(n: int) -> str:
+        return {1: "once", 2: "twice"}.get(n, f"{n} times")
+    return ", ".join(f"{_WORDS[k]} {times(int(tally[k]))}" for k in LABELS if tally.get(k))

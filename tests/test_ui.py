@@ -154,30 +154,26 @@ def test_hostile_text_is_escaped_on_every_page(env, serve, monkeypatch):
     assert saw >= 3                                  # it is shown, as text
 
 
-def test_memory_500_items_is_paged_and_bounded(env, serve, monkeypatch):
+def test_memory_500_items_are_all_listed_and_bounded(env, serve, monkeypatch):
     _, repo = env
     conn = _brain(repo, monkeypatch)
     key = deliver.repo_key(str(repo))
     for n in range(500):
-        items.add(conn, text=f"Convention number {n}: " + "x" * 400, kind="rule",
-                  source="user_said", repo_key=key)
+        items.add(conn, text=f"Environment fact number {n}: " + "x" * 400, kind="environment", source="user_said", repo_key=key)
     conn.close()
     s = serve(repo)
     _, body, _ = req(s, "/memory")
-    assert "500 item(s)" in body and "Page 1 of 5" in body
-    assert body.count("<article class=card>") == ui.PAGE_SIZE and len(body) < 120_000
-    assert "Page 5 of 5" in req(s, "/memory?page=5")[1]
-    assert "Page 5 of 5" in req(s, "/memory?page=999")[1]        # clamped
-    assert "Page 1 of 5" in req(s, "/memory?page=abc")[1]        # junk ignored
-    assert "Page 1 of 5" in req(s, "/memory?page=-3")[1]
+    assert "500 remembered items." in body and "Page 1 of" not in body            # not paged: every item is on the page
+    assert body.count('<li class="entry">') == 500 and len(body) < 1_500_000
+    assert req(s, "/memory?page=5")[0] == 200 and req(s, "/memory?page=abc")[0] == 200   # a stale page parameter is ignored
 
 
 def test_every_page_has_an_empty_state(env, serve):
     _, repo = env                                    # no .reverie dir, no brain, no rules
     assert not (repo / ".reverie").exists()
     s = serve(repo)
-    want = {"/project": "Nothing needs you", "/start": "Nothing.", "/context": "No team context",
-            "/proposals": "Nothing waiting. Suggest a rule with", "/memory": "Nothing remembered", "/": "Projects",
+    want = {"/project": "Nothing needs you", "/start": "Nothing is told to agents here.", "/context": "No rules apply here yet.",
+            "/proposals": "Nothing waiting. Suggest a rule with", "/memory": "Nothing remembered for this repo yet.", "/": "Projects",
             "/connect": "reverie install", "/add": "reverie context add", "/new": "reverie enable",
             "/search?q=": "Type something to search"}
     for page, text in want.items():
@@ -263,7 +259,7 @@ def test_start_page_is_exactly_the_delivered_text(env, serve):
     rules.add("Quote \"this\" & <that>", level="user")
     s = serve(repo)
     page = req(s, "/start")[1]
-    shown = html.unescape(re.search(r'<pre id=start>(.*?)</pre>', page, re.S).group(1))
+    shown = html.unescape(re.search(r'<pre class="doc" id="start">(.*?)</pre>', page, re.S).group(1))
     delivered = deliver.startup_text(str(repo), log=False)
     assert shown == delivered and delivered
     printed: list[str] = []
@@ -309,11 +305,11 @@ def test_only_known_projects_open_and_never_by_path(env, serve, monkeypatch):
 def test_memory_hint_says_this_machine_not_everyone(env, serve, monkeypatch):
     _, repo = env
     conn = _brain(repo, monkeypatch)
-    items.add(conn, text="Always paginate", kind="rule", source="user_said",
+    items.add(conn, text="Always paginate", kind="preference", source="user_said",
               repo_key=deliver.repo_key(str(repo)))
     conn.close()
     body = req(serve(repo), "/memory")[1]
-    assert "1 item(s) remembered on this machine for this repo." in body
+    assert "1 remembered item." in body
     assert "shared by everyone" not in body
 
 
@@ -332,7 +328,7 @@ def test_repo_rules_file_is_shown_labelled_and_counted(env, serve):
     rules.add("Prefer small PRs", level="repo", cwd=str(repo))
     s = serve(repo)
     ctx = req(s, "/context")[1]
-    assert "Shared rules file: no owners, no review" in ctx
+    assert "Shared rules file</h2>" in ctx and "Through git, with no owners and no review." in ctx
     assert "Money is integer cents" in ctx and "Prefer small PRs" in ctx
     assert "No team context applies here" not in ctx            # not the empty state any more
     assert "2 rules in force" in req(s, "/")[1]
@@ -344,7 +340,7 @@ def test_repo_rules_file_sits_beside_team_context(env, serve):
     _seed(tmp_path, repo)
     rules.add("Repo file rule", level="repo", cwd=str(repo))
     body = req(serve(repo), "/context")[1]
-    assert "Shared rules file: no owners, no review" in body and "Repo file rule" in body
+    assert "Shared rules file</h2>" in body and "Repo file rule" in body
     assert "Always squash merge" in body                          # the team table is still there
 
 
@@ -399,9 +395,9 @@ def test_memory_lanes_use_human_names(env, serve, monkeypatch):
         items.add(conn, text=text, kind=kind, source="user_said", repo_key=key)
     conn.close()
     body = req(serve(repo), "/memory")[1]
-    lanes = re.findall(r"<section class=lane><h2>([^<]+)<", body)
-    assert lanes == ["Rules", "Preferences", "Decisions", "Environment", "External context",
-                     "Open questions", "Rejected approaches"]       # known first, the rest alphabetical
+    lanes = re.findall(r'<h2 id="g-[a-z_]+">([^<]+)</h2>', body)
+    assert lanes == ["Decisions", "Rejected approaches", "Preferences", "Environment", "External context",
+                     "Open questions"]                              # known first, the rest alphabetical; rules are on Rules
     assert "Findings" not in body and "Rejected_Approach" not in body and "_" not in " ".join(lanes)
     assert ui._kind_name("observation") == "Observations" and ui._kind_name("some_new_kind") == "Some new kind"
 
@@ -442,7 +438,8 @@ def test_rules_in_force_counts_only_what_the_start_limit_lets_through(env, serve
     over = req(s, "/project")[1]
     assert f"{cut} more rules apply but were cut by the start limit." in over and "See what agents are told." in over
     assert f"{handed} rules in force" in req(s, "/")[1] and f"{cut} cut by the start limit" in req(s, "/")[1]
-    assert f"{handed} rules in force · {cut} cut by the start limit" in req(s, "/start")[1]
+    start = req(s, "/start")[1]
+    assert f"{handed} rules are told to agents." in start and f"{cut} more rules apply but were cut" in start
 
 
 def test_no_cut_note_when_every_rule_fits(env, serve, monkeypatch):

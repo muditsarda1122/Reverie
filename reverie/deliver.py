@@ -197,18 +197,45 @@ def _line(it: dict) -> str:
     return f"- [{it['id'][:8]}] {tag}{_clip(it['text'])}{seen}{warn}"
 
 
-def _capped(lines: list[str], cap: int, more: str, budget: int = 10**9) -> list[str]:
-    """At most ``cap`` lines and ``budget`` characters; a cut is always said."""
+def _capped_ex(lines: list[str], cap: int, more: str, budget: int = 10**9) -> tuple[list[str], int, str]:
+    """At most ``cap`` lines and ``budget`` characters; a cut is always said. Returns the lines, how many of the
+    given lines were kept, and what stopped the list: "lines" (the line cap), "characters" (the budget) or ""."""
     out: list[str] = []
     used = 0
+    why = ""
     for ln in lines[:cap]:
         if used + len(ln) + 1 > budget:
+            why = "characters"
             break
         out.append(ln)
         used += len(ln) + 1
-    if len(out) < len(lines):
-        out.append(f"(+{len(lines) - len(out)} more {more})")
-    return out
+    kept = len(out)
+    if kept < len(lines):
+        why = why or "lines"
+        out.append(f"(+{len(lines) - kept} more {more})")
+    return out, kept, why
+
+
+def _capped(lines: list[str], cap: int, more: str, budget: int = 10**9) -> list[str]:
+    return _capped_ex(lines, cap, more, budget)[0]
+
+
+class StartTrace:
+    """What the start text did with every rule: told, or cut and why. Filled by ``startup_text`` when a trace is
+    passed (``startup_report``); nothing else changes. ``rules``: dicts with source, key, text, told, reason, limit
+    (limit is "lines" or "characters"). ``index``: how many memory items the text lists in its index."""
+
+    def __init__(self) -> None:
+        self.rules: list[dict] = []
+        self.index = 0
+        self.cap = startup_cap()
+
+    def add(self, source: str, key: str, text: str, told: bool, reason: str = "", limit: str = "") -> None:
+        self.rules.append({"source": source, "key": key, "text": text, "told": told, "reason": reason, "limit": limit})
+
+
+def _n(n: int) -> str:
+    return f"{n:,}"
 
 
 def _rules_files_text(cwd: str) -> str:
@@ -228,6 +255,17 @@ def _rules_files_text(cwd: str) -> str:
 
 
 def startup_text(cwd: str, *, log: bool = True, mem: list[dict] | None = None) -> str:
+    """The session-start text (see ``_start``)."""
+    return _start(cwd, log, mem, None)
+
+
+def startup_report(cwd: str, *, log: bool = False, mem: list[dict] | None = None) -> tuple[str, StartTrace]:
+    """The same text, plus what happened to every rule in it (told or cut, and which limit cut it)."""
+    trace = StartTrace()
+    return _start(cwd, log, mem, trace), trace
+
+
+def _start(cwd: str, log: bool, mem: list[dict] | None, trace: StartTrace | None) -> str:
     """Everything an agent should know at the start of a session, within
     the configured cap (``deliver.startup_chars``, default 8000): the user's rules, rules stated in earlier sessions
     (stale ones set apart), and the headline index of everything else.
@@ -267,6 +305,11 @@ def startup_text(cwd: str, *, log: bool = True, mem: list[dict] | None = None) -
 
         parts: list[str] = []
         left = cap - 700          # keep room for the index + notes
+        bullets_files: list[tuple[str, str]] = []
+        if trace is not None:
+            from . import rules as _rules
+            ld = _rules.load(cwd, hide_shared=True)
+            bullets_files = [(k, b) for k in ("user", "repo") for b in _rules.bullets(ld[k])]
         if files_text:
             if len(files_text) > 2400:
                 files_text = files_text[:2400].rsplit("\n", 1)[0] + (
@@ -275,19 +318,33 @@ def startup_text(cwd: str, *, log: bool = True, mem: list[dict] | None = None) -
                          + files_text)
             left -= len(parts[-1])
         from . import context as team_context
-        team_text = team_context.render(root, budget=min(3600, max(left // 2, 800)))
+        team_text = team_context.render(root, budget=min(3600, max(left // 2, 800)), trace=trace)
         if team_text:
             parts.insert(0, team_text)       # org/team rules outrank the personal ones
             left -= len(team_text)
         if wide:
-            body = "\n".join(_capped([_line(m) for m in wide], MAX_WIDE_LINES,
-                                     "— `reverie rules list`", min(1500, max(left, 0))))
+            wb = min(1500, max(left, 0))
+            lines_w, kept, why = _capped_ex([_line(m) for m in wide], MAX_WIDE_LINES, "— `reverie rules list`", wb)
+            if trace is not None:
+                for i, m in enumerate(wide):
+                    trace.add("memory", m["id"], m.get("text") or "", i < kept,
+                              "" if i < kept else (f"agents are told at most {MAX_WIDE_LINES} of your rules that apply in every repo"
+                                                   if why == "lines" else
+                                                   f"agents are told at most about {_n(wb)} characters of your rules that apply in every repo"), why)
+            body = "\n".join(lines_w)
             parts.append("Your preferences and rules across all repos:\n" + body)
             left -= len(parts[-1])
         if repo_rules:
-            body = "\n".join(_capped([_line(m) for m in repo_rules], MAX_RULE_LINES,
-                                     "— open any with `reverie show <id>`",
-                                     min(4500, max(left - 900, 300))))
+            rb = min(4500, max(left - 900, 300))
+            lines_r, kept, why = _capped_ex([_line(m) for m in repo_rules], MAX_RULE_LINES,
+                                            "— open any with `reverie show <id>`", rb)
+            if trace is not None:
+                for i, m in enumerate(repo_rules):
+                    trace.add("memory", m["id"], m.get("text") or "", i < kept,
+                              "" if i < kept else (f"agents are told at most {MAX_RULE_LINES} remembered rules for this repo"
+                                                   if why == "lines" else
+                                                   f"agents are told at most about {_n(rb)} characters of remembered rules for this repo"), why)
+            body = "\n".join(lines_r)
             parts.append("Rules you stated in earlier sessions:\n" + body)
             left -= len(parts[-1])
         if flagged:
@@ -306,13 +363,28 @@ def startup_text(cwd: str, *, log: bool = True, mem: list[dict] | None = None) -
         index = headline_index(rest, limit=limit) if rest and limit else ""
         if index:
             parts.append(index)
+            if trace is not None:
+                trace.index = sum(1 for ln in index.splitlines() if ln.startswith("- ["))
         text = "\n\n".join(parts)
+        if trace is not None:
+            kept_files = "\n\n".join(parts)
+            for kind, b in bullets_files:
+                told = b in kept_files
+                trace.add("rules_file_" + kind, b, b, told, "" if told else "agents are told at most 2,400 characters from your rules files",
+                          "" if told else "characters")
         if log:
             usage.log_delivery(cwd, "start", [m["id"] for m in wide + repo_rules + flagged]
                                + [m["id"] for m in rest[:limit]])
         if len(text) > cap:
             text = text[: cap - 80].rstrip() + (
                 "\n(…truncated; `reverie rules list` and `reverie digest` show the rest)")
+            if trace is not None:               # a rule that was told above but fell off the end of the whole text
+                for r in trace.rules:
+                    if r["told"]:
+                        marker = f"[{r['key'][:8]}]" if r["source"] == "memory" else (f"{r['key']}]" if r["source"] == "team" else r["text"])
+                        if marker not in text:
+                            r.update(told=False, limit="characters",
+                                     reason=f"the whole start text stops at {_n(cap)} characters")
         return text
     except Exception:
         return ""
@@ -666,6 +738,16 @@ def show(conn: sqlite3.Connection, id_prefix: str, root: str) -> str:
                  f"| level: {it.get('level', 'repo')}")
     if it.get("evidence"):
         lines.append("evidence: " + redact(it["evidence"]))
+    if it.get("created_at"):
+        lines.append(f"remembered: {str(it['created_at'])[:10]}")
+    if it.get("last_verified"):
+        lines.append(f"last verified: {str(it['last_verified'])[:10]}")
+    meta = it.get("meta") or {}
+    tally = usage.words(meta.get("usage") or {})
+    if tally:
+        lines.append(f"used by agents: {tally}")
+    if meta.get("challenged"):
+        lines.append("challenged: agents contradicted it repeatedly; agents are told to confirm or fix it before relying on it")
     lines.append(freshness(it, (a.get("files") or ["."])[0], root))
     if stale_note(it):
         lines.append(stale_note(it).strip())
