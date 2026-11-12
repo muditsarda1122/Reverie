@@ -46,6 +46,15 @@ Visible differences from the mockups (text diff of every page pair, and a pixel 
 9. **Pixel comparison (19 pages x 3 widths x light and dark):** identical except `connect` (the agents line, difference 2), `connect-off` and `off` (the real path wraps onto more lines, so those pages are 31 px taller at 1440 and 900, difference 3), `search-both` (one remembered id, difference 1) and a one-pixel anti-aliasing difference in two dark `add-error-kept` shots. Everything else is identical.
 
 
+## After the stage 3 review (intended differences from the mockups, which were not regenerated)
+
+The wiring check now reports 7 items missing, all intended:
+
+- **`POST /do/add` field `why`** (5 pages) and the Why label: shown only when an option can lead to a proposal for this viewer. The live pages are captured as an owner (mudit), so no Why field; `add-arjun*` (a non-owner) keep it.
+- **`/add` link** (2 pages: `off`, `off-rules`): no "Add a rule" while Reverie is off.
+
+Other differences: the "From a terminal" direct-add example has no `--why` and the `propose` example does; Connect and Add a project say "Set up another agent" when an agent is already set up, and list the agents `reverie install` supports (Claude Code, Cursor, OpenCode and Codex); the error page has no "The CLI still works." and no menu divider; `error-write.html` is the failed-write wording; the board and Not found have a hidden `<h1>`.
+
 ## Screenshots are not in git
 
 `screenshots/` is gitignored (about 35 MB per folder). Regenerate it with `SHOOT_DIR=design/live node design/tools/shoot.mjs` (needs `puppeteer-core` and Chrome, see above); it writes 1440, 900 and 390 wide, light and dark, one PNG each.

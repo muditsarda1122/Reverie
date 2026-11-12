@@ -220,14 +220,14 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 <header class="bar"><div class="page">
 <a class="mark" href="/" aria-label="Reverie, all projects">Reverie</a>
 <details class="switch"><summary>All projects</summary>
-<ul class="menu"><li><a href="/project?p=4b8c1bae">payments-api</a></li><li><a href="/project?p=e69262a5">notifications-service</a></li><li><a href="/project?p=f99f8b86">legacy-billing</a></li><li><hr></li><li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>
+<ul class="menu"><li><a href="/project?p=82b94d22">payments-api</a></li><li><a href="/project?p=35ccd6da">notifications-service</a></li><li><a href="/project?p=d391458d">legacy-billing</a></li><li><hr></li><li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>
 <form class="find" action="/search" method="get" role="search"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
 </div></header>
 <div class="page">
 
 <main class="main">
 
-<h1 class="ask">Add a project</h1><p class="who">Projects are repos. A repo appears here once Reverie has seen it.</p><ol class="steps"><li><h2>Set up your agent once per machine</h2><p>This adds Reverie to the agents you use (Claude Code, Codex and others it finds).</p><pre class="block-cmd">reverie install</pre></li><li><h2>Use Reverie in the repo</h2><p>Open your agent in the repo, or run this there. Reverie is on by default, so either one makes the repo appear here the next time this page is opened.</p><pre class="block-cmd">cd path/to/your/repo &amp;&amp; reverie enable</pre></li></ol>
+<h1 class="ask">Add a project</h1><p class="who">Projects are repos. A repo appears here once Reverie has seen it.</p><ol class="steps"><li><h2>Set up another agent</h2><p>Claude Code is already set up. Run this again after you install another agent: it adds Reverie to the ones it finds on this machine (Claude Code, Cursor, OpenCode and Codex).</p><pre class="block-cmd">reverie install</pre></li><li><h2>Use Reverie in the repo</h2><p>Open your agent in the repo, or run this there. Reverie is on by default, so either one makes the repo appear here the next time this page is opened.</p><pre class="block-cmd">cd path/to/your/repo &amp;&amp; reverie enable</pre></li></ol>
 </main>
 </div>
 </body>

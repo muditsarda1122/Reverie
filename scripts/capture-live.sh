@@ -87,6 +87,7 @@ grab "/search?p=$API&q=refund" search-both.html
 grab "/search?p=$API&q=kubernetes" search-empty.html
 grab "/search?p=$API&q=" search-blank.html
 python3 -c 'from reverie import ui; print(ui.error_page(), end="")' > "$OUT/error.html"; echo "saved error.html (ui.error_page(): a 500 cannot be forced on the live server)"
+python3 -c 'from reverie import ui; print(ui.error_page(writing=True), end="")' > "$OUT/error-write.html"; echo "saved error-write.html"
 grab "/add?p=$API" add.html
 post /do/add --data-urlencode "text=" --data-urlencode "kind=rule" --data-urlencode "target=repo" add-error.html
 post /do/add --data-urlencode "text=Run \`ruff\` before every commit and fix what it reports." --data-urlencode "kind=rule" \
