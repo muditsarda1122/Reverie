@@ -9,6 +9,7 @@ already carry (see design/after/README.md for the few the old page did not print
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import re
 from pathlib import Path
@@ -231,6 +232,9 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .meta { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-lg); margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); }
 .meta code { color: var(--color-ink-2); }
 .meta a { font-weight: 600; }
+.meta a.open { font-weight: 400; color: var(--color-muted); }
+.meta a.open:hover { color: var(--color-ink); }
+.tally .in { color: var(--color-in); }
 .act { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-xs) var(--space-lg); margin-top: var(--space-md); }
 .act form { margin: 0; }
 .reject summary, .cmd summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; min-height: 2.5rem; font-weight: 600; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
@@ -241,6 +245,18 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .reject label { display: grid; gap: var(--space-2xs); flex: 1 1 20rem; font-size: var(--text-sm); color: var(--color-muted); }
 .reject input[type=text] { min-height: 2.5rem; padding: 0 var(--space-sm); font: inherit; color: var(--color-ink); background: var(--color-paper); border: var(--rule-hair) solid var(--color-line); border-radius: var(--radius-control); }
 .cmd pre { width: fit-content; max-width: min(65ch, 100%); margin: var(--space-xs) 0 0; padding: var(--space-sm) var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.st { font-weight: 600; color: var(--color-ink); }
+.sub { margin-top: var(--space-lg); font-size: var(--text-md); font-weight: 600; letter-spacing: 0; color: var(--color-ink); }
+.sub code { font-weight: 400; }
+.group > h2 + .sub, .group > .gnote + .sub { margin-top: var(--space-md); }
+.sub + .items > .entry:first-child, .sub + .fold > summary + .items > .entry:first-child { padding-top: var(--space-sm); }
+.gnote { margin-top: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
+.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; min-height: 2.5rem; font-weight: 600; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before { content: ""; flex: none; width: 0.4em; height: 0.4em; margin-right: var(--space-sm); border-right: 1.5px solid var(--color-ink); border-bottom: 1.5px solid var(--color-ink); transform: translateY(-0.12em) rotate(-45deg); }
+.fold[open] > summary::before { transform: translateY(-0.2em) rotate(45deg); }
+.fold > summary + .items { border-top: var(--rule-hair) solid var(--color-rule); margin-top: var(--space-xs); }
+.note { margin-top: var(--space-xs); max-width: 65ch; color: var(--color-ink-2); font-size: var(--text-sm); }
 .waiting-on { margin-top: var(--space-sm); color: var(--color-ink-2); font-size: var(--text-sm); }
 .history { margin-top: var(--space-xl); }
 .history > summary { list-style: none; cursor: pointer; padding-bottom: var(--space-sm); border-bottom: var(--rule-hair) solid var(--color-rule); color: var(--color-muted); font-weight: 600; }
@@ -255,7 +271,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 
 @media (max-width: 40rem) {
   .page { padding-inline: var(--space-md); }
-  .btn, .text-btn, .reject summary, .cmd summary { min-height: 2.75rem; }
+  .btn, .text-btn, .reject summary, .cmd summary, .fold > summary { min-height: 2.75rem; }
   .find { margin-left: 0; width: 100%; }
   .find input[type=search] { width: 100%; }
   .menu { left: 0; }
@@ -396,8 +412,8 @@ def conflict_mine(c: dict, me: str) -> bool:
 
 
 # ---- Overview ------------------------------------------------------------------------------------------------
-def _doc(doc: str) -> str:
-    return f'<span title="{esc(".reverie/context/" + doc)}"><code>{esc(doc)}</code></span>'
+def _doc(doc: str, path: str = "") -> str:
+    return f'<span title="{esc(path or ".reverie/context/" + doc)}"><code>{esc(doc)}</code></span>'
 
 
 def prop_item(p: dict, me: str, pid: str) -> str:
@@ -418,7 +434,7 @@ def prop_item(p: dict, me: str, pid: str) -> str:
 def conflict_item(c: dict, me: str, pid: str) -> str:
     sides = "".join(
         f'<div class="side"><p class="rule">{rule_html(r["text"])}</p>'
-        f'<p class="meta"><span>Team folder {esc(r["folder"])}</span>{_doc(r["doc"])}'
+        f'<p class="meta"><span>Team folder {esc(r["folder"])}</span>{_doc(r["doc"], r["folder"] + "/" + r["doc"])}'
         f'<a href="/rule?p={pid}&amp;id={r["id"]}">Open rule</a></p></div>' for r in c["rules"])
     if c["owners"]:
         who = ("You own one of the documents, so you can settle it." if conflict_mine(c, me)
@@ -474,6 +490,171 @@ def overview_body(me: str, waiting: list[dict], conflicts: list[dict], outdated:
     return "".join(parts)
 
 
+# ---- Rules ---------------------------------------------------------------------------------------------------
+def bullet_id(text: str) -> str:
+    """Bullets in a rules file carry no id of their own; the port would derive a stable one from the text."""
+    return hashlib.sha1(" ".join(text.split()).lower().encode()).hexdigest()[:10]
+
+
+RK, RP, RC = "Team folder orgdocs/platform", "Team folder orgdocs/payments", "This repo"
+ODOC = {o["id"]: o for o in OUTDATED}
+
+
+def R(id, text, group, sub="", doc="rules.md", path="", paths="", locked=False, status="force", **more):
+    return dict(id=id, text=text, group=group, sub=sub, doc=doc, path=path or doc, paths=paths, locked=locked,
+                status=status, **more)
+
+
+RETRY_A = "All outbound HTTP calls retry up to 3 times with exponential backoff"
+RETRY_B = "Never retry the card processor's `charge` endpoint; use the idempotency key and poll status instead"
+MONEY = ("Money is stored and passed as integer minor units (cents) with an ISO 4217 currency code; never use floats, "
+         "because rounding drift broke reconciliation in the March settlement run.")
+RG = "Prefer `rg` over `grep` in examples"
+MIGR = "Never run migrations against the production replica; use the primary and the `--dry-run` flag first."
+
+
+def seed_rules(extra: int = 0, cut: int = 0, ids: dict | None = None) -> list[dict]:
+    ids = ids or {}
+    rs = [
+        R("e3d2757f37", RETRY_A, "team", RK, path="orgdocs/platform/rules.md", status="conflict",
+          other=dict(text=RETRY_B, where="orgdocs/payments"), owners=[]),
+        R("887e6b40e1", RETRY_B, "team", RP, path="orgdocs/payments/rules.md", status="conflict",
+          other=dict(text=RETRY_A, where="orgdocs/platform"), owners=[]),
+        R("59cf39933e", "Ledger entries are append-only: corrections are new reversing entries, never UPDATE or DELETE, "
+                        "because auditors replay the table.", "team", RC, doc="paths-services-ledger.md",
+          path=".reverie/context/paths-services-ledger.md", paths="services/ledger/**"),
+        R("d89577f1d2", MONEY, "team", RC, path=".reverie/context/rules.md"),
+        R("97d2983dbb", "Every endpoint that creates a charge or refund must require an `Idempotency-Key` header and store "
+                        "the response for 24 hours, because card-network retries otherwise double-charge.", "team", RC,
+          path=".reverie/context/rules.md"),
+        R("fac934c10b", "Database migrations must be backward compatible with the previous release, because we deploy "
+                        "with rolling restarts and `alembic` runs before the new pods are ready.", "team", RC,
+          path=".reverie/context/rules.md"),
+        R("9c55b68de3", ODOC["9c55b68de3"]["text"], "team", RC, path=".reverie/context/rules.md", status="outdated",
+          reason=ODOC["9c55b68de3"]["reason"]),
+        R("54986a9cdb", "Log payment identifiers (`payment_id`, `merchant_id`) but never card numbers, CVV or full bank "
+                        "account numbers, because logs ship to a third-party aggregator.", "team", RC,
+          path=".reverie/context/rules.md"),
+        R("c3ed997047", "Secrets come from the secrets manager through `app/config.py`; never read them from environment "
+                        "files committed to the repo, because we rotate them quarterly.", "team", RC, doc="security.md",
+          path=".reverie/context/security.md"),
+        R("38b000cf40", ODOC["38b000cf40"]["text"], "team", RC, doc="security.md", path=".reverie/context/security.md",
+          status="outdated", reason=ODOC["38b000cf40"]["reason"]),
+        R(bullet_id(RG), RG, "your", path="~/.reverie/rules.md"),
+        R("e3baf78233", MONEY, "your", path="~/.reverie/context/rules.md", status="hidden"),
+        R(ids.get(MIGR, "932ff77c"), MIGR, "remembered", doc="", path="", source="You said it"),
+    ]
+    for n in range(1, extra + 1):
+        t = f"Seed rule {n:02d}: module {n} must not run code at import time."
+        rs.append(R(ids.get(t) or hashlib.sha1(t.encode()).hexdigest()[:8], t, "remembered", doc="", path="",
+                    source="You said it", status="cut" if n > extra - cut else "force"))
+    return rs
+
+
+def _clip(t: str, n: int = 64) -> str:
+    t = " ".join(t.split())
+    return t if len(t) <= n else t[:n].rsplit(" ", 1)[0] + "…"
+
+
+def _q(t: str) -> str:
+    return f"“{rule_html(_clip(t))}”"
+
+
+def rule_li(r: dict, pid: str) -> str:
+    st, extra = r["status"], ""
+    label = ""
+    if st == "force":
+        if r.get("beats"):
+            b = r["beats"]
+            extra = f'<p class="note">Overrides {_q(b["text"])} in {esc(b["where"])}: {esc(b["why"])}.</p>'
+    elif st == "outdated":
+        label = '<span class="st">Possibly outdated</span>'
+        extra = f'<p class="note">A later change to the code may contradict it: {esc(r["reason"])}.</p>'
+    elif st == "conflict":
+        label = '<span class="st">Conflict</span>'
+        o = r["other"]
+        who = (f'Waiting on an owner: {esc(", ".join(r["owners"]))}.' if r["owners"]
+               else "No CODEOWNERS entry covers either document, so anyone can settle it.")
+        extra = (f'<p class="note">Disagrees with {_q(o["text"])} in {esc(o["where"])}. '
+                 f'Agents are told to ask before acting on either. {who}</p>')
+    elif st == "overridden":
+        label = '<span class="st">Overridden</span>'
+        b = r["by"]
+        extra = f'<p class="note">Overridden by {_q(b["text"])} in {esc(b["where"])}: {esc(b["why"])}.</p>'
+    elif st == "hidden":
+        label = '<span class="st">Hidden: same as a team rule</span>'
+        extra = ('<p class="note">Agents are told the team rule, not this copy. The copy comes back if the team rule '
+                 'is removed.</p>')
+    else:
+        label = '<span class="st">Cut by the start limit</span>'
+        extra = '<p class="note">It applies here, but did not fit in what agents are told.</p>'
+    meta = [label] if label else []
+    if r["doc"]:
+        meta.append(f'<span title="{esc(r["path"])}"><code>{esc(r["doc"])}</code></span>')
+    elif r.get("source"):
+        meta.append(f'<span>{esc(r["source"])}</span>')
+    if r["paths"]:
+        meta.append(f'<span>only under <code>{esc(r["paths"])}</code></span>')
+    if r["locked"]:
+        meta.append("<span>locked</span>")
+    meta.append(f'<a class="open" href="/rule?p={pid}&amp;id={r["id"]}">Open rule</a>')
+    return (f'<li class="entry"><p class="rule">{rule_html(r["text"])}</p><p class="meta">{"".join(meta)}</p>{extra}</li>')
+
+
+def _list(rs: list[dict], pid: str) -> str:
+    if len(rs) <= 10:
+        return f'<ol class="items">{"".join(rule_li(r, pid) for r in rs)}</ol>'
+    # Exceptions (cut, conflict, outdated ...) stay visible above the fold; only the normal rest collapses.
+    top = [r for r in rs if r["status"] != "force"]
+    rest = [r for r in rs if r["status"] == "force"]
+    out = f'<ol class="items">{"".join(rule_li(r, pid) for r in top)}</ol>' if top else ""
+    if rest:
+        word = "more " if top else "rules "
+        out += (f'<details class="fold"><summary>{len(rest)} {word}in force</summary>'
+                f'<ol class="items">{"".join(rule_li(r, pid) for r in rest)}</ol></details>')
+    return out
+
+
+def rules_body(rs: list[dict], pid: str, note: str = "") -> str:
+    force = sum(1 for r in rs if r["status"] == "force")
+    cut = sum(1 for r in rs if r["status"] == "cut")
+    tally = f"{force} {'rule' if force == 1 else 'rules'} <span class=\"in\">in force</span>"
+    if force == 0:
+        tally = "No rules <span class=\"in\">in force</span>"
+    if cut:
+        tally += f", {cut} cut by the start limit. <a href=\"/start?p={pid}\">See what agents are told.</a>"
+    else:
+        tally += "."
+    out = [note, f'<p class="tally">{tally}</p>']
+
+    def section(key: str, title: str, gnote: str, inner: str) -> None:
+        out.append(f'<section class="group" aria-labelledby="g-{key}"><h2 id="g-{key}">{title}</h2>'
+                   + (f'<p class="gnote">{gnote}</p>' if gnote else "") + inner + "</section>")
+
+    team = [r for r in rs if r["group"] == "team"]
+    if team:
+        subs: dict[str, list[dict]] = {}
+        for r in team:
+            subs.setdefault(r["sub"], []).append(r)
+        order = sorted(subs, key=lambda k: (0 if k.startswith("Organisation") else 1 if k.startswith("Team") else 2))
+        inner = ""
+        for k in order:
+            if k == RC:
+                label = 'This repo, <code>.reverie/context</code>'
+            else:
+                head, _, folder = k.partition(" folder ")
+                label = f'{head} folder <code>{esc(folder)}</code>'
+            inner += f'<h3 class="sub">{label}</h3>{_list(subs[k], pid)}'
+        section("team", "Team rules", "", inner)
+    for key, title, gnote in (("shared", "Shared rules file", "Through git, with no owners and no review."),
+                              ("your", "Your rules", "Only your agents are told these, in every repo."),
+                              ("remembered", "Remembered", "Rules remembered on this machine for this repo.")):
+        g = [r for r in rs if r["group"] == key]
+        if g:
+            section(key, title, gnote, _list(g, pid))
+    return "".join(out)
+
+
 def write(fname: str, html_text: str) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / fname).write_text(html_text, encoding="utf-8")
@@ -497,6 +678,44 @@ def main() -> None:
     write("empty-overview.html", shell(title="Overview of notifications-service, Reverie", pid=NOTIF,
                                        repo="notifications-service", active="/project", h1="Overview", counts={}, desc=odesc,
                                        body=overview_body("mudit", [], [], [], NOTIF)))
+
+    # Rules: mudit's payments-api (the seed), the capped seed (35 extra remembered rules, 6 cut), and the empty project
+    rdesc = "Every rule that applies in this project, where it comes from and whether agents are told it."
+    cap = open(OUT.parent / "before" / "start-capped.html", encoding="utf-8").read()
+    ids = {html.unescape(t): i for i, t in re.findall(r"- \[([0-9a-f]{8})\] ((?:Never run|Seed rule)[^\n<]*)", cap)}
+    write("rules.html", shell(title="Rules of payments-api, Reverie", pid=API, repo="payments-api", active="/context",
+                              h1="Rules", counts=counts_for("mudit", WAITING), desc=rdesc,
+                              body=rules_body(seed_rules(), API)))
+    write("rules-capped.html", shell(title="Rules of payments-api, Reverie", pid=API, repo="payments-api", active="/context",
+                                     h1="Rules", counts=counts_for("mudit", WAITING), desc=rdesc,
+                                     body=rules_body(seed_rules(35, 6, ids), API)))
+    write("empty-rules.html", shell(title="Rules of notifications-service, Reverie", pid=NOTIF, repo="notifications-service",
+                                    active="/context", h1="Rules", counts={}, desc=rdesc,
+                                    body=rules_body([R(bullet_id(RG), RG, "your", path="~/.reverie/rules.md")], NOTIF)))
+
+    # extra 3: layout test for the states the seed does not have (invented rule text, not product data)
+    NARROW = "Verify card webhooks before parsing them"
+    st = [
+        R("aa00000001", "All services log in JSON, one object per line.", "team", "Organisation folder orgdocs/org", path="orgdocs/org/rules.md", locked=True,
+          beats=dict(text="Services may log plain text in development.", where="this repo", why="it is locked, so it wins in every scope")),
+        R("aa00000002", "Services may log plain text in development.", "team", RC, path=".reverie/context/rules.md", status="overridden",
+          by=dict(text="All services log in JSON, one object per line.", where="orgdocs/org", why="it is locked, so it wins in every scope")),
+        R("aa00000003", "Payment webhooks are verified before any parsing.", "team", RC, doc="security.md", path=".reverie/context/security.md",
+          paths="app/webhooks/**", beats=dict(text="Verify inbound requests at the edge proxy only.", where="orgdocs/platform", why="its scope is narrower")),
+        R("aa00000004", "Verify inbound requests at the edge proxy only.", "team", RK, path="orgdocs/platform/rules.md", status="overridden",
+          by=dict(text="Payment webhooks are verified before any parsing.", where="this repo", why="its scope is narrower")),
+        R("aa00000005", "Rate limits are set per merchant, never per IP.", "team", RC, doc="security.md", path=".reverie/context/security.md",
+          status="conflict", other=dict(text="Rate limits are set per IP at the edge.", where="this repo"), owners=["priya@payments.example"]),
+        R("aa00000006", "Rate limits are set per IP at the edge.", "team", RC, path=".reverie/context/rules.md",
+          status="conflict", other=dict(text="Rate limits are set per merchant, never per IP.", where="this repo"), owners=["mudit@payments.example"]),
+        R("aa00000007", "Run the linter before every commit.", "shared", doc="rules.md", path=".reverie/rules.md"),
+    ]
+    st[4]["owners"] = st[5]["owners"] = ["priya@payments.example", "mudit@payments.example"]
+    tn = ('<p class="testnote">Layout test: the states the seed does not have (overridden, locked, a conflict whose '
+          'documents have owners, the shared rules file). The rule text is invented and is not product data.</p>')
+    write("rules-states.html", shell(title="Layout test, rule states (invented rule text), Reverie", pid=API, repo="payments-api",
+                                     active="/context", h1="Rules", counts=counts_for("mudit", WAITING), desc=rdesc,
+                                     body=rules_body(st, API, tn)))
     # extra 1: the page right after Mudit accepts "Prefer small PRs" (the one place the teal appears)
     accepted = next(p for p in WAITING if p["slug"].startswith("prefer-small-prs"))
     after = [p for p in WAITING if p is not accepted]

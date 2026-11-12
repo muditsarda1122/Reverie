@@ -27,6 +27,21 @@ Static pages built by `python3 design/tools/build_after.py` from the seed in `de
 - No stat strip, no "Rules in force" number on Overview. The cut-by-the-start-limit line appears only when the count is above zero.
 - Data used that the old Overview did not print: the commit message beside the hash (`context_check.check_stale` always writes `message`, the commit subject, but it is empty for a commit with no subject, so the page prints the message only when present), and the folder of each conflicting rule (`CtxItem.label`).
 
+## Rules (built from `design.md`)
+| File | Replaces | Shows |
+|---|---|---|
+| `rules.html` | `design/before/rules.html` | The seed: 8 rules in force. Team rules (team folders platform and payments, then this repo's documents), Your rules, Remembered |
+| `rules-capped.html` | none (no capture) | The 35-extra-rules seed: "37 rules in force, 6 cut by the start limit"; the 36 remembered rules sit under one disclosure |
+| `empty-rules.html` | `empty-rules.html` | notifications-service: only the one personal bullet, "1 rule in force" |
+| `rules-states.html` | extra | **Layout test, invented rule text.** Locked, overridden (locked and narrower scope), a conflict whose documents have owners, the shared rules file |
+
+- Grouped by source with the design.md names; empty groups are omitted (the seed has no shared rules file, no org folder). Each rule: serif text, then one meta line: the status word (exceptions only), document name (full path in the title), "only under", "locked", "Open rule". Rule ids appear only in the Open rule link.
+- **Mark exceptions, never the normal state.** A rule that is in force carries no status; only Possibly outdated, Conflict, Overridden, Hidden: same as a team rule and Cut by the start limit are marked (ink words). The teal "in force" appears once, in the summary line ("8 rules in force."). "Open rule" in a list is quiet: weight 400, muted, underlined. A conflict's note sits under both rules; an overriding rule says what it overrides and why.
+- A group with more than 10 rules folds, but its exceptions (cut, conflict, outdated ...) stay visible above the fold; only the in-force rest collapses, and the summary says "<n> more in force" ("30 more in force" in the capped seed).
+- **Added beyond the brief: a "Remembered" group** (memory items of kind rule that are in force). They are part of the "in force" count and the only rules the start limit cuts in the capped seed, so they have to be listed to show which were cut.
+- For the port: the old page listed only team documents and the shared file; Your rules (`rules.bullets` of `~/.reverie/rules.md`) and Remembered rules (`mem_rules`) are in `collect()` already. Rules-file bullets have no id, so `Open rule` would use a hash of the text (here the first 10 hex of a sha1 of the normalised text). The ids of the six cut remembered rules in `rules-capped.html` are made up (the capture lists only 30 in the start block).
+- Dropped from the old page: the Id column and the Kind and Marks columns (now the meta line), the separate Conflicts lane (the note sits with each rule) and the "Hint shown to agents" line.
+
 ## Rules this screen follows (from the review)
 - One quiet metadata line under the why, at every width: name, date, document name, "only under <paths>". The full path (`.reverie/context/<name>`) is the document's title attribute; the proposer's email is the name's title attribute. Emails are printed only in "Waiting on an owner of ...", because CODEOWNERS only gives emails.
 - No repo path on this page (the switcher names the repo).
