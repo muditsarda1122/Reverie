@@ -294,6 +294,16 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .addf .why-in .d { color: var(--color-muted); }
 .subtle .cmd p { margin-top: var(--space-md); }
 .subtle p { margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); }
+.proj a { font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.02em; }
+.plain { margin: var(--space-md) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-xs); }
+.plain a { font-weight: 400; }
+.topacts { display: flex; justify-content: flex-end; margin-bottom: var(--space-md); }
+.steps { margin: var(--space-lg) 0 0; padding-left: 1.6rem; max-width: 52rem; }
+.steps > li { padding-block: var(--space-md); }
+.steps h2 { font-size: var(--text-md); letter-spacing: 0; }
+.steps p { margin-top: var(--space-2xs); color: var(--color-ink-2); }
+.steps .block-cmd { margin-top: var(--space-sm); }
+.dim { color: var(--color-muted); }
 .back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
 .back a { font-weight: 400; color: var(--color-muted); }
 .back a:hover { color: var(--color-ink); }
@@ -353,8 +363,8 @@ def tabs(pid: str, counts: dict[str, int], active: str = "/proposals") -> str:
     return '<nav class="tabs" aria-label="Project">' + "".join(out) + "</nav>"
 
 
-def shell(*, title: str, pid: str, repo: str, counts: dict, body: str, desc: str, active: str = "/proposals",
-          h1: str | None = "Proposals") -> str:
+def shell(*, title: str, pid: str | None, repo: str, counts: dict, body: str, desc: str, active: str = "/proposals",
+          h1: str | None = "Proposals", q: str = "") -> str:
     projects = [(API, "payments-api"), (NOTIF, "notifications-service"), (LEGACY, "legacy-billing")]
     menu = "".join(
         f'<li><a href="/project?p={p}"' + (' aria-current="page"' if p == pid else "") + f">{n}</a></li>"
@@ -374,10 +384,10 @@ def shell(*, title: str, pid: str, repo: str, counts: dict, body: str, desc: str
 <a class="mark" href="/" aria-label="Reverie, all projects">Reverie</a>
 <details class="switch"><summary>{esc(repo)}</summary>
 <ul class="menu">{menu}<li><hr></li><li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>
-<form class="find" action="/search" method="get" role="search"><input type="hidden" name="p" value="{pid}"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
+<form class="find" action="/search" method="get" role="search">{f'<input type="hidden" name="p" value="{pid}">' if pid else ""}<input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"{f' value="{esc(q)}"' if q else ""}></form>
 </div></header>
 <div class="page">
-<div class="tabrow">{tabs(pid, counts, active)}<div class="acts"><a href="/connect?p={pid}">Connect an agent</a><a href="/add?p={pid}">Add a rule</a></div></div>
+{f'<div class="tabrow">{tabs(pid, counts, active)}<div class="acts"><a href="/add?p={pid}">Add a rule</a></div></div>' if pid else ""}
 <main class="main">
 {f'<h1 class="visually-hidden">{esc(h1)} for {esc(repo)}</h1>' if h1 else ""}
 {body}
@@ -1047,6 +1057,108 @@ def add_body(me: str, flash: str = "", error: tuple[str, str] | None = None, tex
 EX_RULE = "Run `ruff` before every commit and fix what it reports."
 
 
+# ---- The small screens: board, new, connect, search, off, not found, error ---------------------------------
+def _n(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def waiting_kinds(me: str, waiting: list[dict], conflicts: list[dict], outdated: list[dict]) -> list[tuple[int, str, str]]:
+    return [(sum(1 for p in waiting if mine(p, me)), "proposal", "proposals"),
+            (sum(1 for c in conflicts if conflict_mine(c, me)), "conflict", "conflicts"),
+            (sum(1 for o in outdated if can_settle(DOCS[o["doc"]], me)), "possibly outdated rule", "possibly outdated rules")]
+
+
+def board_body(rows: list[dict]) -> str:
+    """rows: name, id, off (bool), kinds (list of (n, one, many)). Only what waits on the viewer is counted."""
+    wait = [r for r in rows if not r["off"] and any(k[0] for k in r["kinds"])]
+    clear = [r for r in rows if not r["off"] and r not in wait]
+    off = [r for r in rows if r["off"]]
+    tally = (f"{_n(len(wait), 'project has', 'projects have')} something waiting on you." if wait
+             else "Nothing is waiting on you in any project.")
+    out = ['<p class="topacts"><a href="/new">Add a project</a></p>', f'<p class="tally">{tally}</p>']
+    if wait:
+        li = ""
+        for r in wait:
+            parts = [_n(*k) for k in r["kinds"] if k[0]]
+            total = sum(k[0] for k in r["kinds"])
+            li += (f'<li class="entry"><p class="proj"><a href="/project?p={r["id"]}">{esc(r["name"])}</a></p>'
+                   f'<p class="why">{total} waiting on you: {", ".join(parts)}.</p></li>')
+        out.append(f'<section class="group" aria-labelledby="g-wait"><h2 id="g-wait">Waiting on you</h2><ol class="items">{li}</ol></section>')
+    if clear:
+        out.append('<section class="group" aria-labelledby="g-clear"><h2 id="g-clear">Nothing waiting</h2><ul class="plain">'
+                   + "".join(f'<li><a href="/project?p={r["id"]}">{esc(r["name"])}</a></li>' for r in clear) + "</ul></section>")
+    if off:
+        out.append('<section class="group" aria-labelledby="g-off"><h2 id="g-off" class="dim">Turned off</h2><ul class="plain dim">'
+                   + "".join(f'<li><a class="dim" href="/project?p={r["id"]}">{esc(r["name"])}</a></li>' for r in off) + "</ul></section>")
+    return "".join(out)
+
+
+def new_body() -> str:
+    steps = [("Set up your agent once per machine", "This adds Reverie to the agents you use (Claude Code, Codex and others it finds).",
+              "reverie install"),
+             ("Use Reverie in the repo",
+              "Open your agent in the repo, or run this there. Reverie is on by default, so either one makes the repo appear here "
+              "the next time this page is opened.", "cd path/to/your/repo && reverie enable")]
+    li = "".join(f'<li><h2>{esc(t)}</h2><p>{esc(d)}</p><pre class="block-cmd">{esc(c)}</pre></li>' for t, d, c in steps)
+    return ('<h1 class="ask">Add a project</h1><p class="who">Projects are repos. A repo appears here once Reverie has seen it.</p>'
+            f'<ol class="steps">{li}</ol>')
+
+
+def connect_body(path: str, on: bool, connected: list[str], note: str = "") -> str:
+    tally = "Reverie is on for this repo." if on else "Reverie is turned off for this repo. Step 1 turns it on."
+    if connected:
+        who = f"Set up on this machine: {', '.join(connected)}."
+    else:
+        who = "No agent is set up on this machine yet."
+    steps = []
+    if not on:
+        steps.append(("Turn it on for this project", "Reverie is on by default; this turns it back on after `reverie disable`.",
+                      f"cd {path} && reverie enable"))
+    steps += [("Set up your agent once per machine", "This adds Reverie to the agents you use (Claude Code, Codex and others it finds).",
+               "reverie install"),
+              ("Start a session and check", "Open your agent in the project. What it receives is on the “What agents are told” tab.",
+               "reverie status"),
+              ("Share rules with your team", "Point the repo at a shared folder of markdown rules in `.reverie/context.toml`; everyone who opens the project gets them.",
+               "reverie context")]
+    li = "".join(f'<li><h2>{esc(t)}</h2><p>{rule_html(d)}</p><pre class="block-cmd">{esc(c)}</pre></li>' for t, d, c in steps)
+    return f'{note}<p class="tally">{tally}</p><p class="who">{who}</p><ol class="steps">{li}</ol>'
+
+
+def search_body(q: str, pid: str, rules: list[dict], mems: list[dict]) -> str:
+    if not q:
+        return ('<p class="tally">Type something to search.</p>'
+                '<p class="who">Searches the team rules and the remembered items of this project.</p>')
+    n = len(rules) + len(mems)
+    if not n:
+        return (f'<p class="tally">No rules or memory items match “{esc(q)}”.</p>'
+                '<p class="who">Search looks for those words in the text of team rules and remembered items.</p>')
+    out = [f'<p class="tally">{_n(n, "result", "results")} for “{esc(q)}”.</p>']
+    if rules:
+        out.append('<section class="group" aria-labelledby="g-r"><h2 id="g-r">Rules</h2>'
+                   f'<ol class="items">{"".join(rule_li(r, pid) for r in rules)}</ol></section>')
+    if mems:
+        out.append('<section class="group" aria-labelledby="g-m"><h2 id="g-m">Memory</h2>'
+                   f'<ol class="items">{"".join(mem_li(m, pid, True) for m in mems)}</ol></section>')
+    return "".join(out)
+
+
+def off_body(name: str, path: str) -> str:
+    return (f'<p class="tally">Reverie is turned off for {esc(name)}.</p>'
+            '<p class="who">Nothing is told to agents and nothing is shown here.</p>'
+            '<p class="why">Turn it back on from a terminal:</p>'
+            f'<pre class="block-cmd">cd {esc(path)} && reverie enable</pre>')
+
+
+def notfound_body() -> str:
+    return ('<p class="tally">That page does not exist.</p><p class="go"><a href="/">Back to all projects</a></p>')
+
+
+def error_body() -> str:
+    return ('<p class="tally">Something went wrong.</p><p class="who">This page could not be built. The CLI still works.</p>'
+            '<p class="why">Reload the page. If it keeps failing, run this in a terminal:</p><pre class="block-cmd">reverie status</pre>'
+            '<p class="go"><a href="/">Back to all projects</a></p>')
+
+
 def write(fname: str, html_text: str) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / fname).write_text(html_text, encoding="utf-8")
@@ -1167,6 +1279,44 @@ def main() -> None:
     write("add-arjun-done.html", shell(**{**ap, "counts": counts_for("arjun", WAITING)}, body=add_body("arjun", flash=(
         f'<p class="flash" role="status">Proposed: “{rule_html(EX_RULE)}” It waits for an owner of <code>rules.md</code>: '
         f'{people(DOCS["rules.md"], "arjun", " or ")}. It is not in force yet. <a href="/proposals?p={API}">See the proposal</a></p>'))))
+
+    # The small screens. Names from design/before: board, new, connect, search, off, not found, error.
+    g = dict(counts={}, h1=None)
+    kinds = waiting_kinds("mudit", WAITING, CONFLICTS, OUTDATED)
+    rows = [dict(name="payments-api", id=API, off=False, kinds=kinds), dict(name="notifications-service", id=NOTIF, off=False, kinds=[]),
+            dict(name="legacy-billing", id=LEGACY, off=True, kinds=[])]
+    write("board.html", shell(title="Projects, Reverie", pid=None, repo="All projects", active="", desc="Projects with something waiting on you.",
+                              body=board_body(rows), **g))
+    write("board-empty.html", shell(title="Projects, Reverie", pid=None, repo="All projects", active="", desc="Projects with something waiting on you.",
+                                    body=board_body([{**rows[0], "kinds": []}, rows[1], rows[2]]), **g))
+    write("new.html", shell(title="Add a project, Reverie", pid=None, repo="All projects", active="", desc="How to add a project.", body=new_body(), **g))
+    cdesc = "How to connect an agent to Reverie."
+    cp = dict(title="Connect an agent to payments-api, Reverie", pid=API, repo="payments-api", active="/connect", desc=cdesc, h1="Connect",
+              counts=counts_for("mudit", WAITING))
+    write("connect.html", shell(body=connect_body("/path/to/payments-api", True, []), **cp))
+    write("connect-connected.html", shell(body=connect_body("/path/to/payments-api", True, ["Claude Code", "Codex"],
+          '<p class="testnote">Layout test: the seed’s throwaway home has no agent set up, so this shows two as an example.</p>'), **cp))
+    write("connect-off.html", shell(**{**cp, "title": "Connect an agent to legacy-billing, Reverie", "pid": LEGACY, "repo": "legacy-billing", "counts": {}},
+                                    body=connect_body("/path/to/legacy-billing", False, [])))
+    # search over the seed's rules and memory (substring, as ui.search_page does); rules include the remembered ones
+    def hits(q: str) -> tuple[list[dict], list[dict]]:
+        rs = [r for r in seed_rules() if r["group"] in ("team", "remembered") and q.lower() in r["text"].lower()]
+        ms = [m for m in seed_memory() if m["kind"] != "rule" and q.lower() in m["text"].lower()]
+        return rs, ms
+    sp = dict(pid=API, repo="payments-api", active="", desc="Search the rules and memory of this project.", h1="Search", counts=counts_for("mudit", WAITING))
+    for fname, q in (("search.html", "ledger"), ("search-both.html", "refund"), ("search-empty.html", "kubernetes"), ("search-blank.html", "")):
+        rs, ms = hits(q)
+        write(fname, shell(title="Search, Reverie", q=q, body=search_body(q, API, rs, ms), **sp))
+    op = dict(title="legacy-billing, Reverie", pid=LEGACY, repo="legacy-billing", active="/project", h1="Turned off", counts={},
+              desc="Reverie is turned off for this repo.")
+    write("off.html", shell(body=off_body("legacy-billing", "/path/to/legacy-billing"), **op))
+    write("not-found.html", shell(title="Not found, Reverie", pid=None, repo="All projects", active="", desc="No such page.",
+                                  body=notfound_body(), **g))
+    write("not-found-rule.html", shell(title="Rule not found, Reverie", pid=API, repo="payments-api", active="/context", h1=None,
+                                       desc="No such rule.", counts=counts_for("mudit", WAITING), body=(
+        '<p class="back"><a href="/context?p=' + API + '">Back to Rules</a></p><p class="tally">No rule with that id in payments-api.</p>')))
+    write("error.html", shell(title="Something went wrong, Reverie", pid=None, repo="All projects", active="", desc="The page could not be built.",
+                              body=error_body(), **g))
     # Rule page: one page per case (read-only; commands shown quietly)
     ldesc = "One rule: where it comes from, its status and what to do about it."
     pg = dict(pid=API, repo="payments-api", h1=None, counts=counts_for("mudit", WAITING), desc=ldesc)

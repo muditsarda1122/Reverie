@@ -127,6 +127,31 @@ The typed rule text in the error and done pages is an example, not product data.
 - The three terminal commands sit behind "From a terminal"; the secret line stays visible.
 - Dropped from the old page: the "Shared folders use their own git identity: ..." line (each team destination says it instead) and the two cards, now the quiet commands.
 
+## The small screens
+| File | Replaces | State |
+|---|---|---|
+| `board.html` | `design/before/projects.html` | As Mudit: payments-api has 4 waiting on you (2 proposals, 1 conflict, 1 possibly outdated rule); notifications-service has nothing; legacy-billing is turned off |
+| `board-empty.html` | same | The state where nothing waits anywhere (the seed's payments-api with everything decided) |
+| `new.html` | `new.html` | Add a project: three steps with the real commands. **There is no form here, so there is no error or done state** |
+| `connect.html` | `connect.html` | Four steps with the real commands; "Reverie is on for this repo."; "No agent is set up on this machine yet." |
+| `connect-connected.html` | extra | **Layout test**: the same with two agents set up (the seed's throwaway home has none) |
+| `connect-off.html` | extra | legacy-billing: "Reverie is turned off for this repo." (Connect stays reachable when a project is off) |
+| `search.html`, `search-both.html`, `search-empty.html`, `search-blank.html` | `search-ledger.html` | "ledger" (2 rules, no memory), "refund" (a rule and a memory item), no match, no query |
+| `off.html` | `disabled-project.html` | The page every tab shows when Reverie is off for a project, with the one way to turn it on |
+| `not-found.html` | none | An unknown path (the only 404) |
+| `not-found-rule.html` | none | **Layout for the new `/rule` route**: an unknown rule id, with "Back to Rules" |
+| `error.html` | none | The 500 page |
+
+- **Board.** The old cards (path, "N rules in force · N remembered", chips, three lanes sorted by `_attention`) are replaced by the per-viewer "waiting on you" definition (proposals you can decide, conflicts and possibly outdated rules you can settle); the repo path and the rules-in-force figure are dropped. In the port, the per-project identity is each repo's own git identity.
+- **Add a project (`/new`) is static**: no form, no POST route, no refusals. The brief's error and done pages do not exist.
+- **What makes a repo appear in the list:** `ui.projects()` reads the `repos` table plus the repo `reverie ui` was started in. A row is written the first time Reverie checks a repo's state (`repos.state_of`, called when an agent session or a Reverie command runs there; a first-seen repo is recorded as enabled, because Reverie is on by default) and by `reverie enable` / `reverie disable` (`repos.set_repo_state`). So `reverie enable` is optional; using an agent in the repo is enough. Add a project and Connect say this the same way, with `reverie install` first.
+- **"Connect an agent" is removed from the tab row's actions on every page** (the Connect tab keeps the link). The wiring check does not flag it, because `/connect?p=...` is still on each page through the tab; the removal is intended.
+- **Connect.** `install.configured_servers()` returns every harness config's Reverie entry (agent key, command); `_AGENTS_BY_KEY` names them; `report_configured_servers` checks that the command still exists. The old page does not call any of it, so "what is already connected" is new data for the port (a read-only call). The mock's seed has none. The command shows the real repo path (`cd /path/to/payments-api && reverie enable` here is a placeholder).
+- **Search** is a case-insensitive substring match over team context items and memory items (50 each), from `ui.search_page`; an empty query shows "Type something to search"; the query is cut at 120 characters. The new page keeps the query in the box (the old box was empty) and sends remembered rules to Rules, other memory items to Memory, as on the tabs. Each result links to its own page.
+- **Turned off.** Every project tab except Connect shows the off page when `is_disabled`; so does Add a rule. The only way back is the CLI (`reverie enable`); the UI has no write route for it.
+- **Not found.** Only an unknown path returns 404. An unknown project id does not: `_target` silently falls back to the first project. An unknown rule id has no route yet.
+- **Error.** `render()` returns 500 with "Something went wrong. This page could not be built. The CLI still works." and no sidebar; no trace is shown. The page adds one next step. Other refusals (403, 405, 411, 413, 415) are plain text, not pages.
+
 ## Rules this screen follows (from the review)
 - One quiet metadata line under the why, at every width: name, date, document name, "only under <paths>". The full path (`.reverie/context/<name>`) is the document's title attribute; the proposer's email is the name's title attribute. "Waiting on an owner of ..." also shows names (email in the title, "you" for the viewer); an email is printed only when no name is known for it. CODEOWNERS gives only emails, so the port must look names up.
 - No repo path on this page (the switcher names the repo).

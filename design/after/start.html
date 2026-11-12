@@ -168,6 +168,16 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .addf .why-in .d { color: var(--color-muted); }
 .subtle .cmd p { margin-top: var(--space-md); }
 .subtle p { margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); }
+.proj a { font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.02em; }
+.plain { margin: var(--space-md) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-xs); }
+.plain a { font-weight: 400; }
+.topacts { display: flex; justify-content: flex-end; margin-bottom: var(--space-md); }
+.steps { margin: var(--space-lg) 0 0; padding-left: 1.6rem; max-width: 52rem; }
+.steps > li { padding-block: var(--space-md); }
+.steps h2 { font-size: var(--text-md); letter-spacing: 0; }
+.steps p { margin-top: var(--space-2xs); color: var(--color-ink-2); }
+.steps .block-cmd { margin-top: var(--space-sm); }
+.dim { color: var(--color-muted); }
 .back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
 .back a { font-weight: 400; color: var(--color-muted); }
 .back a:hover { color: var(--color-ink); }
@@ -223,7 +233,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 <form class="find" action="/search" method="get" role="search"><input type="hidden" name="p" value="4e1e91cd"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
 </div></header>
 <div class="page">
-<div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=4e1e91cd">Overview<span class="n">4</span></a><a href="/context?p=4e1e91cd">Rules</a><a href="/memory?p=4e1e91cd">Memory</a><a href="/start?p=4e1e91cd" aria-current="page">What agents are told</a><a href="/proposals?p=4e1e91cd">Proposals<span class="n">2</span></a><a href="/connect?p=4e1e91cd">Connect</a></nav><div class="acts"><a href="/connect?p=4e1e91cd">Connect an agent</a><a href="/add?p=4e1e91cd">Add a rule</a></div></div>
+<div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=4e1e91cd">Overview<span class="n">4</span></a><a href="/context?p=4e1e91cd">Rules</a><a href="/memory?p=4e1e91cd">Memory</a><a href="/start?p=4e1e91cd" aria-current="page">What agents are told</a><a href="/proposals?p=4e1e91cd">Proposals<span class="n">2</span></a><a href="/connect?p=4e1e91cd">Connect</a></nav><div class="acts"><a href="/add?p=4e1e91cd">Add a rule</a></div></div>
 <main class="main">
 <h1 class="visually-hidden">What agents are told for payments-api</h1>
 <p class="tally">8 rules are told to agents, plus an index of 5 remembered decisions and findings.</p><p class="who">This is what your agents are told. Your rules are only told to your own agents.</p><section class="group" aria-labelledby="g-ask"><h2 id="g-ask">Agents are told to ask first</h2><ol class="items"><li class="entry"><p><a href="/rule?p=4e1e91cd&amp;id=e3d2757f37"><code>http-retries</code></a></p><p class="why">orgdocs/platform and orgdocs/payments disagree. Agents are told to ask before acting on either.</p></li></ol></section><section class="group" aria-labelledby="g-text"><h2 id="g-text">What agents read</h2><pre class="doc" id="start">Team context rules (the narrower scope answers the wider unless locked; always apply):

@@ -75,6 +75,9 @@ def form_key(f: dict) -> tuple:
 
 
 ALIASES = {"overview-arjun.html": "overview.html", "rules-capped.html": "rules.html", "memory-capped.html": "memory.html",
+           "board.html": "projects.html", "board-empty.html": "projects.html", "connect-connected.html": "connect.html",
+           "connect-off.html": "connect.html", "search.html": "search-ledger.html", "search-both.html": "search-ledger.html", "search-empty.html": "search-ledger.html",
+           "search-blank.html": "search-ledger.html", "off.html": "disabled-project.html",
            **{f"add-{v}.html": "add.html" for v in ("arjun", "error", "error-kept", "error-secret", "done", "arjun-done")}}   # a page with no capture of its own, compared with the same screen as mudit
 
 

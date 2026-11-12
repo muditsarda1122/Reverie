@@ -168,6 +168,16 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .addf .why-in .d { color: var(--color-muted); }
 .subtle .cmd p { margin-top: var(--space-md); }
 .subtle p { margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-sm); }
+.proj a { font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.02em; }
+.plain { margin: var(--space-md) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-xs); }
+.plain a { font-weight: 400; }
+.topacts { display: flex; justify-content: flex-end; margin-bottom: var(--space-md); }
+.steps { margin: var(--space-lg) 0 0; padding-left: 1.6rem; max-width: 52rem; }
+.steps > li { padding-block: var(--space-md); }
+.steps h2 { font-size: var(--text-md); letter-spacing: 0; }
+.steps p { margin-top: var(--space-2xs); color: var(--color-ink-2); }
+.steps .block-cmd { margin-top: var(--space-sm); }
+.dim { color: var(--color-muted); }
 .back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
 .back a { font-weight: 400; color: var(--color-muted); }
 .back a:hover { color: var(--color-ink); }
@@ -223,7 +233,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 <form class="find" action="/search" method="get" role="search"><input type="hidden" name="p" value="81071af5"><input name="q" type="search" placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"></form>
 </div></header>
 <div class="page">
-<div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=81071af5">Overview</a><a href="/context?p=81071af5" aria-current="page">Rules</a><a href="/memory?p=81071af5">Memory</a><a href="/start?p=81071af5">What agents are told</a><a href="/proposals?p=81071af5">Proposals</a><a href="/connect?p=81071af5">Connect</a></nav><div class="acts"><a href="/connect?p=81071af5">Connect an agent</a><a href="/add?p=81071af5">Add a rule</a></div></div>
+<div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=81071af5">Overview</a><a href="/context?p=81071af5" aria-current="page">Rules</a><a href="/memory?p=81071af5">Memory</a><a href="/start?p=81071af5">What agents are told</a><a href="/proposals?p=81071af5">Proposals</a><a href="/connect?p=81071af5">Connect</a></nav><div class="acts"><a href="/add?p=81071af5">Add a rule</a></div></div>
 <main class="main">
 <h1 class="visually-hidden">Rules for notifications-service</h1>
 <p class="tally">1 rule <span class="in">in force</span>.</p><section class="group" aria-labelledby="g-your"><h2 id="g-your">Your rules</h2><p class="gnote">Only your agents are told these, in every repo.</p><ol class="items"><li class="entry"><p class="rule">Prefer <code>rg</code> over <code>grep</code> in examples</p><p class="meta"><span title="~/.reverie/rules.md"><code>rules.md</code></span><a class="open" href="/rule?p=81071af5&amp;id=46e94c80e2">Open rule</a></p></li></ol></section>

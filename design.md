@@ -32,7 +32,7 @@ White paper, a hueless black, hairline rules, one teal. Flat: no resting shadows
 ## Layout
 - Page: `--page` 60rem, centred, 24px gutters (16px under 40rem). One column. No sidebar.
 - Top bar: typeset wordmark "Reverie" (links to `/`), a project switcher (`<details>` listing projects, All projects, Add a project), search at the right.
-- Tab row: the six tabs on the left, "Connect an agent" and "Add a rule" as plain links at the right end. Under 40rem the tabs wrap onto two lines (never scroll sideways) and the links sit under them.
+- Tab row: the six tabs on the left, "Add a rule" as a plain link at the right end (Connect is a tab, so there is no second link to it). Under 40rem the tabs wrap onto two lines (never scroll sideways) and the links sit under them.
 - **No visible page title.** The active tab names the page. A visually hidden `h1` ("Proposals for payments-api") stays for screen readers and heading order.
 - No repo path on project pages; the switcher names the repo.
 - Acting-as line: "Acting as <name>, from your git identity." once, under the tab row, where the viewer's authority matters.
@@ -82,6 +82,10 @@ Plain, short, specific, in the product's words. No marketing, no exclamation mar
 - One question as the page's only visible heading, phrased for what the form does. The main control is the field for what the person types, in the serif face (it is the thing itself); choices are radio options with one plain sentence each, saying who is told and whether anyone approves; one bordered submit button, with a neutral label ("Add rule") when its effect depends on a choice and there is no JavaScript.
 - **Refusal wording.** The server refuses exactly as before; only the words change. A refusal starts with "Nothing was saved:", is a full sentence, and says what to do ("Nothing was saved: write the rule first."). A refusal that is a specific reason keeps that reason after the colon. A success message ends with a link to the result, in the style of "Decide" and "View" ("See it in Rules", "See the proposal").
 - Refusals: the server's message sits above the field in bold ink (no red), the typed text is kept wherever the server keeps it, and the field has `aria-invalid="true"` and `aria-describedby`. Never show a destination or action the viewer cannot use.
+
+## Screens without a project
+- Board, Add a project, Not found and Error have no tab row: the top bar (wordmark, switcher reading "All projects", search) is all the chrome. Board shows only what waits on the viewer per project (count and kinds); a project with nothing waiting is a plain link, a turned-off one is quiet at the bottom. Instruction pages (Add a project, Connect) show only the steps that apply to the state (Connect drops "turn it on" when Reverie is on, and makes it step 1 when it is off) and are numbered steps: a sans heading, one sentence, the real command in a block. Search keeps the query in the box and groups results as Rules (including remembered rules) and Memory, empty groups omitted.
+- A page that cannot be built says what happened in one sentence, never shows a trace, and gives one plain next step.
 
 ## One home
 - **Every item is listed on exactly one tab.** Rules lists every rule, including remembered ones; Memory lists the other kinds (decisions, rejected approaches, preferences, environment) and says "<n> rules you stated are listed under Rules." (linked to `/context`, omitted at zero). A remembered rule's own page has Rules active and "Back to Rules"; a remembered decision's has Memory active and "Back to Memory".
