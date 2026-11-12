@@ -73,6 +73,22 @@ Static pages built by `python3 design/tools/build_after.py` from the seed in `de
 - The capped and standard captures came from two seed runs, so the commit hashes in their verbatim text differ from each other and from the Overview pages.
 - Dropped from the old page: the "exactly what an agent is handed ... is not counted as a delivery" paragraph (read-only is implied; the page says whose agents are told) and the combined "rules in force · cut" hint (now the summary line).
 
+## Memory (`/memory?p=<project>`)
+| File | Replaces | Shows |
+|---|---|---|
+| `memory.html` | `design/before/memory.html` | 5 items (the rule is listed under Rules); "Needs a look" holds the challenged decision, then Decisions, Rejected approaches, Preferences, Environment |
+| `memory-capped.html` | none (no capture) | The same 5 items and "36 rules you stated are listed under Rules." |
+| `empty-memory.html` | `empty-memory.html` | notifications-service: "Nothing remembered for this repo yet." |
+| `memory-states.html` | extra | **Layout test, invented text.** Possibly outdated items (with and without a commit message) next to the challenged one |
+| `rule-remembered-outdated.html` | extra | **Layout test, invented text.** The item page of a possibly outdated decision, with `reverie stale keep` |
+
+- **Every item is listed on exactly one tab.** Rules lists every rule, remembered ones included; Memory lists the other kinds and says how many rules are under Rules (linked, omitted at zero). The summary counts what Memory lists: "5 remembered items. 5 are told to agents in an index. 1 needs a look."
+- Each item: serif stated text, one meta line (who said it, anchors in mono with the path in the title, date, usage in words only when non-zero, a quiet "Open" link to the item's page). The kind label sits above an item only in "Needs a look", where kinds mix.
+- **Needs a look** = challenged items (`meta.challenged`) and possibly outdated ones (`meta.stale`, set by `reverie stale check`). "Anchor no longer exists" is not a state in the data, so it is not built. Each item says why in one sentence and ends with one sentence carrying the one command that fixes it (`reverie undo <id>`, or `reverie stale keep <id>` for a possibly outdated one).
+- **Commands live on the item's page** (the remembered pages), each with a plain sentence: `reverie show <id>`, `reverie undo <id>` and `--restore`, `reverie promote <id>` and `--demote`, and on possibly outdated items `reverie stale keep <id>`. There is no edit or verify command. `reverie usage` lists tallies, `reverie merge` merges near-duplicates and `reverie digest` shows what was remembered since you last looked; none is shown per item. `promote` only changes items that belong to one repo.
+- Port: the old page paged its items (`PAGE_SIZE`); the grouping needs all of them, or the same pager per group, and must leave out kind `rule` (those go to Rules).
+- Dropped from the old page: the id column (the id is on the item's page), the lane-per-kind board and the "Open one with reverie show <id>" hint.
+
 ## Rules this screen follows (from the review)
 - One quiet metadata line under the why, at every width: name, date, document name, "only under <paths>". The full path (`.reverie/context/<name>`) is the document's title attribute; the proposer's email is the name's title attribute. "Waiting on an owner of ..." also shows names (email in the title, "you" for the viewer); an email is printed only when no name is known for it. CODEOWNERS gives only emails, so the port must look names up.
 - No repo path on this page (the switcher names the repo).

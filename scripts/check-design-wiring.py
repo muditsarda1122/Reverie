@@ -74,7 +74,7 @@ def form_key(f: dict) -> tuple:
     return (f["action"], f["method"], f["slug"], tuple(sorted(set(n for n, _ in f["fields"]))))
 
 
-ALIASES = {"overview-arjun.html": "overview.html", "rules-capped.html": "rules.html"}   # a page with no capture of its own, compared with the same screen as mudit
+ALIASES = {"overview-arjun.html": "overview.html", "rules-capped.html": "rules.html", "memory-capped.html": "memory.html"}   # a page with no capture of its own, compared with the same screen as mudit
 
 
 def compare(name: str) -> int:

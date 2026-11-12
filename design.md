@@ -13,7 +13,7 @@ Settled on the Proposals screen (`design/after/proposals*.html`, committed in `7
 White paper, a hueless black, hairline rules, one teal. Flat: no resting shadows, no cards inside cards, no stat strip, no icon tiles, no pills, no badges, no avatars. The stamp, waivers and critique line sit first in every page's CSS.
 
 ## Type
-- Rule text: `ui-serif` (`--font-serif`), 1.2rem, line-height 1.4, weight 400, ink. Rule text is the content; it is never wrapped early (no `text-wrap: balance`) and runs to the column width.
+- Serif is for the stated text of a rule or a remembered item, the thing itself: `ui-serif` (`--font-serif`), 1.2rem, line-height 1.4, weight 400, ink. Evidence, notes, reasons and labels stay sans. The stated text is the content; it is never wrapped early (no `text-wrap: balance`) and runs to the column width.
 - Everything else: `ui-sans-serif` (`--font-sans`), 1rem body, 0.875rem for metadata, headings 700 with -0.02em tracking.
 - Paths, commands and file names: `ui-monospace` (`--font-mono`), 0.88em in running text. `` `backticked` `` spans in rule text are code.
 - Labels are sentence case, untracked, never capitals.
@@ -51,7 +51,7 @@ White paper, a hueless black, hairline rules, one teal. Flat: no resting shadows
 - **Mark exceptions, never the normal state.** A rule that is in force carries no status; only the exceptions (Conflict, Possibly outdated, Overridden, Hidden: same as a team rule, Cut by the start limit) are marked, in ink words. Teal "in force" appears once per list page, in its summary line. Lists keep exceptions visible above any fold; only the normal rest collapses ("<n> more in force").
 - **Quiet list links.** "Open rule" inside a list is weight 400, muted, still underlined. Explicit action links elsewhere ("Decide", "View") keep weight 600.
 - **The Rule page:** the rule text is its only `h1` (about 1.9rem serif on desktop, 1.5rem at 390, regular weight, line-height 1.3); no hidden `h1`. Section headings on it are labels (text-md, 600). Facts sit in a two-column list (one column under 40rem). A field with no value is not drawn, and there is no "Not recorded" line; what `context.show` does not provide is listed in `design/after/README.md`.
-- **A page's tab and back link follow the item's kind.** Rules belong to Rules (active tab, "Back to Rules" to `/context`); decisions and other remembered items belong to Memory (active tab, "Back to Memory" to `/memory`, section heading "Remembered decision"). Serif is only for rule text: an evidence quote is set in the sans face.
+- **A page's tab and back link follow the item's kind.** Rules belong to Rules (active tab, "Back to Rules" to `/context`); decisions and other remembered items belong to Memory (active tab, "Back to Memory" to `/memory`, section heading "Remembered decision"). Serif is for the stated text of a rule or remembered item; an evidence quote is set in the sans face.
 - **People.** Owners and "Waiting on an owner" show names with the email in the `title` attribute, and "First (you)" for the viewer ("Priya Nair, Mudit (you)"). Where no name is known for an email, the email is shown.
 - **Plain words.** Visible text does not say "start block", "scope" or "layer": say "the start text" or "what agents are told", "more specific" or "team folders at the same level", "comes from". (Verbatim text agents receive is quoted as it is.)
 - **Optional data is printed only when present.** The commit message beside a commit hash is shown only if the judge stored one; otherwise the short hash alone.
@@ -75,7 +75,12 @@ Plain, short, specific, in the product's words. No marketing, no exclamation mar
 ## In force (one definition, used by Rules, What agents are told and Overview)
 - **In force means told to agents:** the rule is in the text an agent receives at session start. A rule that applies but was cut by the start limit is not in force; it is "cut" and says why ("because agents are told at most 30 remembered rules for this repo"). Conflicts and possibly outdated rules are told as warnings, not as rules, so they are not in force either.
 - Rules: "37 rules in force, 6 more cut by the start limit." What agents are told: "37 rules are told to agents, plus an index of 5 remembered decisions and findings. 6 more rules apply but were cut, because ..." Both pages give the same number for the same seed; teal marks the words "in force" only.
+- Possibly outdated rules and rules in an unresolved conflict are told to agents with "verify" or "ask first", and are not counted as in force.
 - The character note uses the configured limit: "3,523 of 8,000 characters."
+
+## One home
+- **Every item is listed on exactly one tab.** Rules lists every rule, including remembered ones; Memory lists the other kinds (decisions, rejected approaches, preferences, environment) and says "<n> rules you stated are listed under Rules." (linked to `/context`, omitted at zero). A remembered rule's own page has Rules active and "Back to Rules"; a remembered decision's has Memory active and "Back to Memory".
+- Commands live on the item's own page, each with a plain sentence; a list shows a command only where it is the one fix for an item that needs a look (a sentence ending the item).
 
 ## Waiting on you (one definition, used by the Overview tab count, Overview and Proposals)
 - A proposal you can decide (you are an owner of its document, or no CODEOWNERS entry covers it).

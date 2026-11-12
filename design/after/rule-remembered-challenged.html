@@ -137,7 +137,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .sub { margin-top: var(--space-lg); font-size: var(--text-md); font-weight: 600; letter-spacing: 0; color: var(--color-ink); }
 .sub code { font-weight: 400; }
 .group > h2 + .sub, .group > .gnote + .sub { margin-top: var(--space-md); }
-.sub + .items > .entry:first-child, .sub + .fold > summary + .items > .entry:first-child { padding-top: var(--space-sm); }
+.group > h2 + .items > .entry:first-child, .group > h2 + .fold > summary + .items > .entry:first-child, .sub + .items > .entry:first-child, .sub + .fold > summary + .items > .entry:first-child { padding-top: var(--space-sm); }
 .gnote { margin-top: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
 .fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; min-height: 2.5rem; font-weight: 600; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
 .fold > summary::-webkit-details-marker { display: none; }
@@ -146,6 +146,8 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .fold > summary + .items { border-top: var(--rule-hair) solid var(--color-rule); margin-top: var(--space-xs); }
 .note { margin-top: var(--space-xs); max-width: 65ch; color: var(--color-ink-2); font-size: var(--text-sm); }
 .doc { width: 100%; max-width: 80ch; margin: var(--space-md) 0 0; padding: var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.55; color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.meta .cmd summary { min-height: 0; }
+.meta .cmd pre { margin-top: var(--space-xs); }
 .back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
 .back a { font-weight: 400; color: var(--color-muted); }
 .back a:hover { color: var(--color-ink); }
@@ -202,7 +204,9 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 <div class="tabrow"><nav class="tabs" aria-label="Project"><a href="/project?p=4e1e91cd">Overview<span class="n">4</span></a><a href="/context?p=4e1e91cd">Rules</a><a href="/memory?p=4e1e91cd" aria-current="page">Memory</a><a href="/start?p=4e1e91cd">What agents are told</a><a href="/proposals?p=4e1e91cd">Proposals<span class="n">2</span></a><a href="/connect?p=4e1e91cd">Connect</a></nav><div class="acts"><a href="/connect?p=4e1e91cd">Connect an agent</a><a href="/add?p=4e1e91cd">Add a rule</a></div></div>
 <main class="main">
 
-<p class="back"><a href="/memory?p=4e1e91cd">Back to Memory</a></p><h1 class="bigrule">Refunds over 10,000 INR need manager approval in the admin tool.</h1><p class="status">Challenged</p><section class="sec"><h2>Remembered decision</h2><dl class="facts"><dt>Said by</dt><dd>An agent inferred it</dd><dt>Evidence</dt><dd><span class="quote">“approval gate in <code>app/refunds/policy.py</code>”</span></dd><dt>Remembered</dt><dd>2026-11-12</dd><dt>Anchored to</dt><dd><code>app/refunds/policy.py</code></dd><dt>Used by agents</dt><dd>Used 3 times, contradicted twice.</dd></dl><p class="why">Challenged: agents contradicted it repeatedly, so agents are now told to confirm or fix it before relying on it. See the tally with <code>reverie usage</code>.</p></section><p class="idline">Id <code>23e2645b</code>. Open it from a terminal with <code>reverie show 23e2645b</code>.</p>
+<p class="back"><a href="/memory?p=4e1e91cd">Back to Memory</a></p><h1 class="bigrule">Refunds over 10,000 INR need manager approval in the admin tool.</h1><p class="status">Challenged</p><section class="sec"><h2>Remembered decision</h2><dl class="facts"><dt>Said by</dt><dd>An agent inferred it</dd><dt>Evidence</dt><dd><span class="quote">“approval gate in <code>app/refunds/policy.py</code>”</span></dd><dt>Remembered</dt><dd>2026-11-12</dd><dt>Anchored to</dt><dd><code>app/refunds/policy.py</code></dd><dt>Used by agents</dt><dd>Used 3 times, contradicted twice.</dd></dl><p class="why">Challenged: agents contradicted it repeatedly, so agents are now told to confirm or fix it before relying on it. See the tally with <code>reverie usage</code>.</p></section><section class="sec"><h2>Commands</h2><p class="why">Print this item in a terminal.</p><pre class="block-cmd">reverie show 23e2645b</pre><p class="why">Forget it. It can be restored.</p><pre class="block-cmd">reverie undo 23e2645b
+reverie undo 23e2645b --restore</pre><p class="why">Make it apply in every repo, not only this one. Take it back with --demote.</p><pre class="block-cmd">reverie promote 23e2645b
+reverie promote 23e2645b --demote</pre></section><p class="idline">Id <code>23e2645b</code>. Open it from a terminal with <code>reverie show 23e2645b</code>.</p>
 </main>
 </div>
 </body>

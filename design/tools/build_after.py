@@ -263,7 +263,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .sub { margin-top: var(--space-lg); font-size: var(--text-md); font-weight: 600; letter-spacing: 0; color: var(--color-ink); }
 .sub code { font-weight: 400; }
 .group > h2 + .sub, .group > .gnote + .sub { margin-top: var(--space-md); }
-.sub + .items > .entry:first-child, .sub + .fold > summary + .items > .entry:first-child { padding-top: var(--space-sm); }
+.group > h2 + .items > .entry:first-child, .group > h2 + .fold > summary + .items > .entry:first-child, .sub + .items > .entry:first-child, .sub + .fold > summary + .items > .entry:first-child { padding-top: var(--space-sm); }
 .gnote { margin-top: var(--space-sm); color: var(--color-muted); font-size: var(--text-sm); }
 .fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; min-height: 2.5rem; font-weight: 600; color: var(--color-ink); text-decoration: underline; text-underline-offset: 0.16em; }
 .fold > summary::-webkit-details-marker { display: none; }
@@ -272,6 +272,8 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .fold > summary + .items { border-top: var(--rule-hair) solid var(--color-rule); margin-top: var(--space-xs); }
 .note { margin-top: var(--space-xs); max-width: 65ch; color: var(--color-ink-2); font-size: var(--text-sm); }
 .doc { width: 100%; max-width: 80ch; margin: var(--space-md) 0 0; padding: var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.55; color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.meta .cmd summary { min-height: 0; }
+.meta .cmd pre { margin-top: var(--space-xs); }
 .back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
 .back a { font-weight: 400; color: var(--color-muted); }
 .back a:hover { color: var(--color-ink); }
@@ -783,11 +785,26 @@ def remembered_html(m: dict, heading: str) -> str:
         rows.append(_fact("Last verified", esc(m["verified"])))
     if m.get("usage"):
         rows.append(_fact("Used by agents", esc(m["usage"])))
+    if m.get("stale"):
+        st = m["stale"]
+        msg = f' {esc(st["message"])}' if st.get("message") else ""
+        rows.append(_fact("Possibly outdated", f'A later change to the code may contradict it: {esc(st["reason"])}.'))
+        rows.append(_fact("Commit", f'<code>{esc(st["commit"][:7])}</code>{msg}'))
     body = f'<section class="sec"><h2>{heading}</h2><dl class="facts">' + "".join(rows) + "</dl>"
     if m.get("challenged"):
         body += ('<p class="why">Challenged: agents contradicted it repeatedly, so agents are now told to confirm or fix it '
                  'before relying on it. See the tally with <code>reverie usage</code>.</p>')
-    return body + "</section>"
+    body += "</section>"
+    i = m["id"]
+    cmds = [("Print this item in a terminal.", f"reverie show {i}"),
+            ("Forget it. It can be restored.", f"reverie undo {i}\nreverie undo {i} --restore"),
+            ("Make it apply in every repo, not only this one. Take it back with --demote.",
+             f"reverie promote {i}\nreverie promote {i} --demote")]
+    if m.get("stale"):
+        cmds.append(("Keep it as it is and clear the possibly-outdated flag.", f"reverie stale keep {i}"))
+    body += ('<section class="sec"><h2>Commands</h2>'
+             + "".join(f'<p class="why">{esc(t)}</p><pre class="block-cmd">{esc(c)}</pre>' for t, c in cmds) + "</section>")
+    return body
 
 
 # ---- What agents are told ------------------------------------------------------------------------------------
@@ -834,6 +851,121 @@ def start_body(rs: list[dict], text: str, pid: str, asks: list[dict] = ()) -> st
                    f'<pre class="doc" id="start">{esc(text)}</pre><p class="gnote">{len(text):,} of {STARTUP_LIMIT:,} characters.</p></section>')
     else:
         out.append('<p class="why">Nothing is told to agents here. They start with a clean slate.</p>')
+    return "".join(out)
+
+
+# ---- Memory --------------------------------------------------------------------------------------------------
+KINDS = [("rule", "Rules you stated", "Rule"), ("decision", "Decisions", "Decision"),
+         ("rejected_approach", "Rejected approaches", "Rejected approach"), ("preference", "Preferences", "Preference"),
+         ("environment", "Environment", "Environment")]
+SAID = {"user_said": "You said it", "agent_inferred": "An agent inferred it"}
+USAGE_WORDS = {"USED": "used", "IGNORED": "ignored", "IRRELEVANT": "not relevant", "CONTRADICTED": "contradicted",
+               "OVERRIDDEN": "overridden"}
+
+
+def _times(n: int) -> str:
+    return {1: "once", 2: "twice"}.get(n, f"{n} times")
+
+
+def usage_words(u: dict) -> str:
+    return ", ".join(f"{USAGE_WORDS[k]} {_times(u[k])}" for k in USAGE_WORDS if u.get(k))
+
+
+def M(id, kind, text, source, anchors=(), usage=None, challenged=False, stale=None, status="", **more):
+    return dict(id=id, kind=kind, text=text, source=source, anchors=list(anchors), usage=usage or {}, challenged=challenged,
+                stale=stale, status=status, date="2026-11-12", **more)
+
+
+def seed_memory(extra: int = 0, cut: int = 0, ids: dict | None = None) -> list[dict]:
+    ids = ids or {}
+    sid = lambda t, d: ids.get(t, d)       # ids differ per seed run; the capped run's are read from its capture
+    ms = [M(sid(MIGR, "932ff77c"), "rule", MIGR, "user_said", status="force"),
+          M(sid("Keep handler functions under 40 lines; extract to `app/services/`.", "05394690"), "preference",
+            "Keep handler functions under 40 lines; extract to `app/services/`.", "user_said"),
+          M("cad8de35", "decision", "We chose the transactional outbox over direct publishing to the event bus for payment events, "
+            "because the bus lost two events during a failover.", "user_said", ["app/events/outbox.py"]),
+          M("23e2645b", "decision", "Refunds over 10,000 INR need manager approval in the admin tool.", "agent_inferred",
+            ["app/refunds/policy.py"], {"USED": 3, "CONTRADICTED": 2}, challenged=True),
+          M("44325bee", "rejected_approach", "Rejected: caching merchant fee schedules in process memory; they change intraday and "
+            "workers disagreed.", "user_said", ["app/fees/schedule.py"]),
+          M("cd79ee58", "environment", "Integration tests need `docker compose up postgres redis` first and take about 90 seconds to start.",
+            "agent_inferred", ["docker-compose.yml"])]
+    for n in range(1, extra + 1):
+        t = f"Seed rule {n:02d}: module {n} must not run code at import time."
+        ms.append(M(ids.get(t) or hashlib.sha1(t.encode()).hexdigest()[:8], "rule", t, "user_said",
+                    status="cut" if n > extra - cut else "force", cut_reason=CUT_REASON))
+    return ms
+
+
+def _look(m: dict) -> str:
+    """One plain sentence for why an item needs a look, or ''."""
+    if m.get("stale"):
+        st = m["stale"]
+        msg = f' {esc(st["message"])}' if st.get("message") else ""
+        return (f'A later change to the code may contradict it: {esc(st["reason"])}. '
+                f'Commit <code>{esc(st["commit"][:7])}</code>{msg}.')
+    if m["challenged"]:
+        return "Agents contradicted it repeatedly, so agents are now told to confirm or fix it before relying on it."
+    return ""
+
+
+def mem_li(m: dict, pid: str, label: bool = False) -> str:
+    why, fix = _look(m), ""
+    if m.get("stale"):
+        fix = (f'If it is still true, keep it with <code>reverie stale keep {m["id"]}</code>. '
+               f'If not, forget it with <code>reverie undo {m["id"]}</code>.')
+    elif m["challenged"]:
+        fix = f'If it is wrong, forget it with <code>reverie undo {m["id"]}</code>. It can be restored.'
+    kind = {k: lab for k, _t, lab in KINDS}[m["kind"]]
+    meta = [f'<span>{esc(SAID[m["source"]])}</span>']
+    if m["anchors"]:
+        meta.append("<span>" + ", ".join(f'<code title="{esc(a)}">{esc(a)}</code>' for a in m["anchors"]) + "</span>")
+    meta.append(f'<span>{esc(m["date"])}</span>')
+    if m["usage"] and usage_words(m["usage"]):
+        meta.append(f'<span>{esc(usage_words(m["usage"]))}</span>')
+    meta.append(f'<a class="open" href="/rule?p={pid}&amp;id={m["id"]}">Open</a>')
+    return (f'<li class="entry">' + (f'<p class="label">{kind}</p>' if label else "")
+            + f'<p class="rule">{rule_html(m["text"])}</p>' + (f'<p class="why">{why}</p>' if why else "")
+            + f'<p class="meta">{"".join(meta)}</p>' + (f'<p class="todo">{fix}</p>' if fix else "") + "</li>")
+
+
+def mem_list(ms: list[dict], pid: str) -> str:
+    if len(ms) <= 10:
+        return f'<ol class="items">{"".join(mem_li(m, pid) for m in ms)}</ol>'
+    return (f'<details class="fold"><summary>{len(ms)} items</summary>'
+            f'<ol class="items">{"".join(mem_li(m, pid) for m in ms)}</ol></details>')
+
+
+def memory_body(ms: list[dict], pid: str, index: int, note: str = "") -> str:
+    """Memory lists every item except rules; those are listed under Rules (each item is on exactly one tab)."""
+    rules_n = sum(1 for m in ms if m["kind"] == "rule")
+    ms = [m for m in ms if m["kind"] != "rule"]
+    if not ms and not rules_n:
+        return ('<p class="tally">Nothing remembered for this repo yet.</p>'
+                '<p class="who">Decisions and findings from agent sessions appear here once Reverie has captured some.</p>')
+    look = [m for m in ms if _look(m)]
+    rest = [m for m in ms if not _look(m)]
+    n = len(ms)
+    if n:
+        told = min(index, n)
+        tally = f"{n} remembered {'item' if n == 1 else 'items'}."
+        if told:
+            tally += f" {told} {'is' if told == 1 else 'are'} told to agents in an index."
+        if look:
+            tally += f" {len(look)} {'needs' if len(look) == 1 else 'need'} a look."
+    else:
+        tally = "No decisions or findings remembered yet."
+    out = [note, f'<p class="tally">{tally}</p>']
+    if rules_n:
+        out.append(f'<p class="who">{rules_n} {"rule you stated is" if rules_n == 1 else "rules you stated are"} listed under '
+                   f'<a href="/context?p={pid}">Rules</a>.</p>')
+    if look:
+        out.append('<section class="group" aria-labelledby="g-look"><h2 id="g-look">Needs a look</h2>'
+                   f'<ol class="items">{"".join(mem_li(m, pid, True) for m in look)}</ol></section>')
+    for kind, title, _lab in KINDS[1:]:
+        g = [m for m in rest if m["kind"] == kind]
+        if g:
+            out.append(f'<section class="group" aria-labelledby="g-{kind}"><h2 id="g-{kind}">{title}</h2>{mem_list(g, pid)}</section>')
     return "".join(out)
 
 
@@ -911,6 +1043,32 @@ def main() -> None:
     write("empty-start.html", shell(title="What agents are told in notifications-service, Reverie", pid=NOTIF, repo="notifications-service",
                                     active="/start", h1="What agents are told", counts={}, desc=sdesc,
                                     body=start_body([R(bullet_id(RG), RG, "your", path="~/.reverie/rules.md")], start_text("empty-start.html"), NOTIF)))
+
+    # Memory: the seed (with the challenged decision), the capped seed (36 remembered rules, 6 cut), the empty project
+    mdesc = "What has been remembered for this repo, and which of it needs a look."
+    mp = dict(repo="payments-api", pid=API, active="/memory", h1="Memory", desc=mdesc)
+    write("memory.html", shell(title="Memory of payments-api, Reverie", counts=counts_for("mudit", WAITING),
+                               body=memory_body(seed_memory(), API, index_count(start_text("start.html"))), **mp))
+    cap_ids = {**ids, "Keep handler functions under 40 lines; extract to `app/services/`.": "fe3e3049"}
+    cm = seed_memory(35, 6, cap_ids)
+    for m in cm:                                  # the capped capture's ids for the five non-rule items
+        m["id"] = {"cad8de35": "e318a06b", "23e2645b": "24e9f6e5", "44325bee": "9cf674f3", "cd79ee58": "85e2d8a7"}.get(m["id"], m["id"])
+    write("memory-capped.html", shell(title="Memory of payments-api, Reverie", counts=counts_for("mudit", WAITING),
+                                      body=memory_body(cm, API, index_count(start_text("start-capped.html"))), **mp))
+    write("empty-memory.html", shell(title="Memory of notifications-service, Reverie", pid=NOTIF, repo="notifications-service",
+                                     active="/memory", h1="Memory", counts={}, desc=mdesc, body=memory_body([], NOTIF, 0)))
+    stale_demo = [
+        M("aa10000001", "decision", "Payment events go through a RabbitMQ queue.", "agent_inferred", ["app/events/outbox.py"],
+          stale=dict(commit="53bd41853a3ba31564dc49bec9d4f7aa44709ca1", message="events: write to the outbox table", reason="events are now written to the outbox table and the queue client is no longer imported")),
+        M("aa10000002", "decision", "Refunds over 10,000 INR need manager approval in the admin tool.", "agent_inferred",
+          ["app/refunds/policy.py"], {"USED": 3, "CONTRADICTED": 2}, challenged=True),
+        M("aa10000003", "environment", "Run `make fixtures` before the integration tests.", "agent_inferred", ["Makefile"],
+          stale=dict(commit="ddf941a91198e58d140e4ffac43deb5058f9edb6", message="", reason="the Makefile target was removed")),
+        M("aa10000004", "rule", "Never run migrations against the production replica.", "user_said", status="force")]
+    write("memory-states.html", shell(title="Layout test, memory states (invented text), Reverie", counts=counts_for("mudit", WAITING),
+                                      body=memory_body(stale_demo, API, 3,
+                                                       '<p class="testnote">Layout test: items the seed does not have (possibly outdated, with and without a commit message). The text is invented and is not product data.</p>'),
+                                      **mp))
     # Rule page: one page per case (read-only; commands shown quietly)
     ldesc = "One rule: where it comes from, its status and what to do about it."
     pg = dict(pid=API, repo="payments-api", h1=None, counts=counts_for("mudit", WAITING), desc=ldesc)
@@ -938,6 +1096,13 @@ def main() -> None:
     write("rule-overridden.html", shell(title="Rule aa00000004 (layout test), Reverie", active="/context", body=rule_body(rv, API, inv), **pg))
     mem = dict(id="932ff77c", text=MIGR, said="You said it", date="2026-11-12")
     write("rule-remembered.html", shell(title="Rule 932ff77c, Reverie", active="/context", body=rule_body(dict(id=mem["id"], text=MIGR, _html=remembered_html(mem, "Remembered rule")), API), **{**pg, "desc": "One remembered rule: who said it, when, and how agents used it."}))
+    od = dict(id="aa10000001", text="Payment events go through a RabbitMQ queue.", said="An agent inferred it", date="2026-11-12",
+              files=["app/events/outbox.py"], stale=dict(commit="53bd41853a3ba31564dc49bec9d4f7aa44709ca1", message="events: write to the outbox table",
+                                                        reason="events are now written to the outbox table and the queue client is no longer imported"))
+    write("rule-remembered-outdated.html", shell(title="Remembered decision aa10000001 (layout test), Reverie", active="/memory", body=rule_body(
+        dict(id=od["id"], text=od["text"], status="Possibly outdated", home=("Memory", "/memory"),
+             _html=remembered_html(od, "Remembered decision")), API, '<p class="testnote">Layout test: the seed has no possibly outdated memory item. The text is invented and is not product data.</p>'),
+        **{**pg, "desc": "One remembered decision: who said it, what it is anchored to and what to do about it."}))
     ch = dict(id="23e2645b", text="Refunds over 10,000 INR need manager approval in the admin tool.", said="An agent inferred it",
               evidence="approval gate in `app/refunds/policy.py`", date="2026-11-12", files=["app/refunds/policy.py"],
               usage="Used 3 times, contradicted twice.", challenged=True)
