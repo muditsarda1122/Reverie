@@ -110,23 +110,22 @@ def test_home_is_plain_language_with_action_items_first(env, serve):
     s = serve(repo)
     status, body, _ = req(s, "/project")
     assert status == 200
-    for phrase in ("Rules in force", "Conflicts to settle", "Possibly outdated", "Proposals waiting"):
-        assert phrase in body
-    assert re.search(r"<b>1</b>Conflicts to settle", body)
-    assert re.search(r"<b>1</b>Possibly outdated", body)
-    assert re.search(r"<b>1</b>Proposals waiting", body)
-    assert body.index("Needs your action") < body.index("Two rules disagree")
-    assert body.index("<b>1</b>Rules in force") < body.index("Needs your action")
-    assert "A proposal is waiting" in body and "reverie context accept" in body
-    assert ">Possibly outdated</span>" in body and "old_helper was removed" in body
-    assert "Nothing needs your action" not in body
+    # no CODEOWNERS entry covers the two sibling folders, so the conflict and the stale rule wait on anyone;
+    # the proposal waits on the owner (the viewer, dev, is not one)
+    assert "2 waiting on you, 1 waiting on others." in body
+    assert body.index("Waiting on you") < body.index("Waiting on others")
+    assert body.index(">Conflict<") < body.index(">Possibly outdated<")          # one list: proposals, conflicts, outdated
+    assert "Agents are told to ask before acting on either." in body and 'reverie context resolve merge "your decision"' in body
+    assert "A later change to the code may contradict it: old_helper was removed." in body
+    assert ">Proposal<" in body and "Waiting on an owner of <code>rules.md</code>: lead@acme.com." in body
+    assert "Nothing needs you" not in body and "Rules in force" not in body          # no stat strip any more
 
 
 def test_home_when_nothing_needs_action(env, serve):
     _, repo = env
     rules.add("Money is integer cents", level="user")
     _, body, _ = req(serve(repo), "/project")
-    assert "Nothing needs your action right now." in body and re.search(r"<b>1</b>Rules in force", body)
+    assert "Nothing needs you." in body and "Waiting on you" not in body
 
 
 # --- hostile and large data ------------------------------------------------------------------
@@ -177,8 +176,8 @@ def test_every_page_has_an_empty_state(env, serve):
     _, repo = env                                    # no .reverie dir, no brain, no rules
     assert not (repo / ".reverie").exists()
     s = serve(repo)
-    want = {"/project": "Nothing needs your action", "/start": "Nothing.", "/context": "No team context",
-            "/proposals": "No proposals", "/memory": "Nothing remembered", "/": "Projects",
+    want = {"/project": "Nothing needs you", "/start": "Nothing.", "/context": "No team context",
+            "/proposals": "Nothing waiting. Suggest a rule with", "/memory": "Nothing remembered", "/": "Projects",
             "/connect": "reverie install", "/add": "reverie context add", "/new": "reverie enable",
             "/search?q=": "Type something to search"}
     for page, text in want.items():
@@ -299,8 +298,8 @@ def test_only_known_projects_open_and_never_by_path(env, serve, monkeypatch):
     s = serve(repo)
     for url in (f"/project?p={other}", "/project?p=../../etc", f"/memory?p={other}", "/context?p=deadbeef"):
         status, body, _ = req(s, url)
-        assert status == 200 and "SECRET-OTHER-REPO-RULE" not in body
-        assert "svc" in body                              # fell back to the repo it was started in
+        assert status == 404 and "SECRET-OTHER-REPO-RULE" not in body        # never another project's page
+        assert "No project with that id." in body
     ids = re.findall(r'href="/project\?p=([0-9a-f]{8})"', req(s, "/")[1])
     assert ids and len(set(ids)) == 1                      # one known project, never the other repo
 
@@ -336,7 +335,6 @@ def test_repo_rules_file_is_shown_labelled_and_counted(env, serve):
     assert "Shared rules file: no owners, no review" in ctx
     assert "Money is integer cents" in ctx and "Prefer small PRs" in ctx
     assert "No team context applies here" not in ctx            # not the empty state any more
-    assert re.search(r"<b>2</b>Rules in force", req(s, "/project")[1])
     assert "2 rules in force" in req(s, "/")[1]
     assert "This repo's rules (team)" in html.unescape(req(s, "/start")[1])   # same bullets, as delivered
 
@@ -369,7 +367,6 @@ def test_rules_in_force_matches_what_the_start_block_gives(env, serve, monkeypat
     given = deliver.startup_text(str(repo), log=False)
     assert given.count("Money is integer cents") == 1            # shown once: the team rule
     # team rule 1 + remembered "paginate" 1 + user-wide preference 1
-    assert re.search(r"<b>3</b>Rules in force", req(s, "/project")[1])
     assert "3 rules in force" in req(s, "/")[1]
 
 
@@ -386,14 +383,12 @@ def test_overview_proposal_links_to_its_card_on_proposals(env, serve):
     context.add(str(repo), "Second proposal", why="because")          # a second one waiting
     s = serve(repo)
     over = req(s, "/project")[1]
-    links = re.findall(r'<a href="(/proposals\?p=[0-9a-f]{8})#(p-[0-9a-f]{10})">A proposal is waiting</a>', over)
+    links = re.findall(r'<a href="(/proposals\?p=[0-9a-f]{8})#(p-[0-9a-f]{10})">(?:View|Decide)</a>', over)
     assert len(links) == 2 and len({frag for _, frag in links}) == 2
     page = req(s, links[0][0])[1]
     for _, frag in links:
-        assert f'<article class=card id="{frag}">' in page      # every link lands on a card
-    assert page.count('<article class=card id="p-') == 2
-
-
+        assert f'<article class="entry" id="{frag}">' in page      # every link lands on a card
+    assert page.count('<article class="entry" id="p-') == 2
 def test_memory_lanes_use_human_names(env, serve, monkeypatch):
     _, repo = env
     conn = _brain(repo, monkeypatch)
@@ -445,8 +440,7 @@ def test_rules_in_force_counts_only_what_the_start_limit_lets_through(env, serve
     assert 0 < handed < 55                                    # the caps really cut something
     cut = 55 - handed
     over = req(s, "/project")[1]
-    assert re.search(rf"<b>{handed}</b>Rules in force", over)
-    assert re.search(rf"<b>{cut}</b>Cut by the start limit", over)
+    assert f"{cut} more rules apply but were cut by the start limit." in over and "See what agents are told." in over
     assert f"{handed} rules in force" in req(s, "/")[1] and f"{cut} cut by the start limit" in req(s, "/")[1]
     assert f"{handed} rules in force · {cut} cut by the start limit" in req(s, "/start")[1]
 
@@ -462,8 +456,9 @@ def test_no_cut_note_when_every_rule_fits(env, serve, monkeypatch):
     assert "cut by the start limit" not in req(s, "/start")[1]
 
 
-def test_rules_tab_badge_equals_rules_in_force(env, serve, monkeypatch):
-    """One function counts the rules: the Rules tab badge, Overview and the Projects card cannot differ."""
+def test_the_tab_row_has_counts_only_for_what_waits_on_the_viewer(env, serve, monkeypatch):
+    """Rules and Memory carry no count any more (design.md); the project board still gives the one rules-in-force
+    figure, from the one function that counts them."""
     _, repo = env
     (repo / ".reverie" / "context").mkdir(parents=True)
     (repo / ".reverie" / "context" / "rules.md").write_text("## Rules\n- Money is integer cents\n")
@@ -473,10 +468,8 @@ def test_rules_tab_badge_equals_rules_in_force(env, serve, monkeypatch):
               repo_key=deliver.repo_key(str(repo)))
     conn.close()
     s = serve(repo)
-    over = req(s, "/project")[1]
-    n = int(re.search(r"<b>(\d+)</b>Rules in force", over).group(1))
-    assert n == 4                                    # 1 team + 2 rules.md + 1 remembered
-    for page in ("/project", "/context", "/memory", "/start", "/proposals"):   # Connect and Add show no badges at all
-        badge = re.search(r'href="/context[^"]*"[^>]*>.*?Rules<span class="n">(\d+)</span>', req(s, page)[1], re.S)
-        assert badge and int(badge.group(1)) == n, page
-    assert f"{n} rules in force" in req(s, "/")[1]
+    for page in ("/project", "/proposals"):
+        body = req(s, page)[1]
+        assert re.search(r'>Rules</a>', body) and not re.search(r'Rules<span class="n">', body), page
+        assert not re.search(r'Memory<span class="n">', body), page
+    assert "4 rules in force" in req(s, "/")[1]            # 1 team + 2 rules.md + 1 remembered

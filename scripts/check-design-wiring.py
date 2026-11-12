@@ -18,7 +18,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BEFORE, AFTER = ROOT / "design" / "before", ROOT / "design" / "after"
+import os
+BEFORE, AFTER = ROOT / "design" / "before", Path(os.environ.get("WIRING_AFTER") or ROOT / "design" / "after")   # WIRING_AFTER=design/live checks the real server's pages
 
 
 class Scan(HTMLParser):
@@ -74,7 +75,7 @@ def form_key(f: dict) -> tuple:
     return (f["action"], f["method"], f["slug"], tuple(sorted(set(n for n, _ in f["fields"]))))
 
 
-ALIASES = {"overview-arjun.html": "overview.html", "rules-capped.html": "rules.html", "memory-capped.html": "memory.html",
+ALIASES = {"overview-arjun.html": "overview.html", "overview-priya.html": "overview.html", "rules-capped.html": "rules.html", "memory-capped.html": "memory.html",
            "board.html": "projects.html", "board-empty.html": "projects.html", "connect-connected.html": "connect.html",
            "connect-off.html": "connect.html", "search.html": "search-ledger.html", "search-both.html": "search-ledger.html", "search-empty.html": "search-ledger.html",
            "search-blank.html": "search-ledger.html", "off.html": "disabled-project.html",

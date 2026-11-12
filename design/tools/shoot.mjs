@@ -8,7 +8,8 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const after = resolve(here, '../after');
+// SHOOT_DIR: another folder of pages, e.g. design/live (the real server's pages saved by scripts/capture-live.sh)
+const after = process.env.SHOOT_DIR ? resolve(process.env.SHOOT_DIR) : resolve(here, '../after');
 const out = resolve(after, 'screenshots');
 const home = process.env.HALLMARK_PUPPETEER || resolve(homedir(), '.cache/reverie-design-tools/puppeteer');
 const req = createRequire(resolve(home, 'x.js'));

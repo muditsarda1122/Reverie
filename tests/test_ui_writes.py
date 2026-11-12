@@ -86,8 +86,8 @@ def _http(s, method, path, fields=None, *, host=None, headers=None, body=None, s
 def _form(s, path):
     """The real forms on a page: (token, project id) scraped as a browser would."""
     body = _http(s, "GET", path)[1]
-    return (re.search(r'name=token value="([^"]+)"', body).group(1),
-            re.search(r'name=p value="([0-9a-f]{8})"', body).group(1))
+    return (re.search(r'name="?token"? value="([^"]+)"', body).group(1),
+            re.search(r'name="?p"? value="([0-9a-f]{8})"', body).group(1))
 
 
 def _follow(s, resp):
@@ -353,7 +353,7 @@ def test_non_owner_cannot_accept_or_reject(env, serve):
     tmp_path, repo = env
     prop = _propose_as_dev(repo)                         # dev is not an owner
     s = serve(repo)
-    tok, pid = _form(s, "/proposals")
+    tok, pid = _form(s, "/add")                      # Proposals draws no form for a non-owner
     before = _tree(tmp_path)
     page = _follow(s, _http(s, "POST", "/do/accept", {"token": tok, "p": pid, "slug": prop["slug"]}))
     assert "Refused" in page and "only the owners of rules.md can accept" in page and "lead@acme.com" in page
@@ -420,10 +420,12 @@ def test_screens_show_the_git_identity_the_action_will_use(env, serve):
     add = _http(s, "GET", "/add")[1]
     assert "Dana Dev &lt;dev@acme.com&gt;" in add
     props = _http(s, "GET", "/proposals")[1]
-    assert "Dana Dev &lt;dev@acme.com&gt;" in props and "Not an owner" in props and prop["slug"] in props
+    assert 'Acting as <span title="dev@acme.com">Dana Dev</span>, from your git identity.' in props
+    assert "Waiting on an owner of" in props and "/do/accept" not in props        # a non-owner is shown no decide forms
     _owner(repo)
     props = _http(s, "GET", "/proposals")[1]
-    assert "lead@acme.com" in props and "You can decide this" in props
+    assert 'Acting as <span title="lead@acme.com">Dana Dev</span>' in props
+    assert 'action="/do/accept"' in props and prop["slug"] in props
 
 
 def test_ui_and_cli_write_identical_files(tmp_path, monkeypatch, serve):
@@ -491,6 +493,6 @@ def test_no_conflict_note_when_nothing_is_in_force_or_the_write_is_refused(env, 
     s = serve(repo)
     page = _follow(s, _add(s, "Prefer small PRs"))
     assert "Written as a proposal" in page and "checked for conflicts" not in page
-    tok, pid = _form(s, "/proposals")
+    tok, pid = _form(s, "/add")                         # dev is not an owner: Proposals draws no form for them
     page = _follow(s, _http(s, "POST", "/do/reject", {"token": tok, "p": pid, "slug": "nope", "why": "x"}))
     assert "Refused" in page and "checked for conflicts" not in page

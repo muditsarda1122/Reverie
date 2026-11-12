@@ -1175,7 +1175,7 @@ def main() -> None:
                                         repo="notifications-service", counts={}, desc=desc, body=empty_body(NOTIF)))
     # Overview: mudit, arjun, the capped variant (6 rules cut by the start limit), and an empty project
     odesc = "What needs you in this project: proposals, conflicts and possibly outdated rules."
-    for me, fname, cut in (("mudit", "overview.html", 0), ("arjun", "overview-arjun.html", 0), ("mudit", "overview-capped.html", 6)):
+    for me, fname, cut in (("mudit", "overview.html", 0), ("arjun", "overview-arjun.html", 0), ("priya", "overview-priya.html", 0), ("mudit", "overview-capped.html", 6)):
         write(fname, shell(title="Overview of payments-api, Reverie", pid=API, repo="payments-api", active="/project",
                            h1="Overview", counts=counts_for(me, WAITING), desc=odesc,
                            body=overview_body(me, WAITING, CONFLICTS, OUTDATED, API, cut)))

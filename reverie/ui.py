@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import re
 import secrets
 import threading
 import webbrowser
@@ -36,6 +37,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
 from . import context, deliver, redact, rules, spool
+from .ui_style import CSS as DESIGN_CSS
 
 PAGE_SIZE = 100
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; "
@@ -539,66 +541,6 @@ def projects_page(root: str, query=None) -> str:
                  actions=f'<a class="btn pri" href="/new">{icon("plus", 16)}Add a project</a>')
 
 
-def overview(root: str, proj: dict, plist: list[dict]) -> str:
-    d = collect(root)
-    in_force, cut = rules_in_force(d)
-    outdated = len(d["stale_team"]) + len(d["stale_mem"])
-    statline = "".join(f"<span><b>{n}</b>{esc(label)}</span>" for label, n in (
-        ("Rules in force", in_force), *((("Cut by the start limit", cut),) if cut else ()),
-        ("Conflicts to settle", len(d["unresolved"])),
-        ("Possibly outdated", outdated), ("Proposals waiting", len(d["proposals"]))))
-    conflicts, stale, props = [], [], []
-    for c in d["unresolved"]:
-        a, b = c.overridden[0], c.overridden[1]
-        who = "; ".join(x for x in (_owner(a), _owner(b)) if x)
-        conflicts.append(
-            f'<article class=card><span class="chip bad">Conflict</span>'
-            f"<h3 style='margin-top:10px'>Two rules disagree</h3>"
-            f"<p class=q>{esc(a.label)}: “{esc(_clip(a.text, 160))}”</p>"
-            f"<p class=q>{esc(b.label)}: “{esc(_clip(b.text, 160))}”</p>"
-            f"<p>Agents are told to ask before acting on either.</p>"
-            + (f"<hr class=rule><div class=meta>Ask {esc(who)}</div>" if who else "")
-            + _cmd(f'reverie context resolve {esc(c.key)} "your decision"') + "</article>")
-    for it in d["stale_team"]:
-        st = d["res"].stale.get(it.id, {})
-        stale.append(
-            f'<article class=card><span class="chip warn">Possibly outdated</span>'
-            f"<h3 style='margin-top:10px'>“{esc(_clip(it.text, 200))}”</h3>"
-            f"<p>{esc(it.label)}. A later change to the code may contradict it: "
-            f"{esc(_clip(str(st.get('reason', '')), 200))}</p>"
-            + _cmd(f"Check the code, then edit or remove the rule in {esc(it.file)}", label="What to do")
-            + "</article>")
-    for m in d["stale_mem"]:
-        stale.append(
-            f'<article class=card><span class="chip warn">Possibly outdated</span>'
-            f"<h3 style='margin-top:10px'>“{esc(_clip(m['text'], 200))}”</h3>"
-            f"<p>Remembered from an earlier session.</p>" + _cmd("reverie stale list", label="What to do")
-            + "</article>")
-    for p in d["proposals"]:
-        by = str(p.get("proposed-by", "someone"))
-        props.append(
-            f'<article class=card><span class="chip acc">Proposal</span>'
-            f"<h3 style='margin-top:10px'><a href=\"{_u('/proposals', proj)}#{_pslug(p['slug'])}\">"
-            f"A proposal is waiting</a></h3>"
-            f"<p class=q>“{esc(_clip(context.bullet_text(p['bullet']), 200))}”</p>"
-            + (f"<p>Because: {esc(_clip(p.get('why', ''), 160))}</p>" if p.get("why") else "")
-            + f"<hr class=rule><div class=meta><span class=who1>{_avatar(by)}{esc(by)}</span></div>"
-            + _cmd(f"reverie context accept {esc(p['slug'])}",
-                   f'reverie context reject {esc(p["slug"])} --why "…"', label="An owner decides")
-            + "</article>")
-    if conflicts or stale or props:
-        body = (f'<div class=statline>{statline}</div><h2 style="font-size:1rem;margin:30px 0 0">Needs your action</h2>'
-                f'<div class=board style="margin-top:14px">'
-                + _lane("Conflicts", "b", conflicts, "No conflicts")
-                + _lane("Possibly outdated", "w", stale, "Nothing outdated")
-                + _lane("Proposals", "a", props, "No proposals") + "</div>")
-    else:
-        body = (f'<div class=statline>{statline}</div>'
-                + _empty("check", "Nothing needs your action right now.",
-                         "Conflicts, outdated rules and waiting proposals will show up here first."))
-    return frame(proj, plist, d, "/project", body)
-
-
 def start(root: str, proj: dict, plist: list[dict]) -> str:
     d = collect(root)
     text = d["start"]
@@ -659,62 +601,6 @@ def context_page(root: str, proj: dict, plist: list[dict]) -> str:
              f'<th>Marks</th><th>Id</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div>')
     body += shared_note
     return frame(proj, plist, d, "/context", body)
-
-
-def _decide_forms(proj: dict, st: State | None, p: dict, root: str) -> str:
-    doc = p["path"].parent.parent / (p.get("document") or "rules.md")
-    owners = _safe(lambda: context.owners_of(doc), [])
-    mine = _safe(lambda: context.is_owner(doc), False)
-    who = _safe(lambda: _who(doc.parent, root), "unknown")
-    status = ('<span class="chip ok">You can decide this</span>' if mine else
-              '<span class="chip bad">Not an owner: the CLI would refuse</span>')
-    line = (f"<p class=who>You would act as <b>{esc(who)}</b> (git identity). Owners of {esc(doc.name)}: "
-            f"{esc(', '.join(owners) or 'nobody (anyone may edit)')}. {status}</p>")
-    slug = esc(p["slug"])
-    return (line + '<div class=acts2>'
-            + _form_open(proj, st, "/do/accept") + f'<input type=hidden name=slug value="{slug}">'
-              '<button class="btn pri" type=submit>Accept</button></form>'
-            + _form_open(proj, st, "/do/reject") + f'<input type=hidden name=slug value="{slug}">'
-              f'<label>Reason for turning it down (the proposer will read it)'
-              f'<input type=text name=why maxlength={LIMITS["why"]} required></label>'
-              '<button class="btn bad" type=submit>Reject</button></form></div>')
-
-
-def proposals_page(root: str, proj: dict, plist: list[dict], st: State | None = None,
-                   flash: dict | None = None) -> str:
-    d = collect(root)
-    banner = _banner(flash)
-    if not d["proposals"] and not d["rejected"]:
-        return frame(proj, plist, d, "/proposals", banner + _empty(
-            "inbox", "No proposals",
-            "Anyone can suggest a rule with <code>reverie context add</code>, or turn one of "
-            "their own into a proposal with <code>reverie context propose</code>."))
-    wait = []
-    for p in d["proposals"]:
-        by = str(p.get("proposed-by", "?"))
-        extra = " · ".join(f"{k}: {p[k]}" for k in ("from", "first-stated", "usage") if p.get(k))
-        wait.append(
-            f"<article class=card id=\"{_pslug(p['slug'])}\"><p class=q style='margin:0'>“{esc(context.bullet_text(p['bullet']))}”</p>"
-            + (f"<p>Why: {esc(p['why'])}</p>" if p.get("why") else "")
-            + (f"<p>{esc(extra)}</p>" if extra else "")
-            + f"<hr class=rule><div class=meta><span class=who1>{_avatar(by)}{esc(by)}</span>"
-              f"<span class=sp>{esc(p.get('date', '?'))}</span></div>"
-            + f"<div class=meta style='margin-top:8px'>for {esc(p.get('document', '?'))}</div>"
-            + _decide_forms(proj, st, p, root) + "</article>")
-    gone = []
-    for r in d["rejected"]:
-        by = str(r.get("rejected-by", "?"))
-        gone.append(
-            f"<article class=card><p class=q style='margin:0'>“{esc(context.bullet_text(r['bullet']))}”</p>"
-            f"<p>{esc(r.get('reason', ''))}</p><hr class=rule><div class=meta>"
-            f"<span class=who1>{_avatar(by)}{esc(by)}</span><span class=sp>{esc(r.get('rejected-on', '?'))}</span></div>"
-            "</article>")
-    body = (banner + '<p class=hint>Rules people suggested for the team. Only an owner of the document can '
-            'accept or turn one down; turned-down ones keep their reason, so the proposer can see it.</p>'
-            '<div class=board>'
-            + _lane("Waiting", "a", wait, "Nothing waiting") + _lane("Turned down", "", gone, "Nothing turned down")
-            + "</div>")
-    return frame(proj, plist, d, "/proposals", body)
 
 
 _KIND_ORDER = ("rule", "preference", "decision")
@@ -848,6 +734,349 @@ def search_page(root: str, proj: dict, plist: list[dict], q: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# the Ink design (design.md): the shared shell, people, and the Overview and Proposals pages
+# ---------------------------------------------------------------------------
+
+_PERSON = re.compile(r"^\s*(.*?)\s*<([^<>\s]+@[^<>\s]+)>\s*$")
+
+
+def _split_person(text: str) -> tuple[str, str]:
+    """"Name <email>" -> (name, email); anything else -> ("", text)."""
+    m = _PERSON.match(text or "")
+    return (m.group(1), m.group(2)) if m else ("", (text or "").strip())
+
+
+def known_people(root: str) -> dict[str, str]:
+    """email (lower case) -> name, from what the repo already says: the git identity here, the people named
+    on proposals and rejections, and the authors of recent commits. CODEOWNERS only has emails, so this is
+    where names come from; an email with no name stays an email."""
+    out: dict[str, str] = {}
+
+    def add(name: str, email: str) -> None:
+        name, email = (name or "").strip(), (email or "").strip().lower()
+        if name and "@" in email:
+            out.setdefault(email, name)
+    add(spool._git(["config", "user.name"], Path(root)), spool._git(["config", "user.email"], Path(root)))
+    for p in _safe(lambda: context.proposals(root) + context.rejected(root), []):
+        for key in ("proposed-by", "rejected-by"):
+            add(*_split_person(str(p.get(key, ""))))
+    for line in _safe(lambda: spool._git(["log", "-n", "300", "--format=%aN\t%aE"], Path(root)), "").splitlines():
+        name, _, email = line.partition("\t")
+        add(name, email)
+    return out
+
+
+class Viewer:
+    """Who the git config says is looking (the same identity the CLI would act as)."""
+
+    def __init__(self, root: str) -> None:
+        folder = Path(root) / ".reverie" / "context"
+        self.ids = _safe(lambda: context.identity(folder), set())
+        self.name = spool._git(["config", "user.name"], Path(root)).strip()
+        self.email = spool._git(["config", "user.email"], Path(root)).strip()
+        self.first = (self.name.split() or ["You"])[0]
+
+
+def acting_html(me: "Viewer") -> str:
+    """The viewer's own name (full), the email in the title: "Acting as Mudit Sarda, from your git identity."."""
+    if not (me.name or me.email):
+        return '<p class="who">No git identity is set here.</p>'
+    who = f'<span title="{esc(me.email)}">{esc(me.name)}</span>' if me.name else esc(me.email)
+    return f'<p class="who">Acting as {who}, from your git identity.</p>'
+
+
+def person_html(who: str, names: dict[str, str], me: Viewer) -> str:
+    """One person: the name with the email in the title attribute, "First (you)" for the viewer, the bare text
+    when no name is known."""
+    name, email = _split_person(who)
+    key = (email or who).strip().lower()
+    if key in me.ids or key == me.email.lower() or (name and name.lower() in me.ids):
+        return f'<span title="{esc(email or me.email)}">{esc(me.first)} (you)</span>'
+    name = name or names.get(key, "")
+    if name:
+        return f'<span title="{esc(email)}">{esc(name)}</span>'
+    return esc(who)
+
+
+def people_html(whos: list[str], names: dict[str, str], me: Viewer, sep: str = ", ") -> str:
+    return sep.join(person_html(w, names, me) for w in whos)
+
+
+def rule_html(text: str) -> str:
+    """Rule text, escaped; `backticked` spans are code."""
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", esc(text))
+
+
+def _n(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def _doc_path(path: Path, root: str) -> str:
+    """The path shown for a document: relative to the repo, or folder/name for a shared folder."""
+    try:
+        return path.resolve().relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        return f"{context.scope_name(path.parent)}/{path.name}"
+
+
+def _doc_span(path: Path, root: str) -> str:
+    """A document: its name in mono, its path as the title."""
+    shown = _doc_path(path, root)
+    return f'<span title="{esc(shown)}"><code>{esc(path.name)}</code></span>'
+
+
+def _source_label(it) -> str:
+    where = f" {it.scope}" if it.scope else ""
+    return {"org": f"Organisation folder{where}", "team": f"Team folder{where}", "repo": "This repo",
+            "personal": "Yours"}.get(it.layer, it.layer)
+
+
+def _tabs_html(proj: dict, counts: dict, active: str) -> str:
+    items = [("/project", "Overview"), ("/context", "Rules"), ("/memory", "Memory"),
+             ("/start", "What agents are told"), ("/proposals", "Proposals"), ("/connect", "Connect")]
+    out = []
+    for path, label in items:
+        cur = ' aria-current="page"' if path == active else ""
+        n = counts.get(path)
+        out.append(f'<a href="{_u(path, proj)}"{cur}>{label}' + (f'<span class="n">{n}</span>' if n else "") + "</a>")
+    return '<nav class="tabs" aria-label="Project">' + "".join(out) + "</nav>"
+
+
+def layout(*, title: str, proj: dict | None, plist: list[dict], body: str, tab: str = "", counts: dict | None = None,
+         h1: str | None = None, desc: str = "", q: str = "") -> str:
+    """The shared shell: top bar (wordmark, project switcher, search), the tab row, the page."""
+    menu = "".join(
+        f'<li><a href="{_u("/project", p)}"' + (' aria-current="page"' if proj and p["id"] == proj["id"] else "")
+        + f">{esc(p['name'])}</a></li>" for p in plist[:40])
+    pid = f'<input type="hidden" name="p" value="{esc(proj["id"])}">' if proj else ""
+    value = f' value="{esc(q)}"' if q else ""
+    tabrow = (f'<div class="tabrow">{_tabs_html(proj, counts or {}, tab)}<div class="acts">'
+              f'<a href="{_u("/add", proj)}">Add a rule</a></div></div>') if proj else ""
+    hidden = f'<h1 class="visually-hidden">{esc(h1)} for {esc(proj["name"])}</h1>' if (h1 and proj) else ""
+    return (f'<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+            f'<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>{esc(title)}</title>\n'
+            + (f'<meta name="description" content="{esc(desc)}">\n' if desc else "")
+            + f"<style>\n{DESIGN_CSS}</style>\n</head>\n<body>\n"
+            f'<header class="bar"><div class="page">\n<a class="mark" href="/" aria-label="Reverie, all projects">Reverie</a>\n'
+            f'<details class="switch"><summary>{esc(proj["name"] if proj else "All projects")}</summary>\n'
+            f'<ul class="menu">{menu}<li><hr></li><li><a href="/">All projects</a></li><li><a href="/new">Add a project</a></li></ul></details>\n'
+            f'<form class="find" action="/search" method="get" role="search">{pid}<input name="q" type="search" '
+            f'placeholder="Search rules and memory" aria-label="Search rules and memory" maxlength="120"{value}></form>\n'
+            f'</div></header>\n<div class="page">\n{tabrow}\n<main class="main">\n{hidden}\n{body}\n</main>\n</div>\n</body>\n</html>\n')
+
+
+def _proposal_doc(p: dict) -> Path:
+    return p["path"].parent.parent / (p.get("document") or "rules.md")
+
+
+def waiting(root: str, d: dict) -> dict:
+    """Everything that waits on someone, split by whether it waits on the viewer. A proposal waits on you when you
+    are an owner of its document (or none is); a conflict or a possibly outdated rule when you own one of its
+    documents or no CODEOWNERS entry covers it. One definition for the tab counts, Overview and Proposals."""
+    res = d["res"]
+    props = []
+    for p in d["proposals"]:
+        doc = _proposal_doc(p)
+        props.append({"p": p, "doc": doc, "owners": _safe(lambda: context.owners_of(doc), []),
+                      "mine": _safe(lambda: context.is_owner(doc), False)})
+    conflicts = []
+    for c in d["unresolved"]:
+        files = [Path(i.file) for i in c.items]
+        owners: list[str] = []
+        for f in files:
+            owners += [o for o in _safe(lambda: context.owners_of(f), []) if o not in owners]
+        conflicts.append({"c": c, "owners": owners, "mine": any(_safe(lambda: context.is_owner(f), False) for f in files)})
+    outdated = []
+    for it in d["stale_team"]:
+        f = Path(it.file)
+        outdated.append({"kind": "team", "it": it, "st": res.stale.get(it.id, {}), "doc": f,
+                         "owners": _safe(lambda: context.owners_of(f), []), "mine": _safe(lambda: context.is_owner(f), False)})
+    for m in d["stale_mem"]:
+        outdated.append({"kind": "memory", "m": m, "mine": True})
+    you = (sum(1 for x in props if x["mine"]) + sum(1 for x in conflicts if x["mine"]) + sum(1 for x in outdated if x["mine"]))
+    return {"props": props, "conflicts": conflicts, "outdated": outdated,
+            "counts": {"/project": you, "/proposals": sum(1 for x in props if x["mine"])}}
+
+
+def _frame(root: str, proj: dict, plist: list[dict], d: dict, w: dict, tab: str, body: str, title: str, h1: str) -> str:
+    return layout(title=f"{title} {'of' if title == 'Overview' else 'for'} {proj['name']}, Reverie", proj=proj, plist=plist, body=body, tab=tab,
+                counts=w["counts"], h1=h1)
+
+
+def _flash_html(flash: dict | None) -> str:
+    if not flash:
+        return ""
+    return f'<p class="flash" role="status">{esc(flash["msg"]).replace("in force", "<span class=\"in\">in force</span>")}</p>'
+
+
+def _backtick_cmds(text: str) -> str:
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+
+
+def _prop_item(x: dict, ctx: dict, link: bool = True) -> str:
+    p = x["p"]
+    names, me, root, pid = ctx["names"], ctx["me"], ctx["root"], ctx["pid"]
+    meta = [person_html(str(p.get("proposed-by", "")), names, me), f'<span>{esc(p.get("date", ""))}</span>',
+            _doc_span(x["doc"], root)]
+    if p.get("paths"):
+        meta.append(f'<span>only under <code>{esc(p["paths"])}</code></span>')
+    why = f'<p class="why">Why: {rule_html(p["why"])}</p>' if p.get("why") else ""
+    href = f'/proposals?p={pid}#{_pslug(p["slug"])}'
+    if x["mine"]:
+        tail = f'<p class="go"><a href="{href}">Decide</a></p>'
+    else:
+        tail = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(x["doc"].name)}</code>: '
+                f'{people_html(x["owners"], names, me)}.</p><p class="go"><a href="{href}">View</a></p>')
+    return (f'<li><article class="entry"><p class="label">Proposal</p><h3 class="rule">{rule_html(context.bullet_text(p["bullet"]))}</h3>'
+            f'{why}<p class="meta">{"".join(meta)}</p>{tail}</article></li>')
+
+
+def _conflict_item(x: dict, ctx: dict) -> str:
+    c, names, me, root, pid = x["c"], ctx["names"], ctx["me"], ctx["root"], ctx["pid"]
+    sides = "".join(
+        f'<div class="side"><p class="rule">{rule_html(it.text)}</p><p class="meta"><span>{esc(_source_label(it))}</span>'
+        f'{_doc_span(Path(it.file), root)}<a href="/rule?p={pid}&amp;id={esc(it.id)}">Open rule</a></p></div>' for it in c.items)
+    if not x["owners"]:
+        who = "No CODEOWNERS entry covers either document, so anyone can settle it."
+    elif x["mine"]:
+        who = "You own one of the documents, so you can settle it."
+    else:
+        who = f'Waiting on an owner: {people_html(x["owners"], names, me)}.'
+    return (f'<li><article class="entry"><p class="label">Conflict</p>{sides}'
+            f'<p class="why">Agents are told to ask before acting on either. {who}</p>'
+            f'<p class="cmdline"><code>reverie context resolve {esc(c.key)} "your decision"</code></p></article></li>')
+
+
+def _outdated_item(x: dict, ctx: dict) -> str:
+    names, me, root, pid = ctx["names"], ctx["me"], ctx["root"], ctx["pid"]
+    if x["kind"] == "memory":
+        m = x["m"]
+        st = (m.get("meta") or {}).get("stale") or {}
+        text, ident, reason = str(m.get("text", "")), str(m.get("id", ""))[:8], str(st.get("reason", ""))
+        meta = [f'<span>Remembered</span>']
+        commit, message = str(st.get("commit", "")), str(st.get("message", ""))
+        tail = (f'<p class="todo">Check the code, then keep it with <code>reverie stale keep {esc(ident)}</code> or '
+                f'forget it with <code>reverie undo {esc(ident)}</code>.</p>')
+    else:
+        it, st = x["it"], x["st"]
+        text, ident, reason = it.text, it.id, str(st.get("reason", ""))
+        commit, message = str(st.get("commit", "")), str(st.get("message", ""))
+        meta = [_doc_span(x["doc"], root)]
+        if x["mine"]:
+            tail = (f'<p class="todo">Check the code, then edit or remove the rule in <code>{esc(_doc_path(x["doc"], root))}</code>.</p>')
+        else:
+            tail = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(x["doc"].name)}</code>: '
+                    f'{people_html(x["owners"], names, me)}.</p>')
+    if commit:
+        meta.append(f'<span>Commit <code>{esc(commit[:7])}</code>{" " + esc(message) if message else ""}</span>')
+    return (f'<li><article class="entry"><p class="label">Possibly outdated</p><h3 class="rule">{rule_html(text)}</h3>'
+            f'<p class="why">A later change to the code may contradict it: {esc(reason)}.</p>'
+            f'<p class="meta">{"".join(meta)}</p>{tail}'
+            f'<p class="go"><a href="/rule?p={pid}&amp;id={esc(ident)}">Open rule</a></p></article></li>')
+
+
+def _ctx(root: str, proj: dict) -> dict:
+    return {"root": root, "pid": proj["id"], "names": known_people(root), "me": Viewer(root)}
+
+
+def overview(root: str, proj: dict, plist: list[dict]) -> str:
+    d = collect(root)
+    w = waiting(root, d)
+    ctx = _ctx(root, proj)
+    you = ([_prop_item(x, ctx) for x in w["props"] if x["mine"]] + [_conflict_item(x, ctx) for x in w["conflicts"] if x["mine"]]
+           + [_outdated_item(x, ctx) for x in w["outdated"] if x["mine"]])
+    others = ([_prop_item(x, ctx) for x in w["props"] if not x["mine"]]
+              + [_conflict_item(x, ctx) for x in w["conflicts"] if not x["mine"]]
+              + [_outdated_item(x, ctx) for x in w["outdated"] if not x["mine"]])
+    if you and others:
+        tally = f"{len(you)} waiting on you, {len(others)} waiting on others."
+    elif you:
+        tally = f"{len(you)} waiting on you."
+    elif others:
+        tally = f"Nothing waiting on you. {len(others)} waiting on others."
+    else:
+        tally = "Nothing needs you."
+    who = acting_html(ctx["me"])
+    parts = [who, f'<p class="tally">{tally}</p>']
+    cut = rules_in_force(d)[1]
+    if cut:
+        parts.append(f'<p class="cut">{cut} more {"rule applies but was" if cut == 1 else "rules apply but were"} cut by the '
+                     f'start limit. <a href="{_u("/start", proj)}">See what agents are told.</a></p>')
+    for key, label, items in (("you", "Waiting on you", you), ("others", "Waiting on others", others)):
+        if items:
+            parts.append(f'<section class="group" aria-labelledby="h-{key}"><h2 id="h-{key}">{label}</h2>'
+                         f'<ol class="items">{"".join(items)}</ol></section>')
+    return _frame(root, proj, plist, d, w, "/project", "".join(parts), "Overview", "Overview")
+
+
+def _prop_entry(x: dict, ctx: dict, st: State | None) -> str:
+    p = x["p"]
+    names, me, root, pid = ctx["names"], ctx["me"], ctx["root"], ctx["pid"]
+    meta = [person_html(str(p.get("proposed-by", "")), names, me), f'<span>{esc(p.get("date", ""))}</span>', _doc_span(x["doc"], root)]
+    if p.get("paths"):
+        meta.append(f'<span>only under <code>{esc(p["paths"])}</code></span>')
+    why = f'<p class="why">Why: {rule_html(p["why"])}</p>' if p.get("why") else ""
+    slug = esc(p["slug"])
+    if x["mine"]:
+        hidden = (f'<input type="hidden" name="token" value="{html.escape(st.token if st else "")}">'
+                  f'<input type="hidden" name="p" value="{esc(pid)}"><input type="hidden" name="slug" value="{slug}">')
+        act = (f'<form method="post" action="/do/accept">{hidden}<button class="btn" type="submit">Accept</button></form>'
+               f'<details class="reject"><summary>Reject</summary><form method="post" action="/do/reject">{hidden}'
+               f'<label>Reason for turning it down (the proposer will read it)'
+               f'<input type="text" name="why" maxlength="{LIMITS["why"]}" required></label>'
+               f'<button class="text-btn" type="submit">Turn down with this reason</button></form></details>'
+               f'<details class="cmd"><summary>As commands</summary><pre>reverie context accept {slug}\n'
+               f'reverie context reject {slug} --why "..."</pre></details>')
+        act = f'<div class="act">{act}</div>'
+    else:
+        act = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(x["doc"].name)}</code>: '
+               f'{people_html(x["owners"], names, me)}.</p>')
+    return (f'<article class="entry" id="{_pslug(p["slug"])}"><h3 class="rule">{rule_html(context.bullet_text(p["bullet"]))}</h3>'
+            f'{why}<p class="meta">{"".join(meta)}</p>{act}</article>')
+
+
+def proposals_page(root: str, proj: dict, plist: list[dict], st: State | None = None, flash: dict | None = None) -> str:
+    d = collect(root)
+    w = waiting(root, d)
+    ctx = _ctx(root, proj)
+    names, me = ctx["names"], ctx["me"]
+    banner = _flash_html(flash)
+    if not d["proposals"] and not d["rejected"]:
+        body = (banner + '<div class="empty"><p class="lead">Nothing waiting. Suggest a rule with '
+                f'<a href="{_u("/add", proj)}">Add a rule</a>.</p><div class="cli"><p>The same from the command line:</p>'
+                '<pre>reverie context add "Money is integer cents" --why "reason"</pre>'
+                '<p>To turn a rule you already use into a proposal:</p>'
+                '<pre>reverie context propose "Money is integer cents"</pre></div></div>')
+        return _frame(root, proj, plist, d, w, "/proposals", body, "Proposals", "Proposals")
+    on_me = [x for x in w["props"] if x["mine"]]
+    other = [x for x in w["props"] if not x["mine"]]
+    if on_me and other:
+        tally = f"{len(on_me)} waiting on you, {len(other)} waiting on others."
+    elif on_me:
+        tally = f"{len(on_me)} waiting on you."
+    elif other:
+        tally = f"Nothing waiting on you. {len(other)} waiting on others."
+    else:
+        tally = "Nothing waiting."
+    who = acting_html(me)
+    parts = [banner, who, f'<p class="tally">{tally}</p>']
+    for key, label, xs in (("you", "Waiting on you", on_me), ("others", "Waiting on others", other)):
+        if xs:
+            parts.append(f'<section class="group" aria-labelledby="h-{key}"><h2 id="h-{key}">{label}</h2>'
+                         + "".join(_prop_entry(x, ctx, st) for x in xs) + "</section>")
+    if d["rejected"]:
+        rows = ""
+        for r in d["rejected"]:
+            rows += (f'<article class="entry"><h3 class="rule">{rule_html(context.bullet_text(r["bullet"]))}</h3>'
+                     f'<p class="why">Reason: {rule_html(str(r.get("reason", "")))}</p><p class="meta">'
+                     + (f'<span>Proposed by {person_html(str(r["proposed-by"]), names, me)}</span>' if r.get("proposed-by") else "")
+                     + f'<span>Turned down by {person_html(str(r.get("rejected-by", "?")), names, me)}</span>'
+                     f'<span>{esc(r.get("rejected-on", "?"))}</span></p></article>')
+        parts.append(f'<details class="history"><summary>Turned down, {len(d["rejected"])}</summary>{rows}</details>')
+    return _frame(root, proj, plist, d, w, "/proposals", "".join(parts), "Proposals", "Proposals")
+
+
+# ---------------------------------------------------------------------------
 # writes: the CSRF token, one-shot messages, and the three actions (all through the CLI's functions)
 # ---------------------------------------------------------------------------
 
@@ -937,8 +1166,9 @@ def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
             if slug not in {x["slug"] for x in context.proposals(target)}:
                 return back(False, "Refused: that proposal is not waiting any more.")
             if path == "/do/accept":
+                rule = next((context.bullet_text(x["bullet"]) for x in context.proposals(target) if x["slug"] == slug), "")
                 doc = context.accept(target, slug)
-                return back(True, f"Accepted into {doc.name}. The proposal is gone and the rule is in force."
+                return back(True, f"Accepted into {doc.name}: “{rule}” The proposal is gone and the rule is in force."
                                 + CHECK_LATER)
             if redact.contains_secret(why):
                 return back(False, "Refused: the reason looks like it contains a secret, so nothing was "
@@ -963,6 +1193,11 @@ def render(root: str, path: str, query: dict[str, list[str]] | None = None,
            st: State | None = None) -> tuple[int, str]:
     try:
         target, proj, plist = _target(root, query)
+        want = ((query or {}).get("p") or [""])[0]
+        if want and path != "/new" and path not in ("/", "/repos") and not any(p["id"] == want for p in plist):
+            # an unknown project id is its own 404: never another project's page
+            return 404, layout(title="No such project, Reverie", proj=None, plist=plist, body=(
+                '<p class="tally">No project with that id.</p><p class="go"><a href="/">Back to all projects</a></p>'))
         if path in ("/", "/repos"):
             return 200, projects_page(root, query)
         if path == "/new":
