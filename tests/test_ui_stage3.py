@@ -609,3 +609,62 @@ def test_every_internal_link_on_every_ported_page_resolves(env, serve):
     assert seen and all(code == 200 for code in seen.values()), {h: c for h, c in seen.items() if c != 200}
     assert {re.sub(r"\?.*", "", h) for h in seen} >= {"/", "/new", "/project", "/context", "/memory", "/start", "/proposals",
                                                       "/connect", "/add", "/rule"}
+
+
+# --- an unexpected failure: nothing is promised that the code cannot guarantee ---------------------------------------
+
+BEFORE = "Nothing was saved: that did not work. Try again, or run <code>reverie status</code> in a terminal."
+DURING = ("Your change may or may not have been saved. Check Rules and Proposals before trying again. "
+          "Or run <code>reverie status</code> in a terminal.")
+
+
+def _boom(*a, **k):
+    raise RuntimeError(BOOM)
+
+
+def test_a_failure_before_anything_is_written_says_nothing_was_saved(env, serve, monkeypatch):
+    tmp_path, repo = env
+    s = serve(repo)
+    tok, pid = _form(s, "/add")
+    real = ui.add_targets
+    calls = []
+
+    def once(*a, **k):                                   # fails in the write, works when the page is drawn after the redirect
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError(BOOM)
+        return real(*a, **k)
+    monkeypatch.setattr(ui, "add_targets", once)
+    before = _tree(tmp_path)
+    page = _follow(s, _http(s, "POST", "/do/add", {"token": tok, "p": pid, "text": "Keep me", "kind": "rule", "target": "repo"}))
+    assert f'role="alert">{BEFORE}</p>' in page and ">Keep me</textarea>" in page
+    assert "SECRET-DETAIL" not in page and "The CLI still does" not in page
+    assert _tree(tmp_path) == before
+
+
+def test_a_failure_that_could_follow_a_write_says_it_may_or_may_not_have_been_saved(env, serve, monkeypatch):
+    tmp_path, repo = env
+    _as(repo, OWNER, "Lee Lead")
+    s = serve(repo)
+    tok, pid = _form(s, "/add")
+    monkeypatch.setattr(ui.context, "add", _boom)
+    page = _follow(s, _http(s, "POST", "/do/add", {"token": tok, "p": pid, "text": "Keep me", "kind": "rule", "target": "repo"}))
+    assert f'role="alert">{DURING}</p>' in page and "Nothing was saved" not in page and "nothing was changed" not in page
+    assert "SECRET-DETAIL" not in page
+    monkeypatch.undo()
+    prop = _proposal_for(repo)
+    tok, pid = _form(s, "/proposals")
+    monkeypatch.setattr(ui.context, "accept", _boom)
+    page = _follow(s, _http(s, "POST", "/do/accept", {"token": tok, "p": pid, "slug": prop}))
+    assert DURING in page and "nothing was changed" not in page and "The CLI still does" not in page
+    monkeypatch.setattr(ui.context, "reject", _boom)
+    page = _follow(s, _http(s, "POST", "/do/reject", {"token": tok, "p": pid, "slug": prop, "why": "no"}))
+    assert DURING in page and "SECRET-DETAIL" not in page
+
+
+def _proposal_for(repo):
+    _as(repo, "dev@acme.com", "Dana Dev")
+    context.add(str(repo), "A proposal", why="w")
+    slug = context.proposals(str(repo))[0]["slug"]
+    _as(repo, OWNER, "Lee Lead")
+    return slug

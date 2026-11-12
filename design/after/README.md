@@ -1,5 +1,7 @@
 # Proposals, redesigned (theme: Ink)
 
+> The live pages in `design/live/` are the reference from here on. The mockups in `design/after/` are the approved design as drawn and are not kept in sync.
+
 Static pages built by `python3 design/tools/build_after.py` from the seed in `design/before/`. Screenshots (desktop 1440 and 900 wide, light and dark) come from `node design/tools/shoot.mjs` and sit in `screenshots/`.
 
 | File | Replaces | Identity | Shows |

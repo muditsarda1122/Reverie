@@ -1144,7 +1144,7 @@ def projects_page(root: str, query=None, st: State | None = None) -> str:
     link = lambda p, cls="": f'<a{cls} href="{_u("/project", p)}">{esc(p["name"])}</a>'      # noqa: E731
     out = ['<p class="topacts"><a href="/new">Add a project</a></p>']
     if flash and not flash.get("ok", True):
-        out.append(f'<p class="err" role="alert">{esc(flash["msg"])}</p>')
+        out.append(f'<p class="err" role="alert">{_backtick_cmds(esc(flash["msg"]))}</p>')
     out.append(f'<p class="tally">{tally}</p>')
     if waits:
         out.append('<section class="group" aria-labelledby="g-wait"><h2 id="g-wait">Waiting on you</h2><ol class="items">'
@@ -1331,7 +1331,7 @@ def add_page(root: str, proj: dict, plist: list[dict], st: State | None = None, 
     names, me = ctx["names"], ctx["me"]
     flash = flash or {}
     bad_flash = bool(flash) and not flash.get("ok", True)
-    err = (f'<p class="err" id="add-error" role="alert">{esc(flash["msg"])}</p>' if bad_flash else "")
+    err = (f'<p class="err" id="add-error" role="alert">{_backtick_cmds(esc(flash["msg"]))}</p>' if bad_flash else "")
     bad = flash.get("bad", "") if bad_flash else ""
     invalid = ' aria-invalid="true" aria-describedby="add-error"'
     targets = add_targets(root)
@@ -1394,6 +1394,9 @@ class State:
 CHECK_LATER = (" It has not been checked for conflicts yet: that happens at the next session start, "
                "or now with `reverie context check`.")
 NOT_SAVED = "Nothing was saved: "
+FAILED_BEFORE_WRITE = NOT_SAVED + "that did not work. Try again, or run `reverie status` in a terminal."      # nothing had been written yet
+FAILED_DURING_WRITE = ("Your change may or may not have been saved. Check Rules and Proposals before trying again. "
+                       "Or run `reverie status` in a terminal.")                                              # a failure that could follow a write
 
 
 def _do_add(root: str, proj: dict, form: dict[str, str], back) -> str:
@@ -1407,7 +1410,11 @@ def _do_add(root: str, proj: dict, form: dict[str, str], back) -> str:
     if redact.contains_secret(text) or redact.contains_secret(why):
         return back(False, NOT_SAVED + "this looks like it contains a secret. Remove the value and try again. "
                                        "The text was cleared on purpose.", bad="text")
-    if choice not in {t["value"] for t in add_targets(root)}:
+    try:
+        offered = {t["value"] for t in add_targets(root)}
+    except Exception:
+        return back(False, FAILED_BEFORE_WRITE, bad="text", **keep)                     # only reads so far: nothing was written
+    if choice not in offered:
         return back(False, NOT_SAVED + "this project cannot add to that place. Pick another option.", bad="target", **keep)
     layer, _, scope = choice.partition("|")
     rule = kind != "guidance"
@@ -1416,7 +1423,7 @@ def _do_add(root: str, proj: dict, form: dict[str, str], back) -> str:
     except ValueError as exc:
         return back(False, NOT_SAVED + str(exc), bad="text", **keep)
     except Exception:
-        return back(False, NOT_SAVED + "that did not work. The CLI still does.", bad="text", **keep)
+        return back(False, FAILED_DURING_WRITE, bad="text", **keep)                     # context.add may have written before it failed
     names, me = known_people(root), Viewer(root)
     quoted = f"“{rule_html(text)}”"
     check = _backtick_cmds(esc(CHECK_LATER))
@@ -1467,7 +1474,7 @@ def do_write(root: str, st: State, path: str, form: dict[str, str]) -> str:
         except ValueError as exc:
             return back(False, f"Refused: {exc}")
         except Exception:
-            return back(False, "That did not work, and nothing was changed. The CLI still does.")
+            return back(False, FAILED_DURING_WRITE)
 
 
 # ---------------------------------------------------------------------------

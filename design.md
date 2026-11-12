@@ -1,5 +1,7 @@
 # Reverie web UI: design system
 
+> The live pages in `design/live/` are the reference from here on. The mockups in `design/after/` are the approved design as drawn and are not kept in sync.
+
 Settled on the Proposals screen (`design/after/proposals*.html`, committed in `704332b`). Every later screen follows this file; change it here first. The page source is `design/tools/build_after.py`; the old pages are `design/before/`.
 
 ## Constraints (from `docs/ui-inventory.md`, not negotiable)
