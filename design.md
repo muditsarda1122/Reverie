@@ -45,7 +45,7 @@ White paper, a hueless black, hairline rules, one teal. Flat: no resting shadows
 ## Content patterns
 - **Entry:** a ruled item, `padding-block` 24px, hairline below. Rule text (serif) first, then "Why: …" in sans, then one metadata line, then actions.
 - **One metadata line** under the content, items separated by spacing (never middle dots, never a side column): name, date, document name, "only under <paths>". The document name is mono; its full path (`.reverie/context/<name>`) is its `title` attribute.
-- **Names, not emails.** A person is shown by name with the email in a `title` attribute. Emails are printed only where CODEOWNERS only gives emails: "Waiting on an owner of `rules.md`: priya@…, mudit@…".
+- **Names, not emails.** A person is shown by name with the email in a `title` attribute, and "First (you)" for the viewer, everywhere including "Waiting on an owner of `rules.md`: Priya Nair, Mudit (you)" and Owners on the Rule page. The email is printed only where no name is known for it.
 - **Item-type label.** On a list of mixed items (Overview), each item opens with one small label line: "Proposal", "Conflict" or "Possibly outdated" (sans, 600, sentence case, ink). It is the only thing that names the kind.
 - **Rule text is never a link.** It stays plain serif. Each item has one explicit text link that does the navigating: "Decide" (a proposal you can decide), "View" (a proposal waiting on others), "Open rule" (a rule, a possibly-outdated one or either side of a conflict).
 - **Mark exceptions, never the normal state.** A rule that is in force carries no status; only the exceptions (Conflict, Possibly outdated, Overridden, Hidden: same as a team rule, Cut by the start limit) are marked, in ink words. Teal "in force" appears once per list page, in its summary line. Lists keep exceptions visible above any fold; only the normal rest collapses ("<n> more in force").
@@ -62,6 +62,7 @@ White paper, a hueless black, hairline rules, one teal. Flat: no resting shadows
 - **Never show an action the viewer would be refused.** Where they cannot decide, no buttons: say who can.
 - **The CLI command sits quietly next to its action**, behind "As commands" or as a small mono line; there is no footnote on every page.
 - **Command blocks size to their content** (`width: fit-content; max-width: min(65ch, 100%)`), small mono on `paper-2` with a hairline. They never outweigh the line above them.
+- **Exception: a document block.** The one block that is a document, not a command (the text agents receive on What agents are told), is mono, pre-wrap, `max-width: 80ch`, with no horizontal scroll. Command blocks keep `max-width: 65ch`.
 - **Disclosures** (`<details>`): a plain underlined summary, a small hairline caret where it opens a list. Collapsed history ("Turned down, 1") is quiet.
 - **Flash:** a plain line, no box. It quotes the rule and says "in force" in teal.
 
@@ -70,6 +71,11 @@ Team rules (documents in `.reverie/context` and the org and team folders; they h
 
 ## Copy
 Plain, short, specific, in the product's words. No marketing, no exclamation marks, no emoji. Do not invent features or numbers; list data the inventory says does not exist instead of drawing it.
+
+## In force (one definition, used by Rules, What agents are told and Overview)
+- **In force means told to agents:** the rule is in the text an agent receives at session start. A rule that applies but was cut by the start limit is not in force; it is "cut" and says why ("because agents are told at most 30 remembered rules for this repo"). Conflicts and possibly outdated rules are told as warnings, not as rules, so they are not in force either.
+- Rules: "37 rules in force, 6 more cut by the start limit." What agents are told: "37 rules are told to agents, plus an index of 5 remembered decisions and findings. 6 more rules apply but were cut, because ..." Both pages give the same number for the same seed; teal marks the words "in force" only.
+- The character note uses the configured limit: "3,523 of 8,000 characters."
 
 ## Waiting on you (one definition, used by the Overview tab count, Overview and Proposals)
 - A proposal you can decide (you are an owner of its document, or no CODEOWNERS entry covers it).

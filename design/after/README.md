@@ -58,8 +58,23 @@ Static pages built by `python3 design/tools/build_after.py` from the seed in `de
 - **Not available from `context.show`, so not drawn (a field with no value is omitted from the page):** which file a possibly-outdated rule's commit changed (`check_stale` stores commit, message, reason and the document only); for a remembered item, anchors, grounding commit, last verified and usage when the item has none (the seed's rule has none). `reverie show` for a remembered item prints files, symbols, source, author, level, evidence and a freshness line, but not `created_at`, `last_verified`, the usage tally or `challenged`; the page reads them from the item row (`meta.usage`, `meta.challenged`).
 - Ids for bullets in `rules.md` files are a hash of the text (see Rules); there is no `reverie show` for them today.
 
+## What agents are told (`/start?p=<project>`)
+| File | Replaces | Shows |
+|---|---|---|
+| `start.html` | `design/before/start.html` | The seed: "8 rules are told to agents, plus an index of 5 remembered decisions and findings.", the one conflict told as ask-first, the verbatim text |
+| `start-capped.html` | `start-capped.html` | "37 rules are told to agents, plus an index of 5 ... 6 more rules apply but were cut, because agents are told at most 30 remembered rules for this repo.", the six cut rules, the limits line, the text |
+| `empty-start.html` | `empty-start.html` | notifications-service: "1 rule in force is told to agents." and the 113-character text |
+
+- The text in the block is copied from the old captures, which are the output of `deliver.startup_text` itself. The page does not rebuild it. **`ui.py` already calls that function** (`collect()["start"]`, used by `start()` and `rules_in_force`), so the port keeps calling it.
+- Verbatim text contains the words "scope" and "scopes"; it is quoted as agents receive it, so the plain-words rule does not apply to it.
+- **Port: the start-text function must return which limit cut each rule.** Today it does not: `startup_text` and `rules_in_force` report no reason. `_capped` adds the same "(+N more ...)" line whether it stopped at the line cap (30 remembered rules, 15 across-all-repos rules, 8 outdated ones) or at its character budget, and a whole-text truncation adds a "(…truncated" line. The port needs `rules_in_force` (or `startup_text`) to return, per cut rule, the limit that cut it (the 30-line remembered-rules cap, the 15-line cap, the 8-line outdated cap or the character cap); the capped page gives the reason that applied in the seed. The index count ("an index of 5 ...") should come from the same function too; the mock counts the index lines in the text. The character note prints the configured limit (`deliver.startup_cap()`), not 8000.
+- **No command changes the limits.** The 15/30/8 line caps are constants in `deliver.py`; the 8000-character cap is `deliver.startup_chars` in `config.yaml` or `REVERIE_STARTUP_CHARS`, with no CLI command. The page says nothing about changing them. It names only `reverie rules list`, which the old page also named.
+- The cut rules' texts come from the page's rule data; in the port they are the rules counted by `rules_in_force` whose text is not in the block. The ids of the six cut rules are the made-up ones noted under Rules.
+- The capped and standard captures came from two seed runs, so the commit hashes in their verbatim text differ from each other and from the Overview pages.
+- Dropped from the old page: the "exactly what an agent is handed ... is not counted as a delivery" paragraph (read-only is implied; the page says whose agents are told) and the combined "rules in force · cut" hint (now the summary line).
+
 ## Rules this screen follows (from the review)
-- One quiet metadata line under the why, at every width: name, date, document name, "only under <paths>". The full path (`.reverie/context/<name>`) is the document's title attribute; the proposer's email is the name's title attribute. Emails are printed only in "Waiting on an owner of ...", because CODEOWNERS only gives emails.
+- One quiet metadata line under the why, at every width: name, date, document name, "only under <paths>". The full path (`.reverie/context/<name>`) is the document's title attribute; the proposer's email is the name's title attribute. "Waiting on an owner of ..." also shows names (email in the title, "you" for the viewer); an email is printed only when no name is known for it. CODEOWNERS gives only emails, so the port must look names up.
 - No repo path on this page (the switcher names the repo).
 - Tab counts mean "waiting on you" and vanish at zero: Overview (conflicts + possibly outdated rules + proposals you can decide) and Proposals (the proposals you can decide). No counts on Rules or Memory.
 - When nothing waits on you the "Waiting on you" section is omitted; the summary line says so.

@@ -271,6 +271,7 @@ code { font-family: var(--font-mono); font-size: 0.88em; overflow-wrap: anywhere
 .fold[open] > summary::before { transform: translateY(-0.2em) rotate(45deg); }
 .fold > summary + .items { border-top: var(--rule-hair) solid var(--color-rule); margin-top: var(--space-xs); }
 .note { margin-top: var(--space-xs); max-width: 65ch; color: var(--color-ink-2); font-size: var(--text-sm); }
+.doc { width: 100%; max-width: 80ch; margin: var(--space-md) 0 0; padding: var(--space-md); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.55; color: var(--color-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .back { margin-bottom: var(--space-lg); font-size: var(--text-sm); }
 .back a { font-weight: 400; color: var(--color-muted); }
 .back a:hover { color: var(--color-ink); }
@@ -385,7 +386,7 @@ def entry(p: dict, me: str, pid: str) -> str:
         act = f'<div class="act">{act}</div>'
     else:
         act = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(p["doc"])}</code>: '
-               f'{esc(", ".join(owners))}.</p>')
+               f'{people(owners, me)}.</p>')
     return (f'<article class="entry" id="{p["id"]}"><h3 class="rule">{rule_html(p["text"])}</h3>{why}'
             f'<p class="meta">{"".join(meta)}</p>{act}</article>')
 
@@ -462,7 +463,7 @@ def prop_item(p: dict, me: str, pid: str) -> str:
         tail = f'<p class="go"><a href="{href}">Decide</a></p>'
     else:
         tail = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(p["doc"])}</code>: '
-                f'{esc(", ".join(DOCS[p["doc"]]))}.</p><p class="go"><a href="{href}">View</a></p>')
+                f'{people(DOCS[p["doc"]], me)}.</p><p class="go"><a href="{href}">View</a></p>')
     return (f'<li><article class="entry"><p class="label">Proposal</p><h3 class="rule">{rule_html(p["text"])}</h3>'
             f'{why}<p class="meta">{"".join(meta)}</p>{tail}</article></li>')
 
@@ -474,7 +475,7 @@ def conflict_item(c: dict, me: str, pid: str) -> str:
         f'<a href="/rule?p={pid}&amp;id={r["id"]}">Open rule</a></p></div>' for r in c["rules"])
     if c["owners"]:
         who = ("You own one of the documents, so you can settle it." if conflict_mine(c, me)
-               else f'Waiting on an owner: {esc(", ".join(c["owners"]))}.')
+               else f'Waiting on an owner: {people(c["owners"], me)}.')
     else:
         who = "No CODEOWNERS entry covers either document, so anyone can settle it."
     return (f'<li><article class="entry"><p class="label">Conflict</p>{sides}'
@@ -491,7 +492,7 @@ def outdated_item(o: dict, me: str, pid: str) -> str:
                 f'<code>.reverie/context/{esc(o["doc"])}</code>.</p>')
     else:
         tail = (f'<p class="waiting-on">Waiting on an owner of <code>{esc(o["doc"])}</code>: '
-                f'{esc(", ".join(DOCS[o["doc"]]))}.</p>')
+                f'{people(DOCS[o["doc"]], me)}.</p>')
     return (f'<li><article class="entry"><p class="label">Possibly outdated</p><h3 class="rule">{rule_html(o["text"])}</h3>'
             f'<p class="why">A later change to the code may contradict it: {esc(o["reason"])}.</p>'
             f'<p class="meta">{"".join(meta)}</p>{tail}'
@@ -515,7 +516,7 @@ def overview_body(me: str, waiting: list[dict], conflicts: list[dict], outdated:
         tally = "Nothing needs you."
     parts = [f'<p class="who">Acting as {name(me)}, from your git identity.</p>', f'<p class="tally">{tally}</p>']
     if cut:
-        parts.append(f'<p class="cut">{cut} {"rule is" if cut == 1 else "rules are"} cut by the start limit. '
+        parts.append(f'<p class="cut">{cut} more {"rule applies but was" if cut == 1 else "rules apply but were"} cut by the start limit. '
                      f'<a href="/start?p={pid}">See what agents are told.</a></p>')
     if you:
         parts.append('<section class="group" aria-labelledby="h-you"><h2 id="h-you">Waiting on you</h2>'
@@ -541,6 +542,8 @@ def R(id, text, group, sub="", doc="rules.md", path="", paths="", locked=False, 
                 status=status, **more)
 
 
+CUT_REASON = "agents are told at most 30 remembered rules for this repo"
+STARTUP_LIMIT = 8000          # deliver.startup_cap() default; the page prints the configured value
 RETRY_A = "All outbound HTTP calls retry up to 3 times with exponential backoff"
 RETRY_B = "Never retry the card processor's `charge` endpoint; use the idempotency key and poll status instead"
 MONEY = ("Money is stored and passed as integer minor units (cents) with an ISO 4217 currency code; never use floats, "
@@ -583,7 +586,7 @@ def seed_rules(extra: int = 0, cut: int = 0, ids: dict | None = None) -> list[di
     for n in range(1, extra + 1):
         t = f"Seed rule {n:02d}: module {n} must not run code at import time."
         rs.append(R(ids.get(t) or hashlib.sha1(t.encode()).hexdigest()[:8], t, "remembered", doc="", path="",
-                    source="You said it", status="cut" if n > extra - cut else "force"))
+                    source="You said it", status="cut" if n > extra - cut else "force", cut_reason=CUT_REASON))
     return rs
 
 
@@ -623,7 +626,7 @@ def rule_li(r: dict, pid: str) -> str:
                  'is removed.</p>')
     else:
         label = '<span class="st">Cut by the start limit</span>'
-        extra = '<p class="note">It applies here, but did not fit in what agents are told.</p>'
+        extra = f'<p class="note">It applies here but was cut, because {esc(r.get("cut_reason", "it did not fit in what agents are told"))}.</p>'
     meta = [label] if label else []
     if r["doc"]:
         meta.append(f'<span title="{esc(r["path"])}"><code>{esc(r["doc"])}</code></span>')
@@ -658,7 +661,7 @@ def rules_body(rs: list[dict], pid: str, note: str = "") -> str:
     if force == 0:
         tally = "No rules <span class=\"in\">in force</span>"
     if cut:
-        tally += f", {cut} cut by the start limit. <a href=\"/start?p={pid}\">See what agents are told.</a>"
+        tally += f", {cut} more cut by the start limit. <a href=\"/start?p={pid}\">See what agents are told.</a>"
     else:
         tally += "."
     out = [note, f'<p class="tally">{tally}</p>']
@@ -787,6 +790,53 @@ def remembered_html(m: dict, heading: str) -> str:
     return body + "</section>"
 
 
+# ---- What agents are told ------------------------------------------------------------------------------------
+def start_text(fname: str) -> str:
+    """The text exactly as the start function produced it in the seed capture (design/before/<fname>)."""
+    page = (OUT.parent / "before" / fname).read_text(encoding="utf-8")
+    return html.unescape(re.search(r"<pre id=start>(.*?)</pre>", page, re.S).group(1))
+
+
+def index_count(text: str) -> int:
+    """Lines of the memory index in the start text (the lines after its header)."""
+    m = re.search(r"Reverie memory index\.[^\n]*\n((?:- \[[^\n]*\n?)+)", text)
+    return len(m.group(1).strip().splitlines()) if m else 0
+
+
+def start_body(rs: list[dict], text: str, pid: str, asks: list[dict] = ()) -> str:
+    n = sum(1 for r in rs if r["status"] == "force")
+    cut = [r for r in rs if r["status"] == "cut"]
+    tally = f"{n} {'rule is' if n == 1 else 'rules are'} told to agents"
+    idx = index_count(text)
+    if idx:
+        tally += f", plus an index of {idx} remembered decisions and findings"
+    tally += "."
+    if cut:
+        tally += (f" {len(cut)} more {'rule applies but was' if len(cut) == 1 else 'rules apply but were'} cut, "
+                  f"because {cut[0]['cut_reason']}.")
+    out = [f'<p class="tally">{tally}</p>',
+           '<p class="who">This is what your agents are told. Your rules are only told to your own agents.</p>']
+    if cut:
+        li = "".join(f'<li class="entry"><p class="rule">{rule_html(r["text"])}</p><p class="meta"><span>{esc(r["source"])}</span>'
+                     f'<a class="open" href="/rule?p={pid}&amp;id={r["id"]}">Open rule</a></p></li>' for r in cut)
+        out.append('<section class="group" aria-labelledby="g-cut"><h2 id="g-cut">Cut by the start limit</h2>'
+                   f'<ol class="items">{li}</ol>'
+                   '<p class="gnote">The start text lists at most 30 remembered rules for this repo, 15 of your rules that apply in '
+                   f'every repo and 8 possibly outdated ones, and stops at {STARTUP_LIMIT:,} characters. '
+                   '<code>reverie rules list</code> shows every rule that applies.</p></section>')
+    if asks:
+        li = "".join(f'<li class="entry"><p><a href="/rule?p={pid}&amp;id={c["rules"][0]["id"]}"><code>{esc(c["key"])}</code></a></p>'
+                     f'<p class="why">{esc(c["rules"][0]["folder"])} and {esc(c["rules"][1]["folder"])} disagree. '
+                     'Agents are told to ask before acting on either.</p></li>' for c in asks)
+        out.append(f'<section class="group" aria-labelledby="g-ask"><h2 id="g-ask">Agents are told to ask first</h2><ol class="items">{li}</ol></section>')
+    if text:
+        out.append('<section class="group" aria-labelledby="g-text"><h2 id="g-text">What agents read</h2>'
+                   f'<pre class="doc" id="start">{esc(text)}</pre><p class="gnote">{len(text):,} of {STARTUP_LIMIT:,} characters.</p></section>')
+    else:
+        out.append('<p class="why">Nothing is told to agents here. They start with a clean slate.</p>')
+    return "".join(out)
+
+
 def write(fname: str, html_text: str) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / fname).write_text(html_text, encoding="utf-8")
@@ -849,6 +899,18 @@ def main() -> None:
                                      active="/context", h1="Rules", counts=counts_for("mudit", WAITING), desc=rdesc,
                                      body=rules_body(st, API, tn)))
 
+
+    # What agents are told: the text is the start function's own output from the seed captures (design/before/start*.html)
+    sdesc = "Exactly what an agent in this repo reads when a session starts."
+    sp = dict(repo="payments-api", pid=API, active="/start", h1="What agents are told", desc=sdesc)
+    write("start.html", shell(title="What agents are told in payments-api, Reverie", counts=counts_for("mudit", WAITING),
+                              body=start_body(seed_rules(), start_text("start.html"), API, asks=CONFLICTS), **sp))
+    cap_rules = seed_rules(35, 6, ids)
+    write("start-capped.html", shell(title="What agents are told in payments-api, Reverie", counts=counts_for("mudit", WAITING),
+                                     body=start_body(cap_rules, start_text("start-capped.html"), API, CONFLICTS), **sp))
+    write("empty-start.html", shell(title="What agents are told in notifications-service, Reverie", pid=NOTIF, repo="notifications-service",
+                                    active="/start", h1="What agents are told", counts={}, desc=sdesc,
+                                    body=start_body([R(bullet_id(RG), RG, "your", path="~/.reverie/rules.md")], start_text("empty-start.html"), NOTIF)))
     # Rule page: one page per case (read-only; commands shown quietly)
     ldesc = "One rule: where it comes from, its status and what to do about it."
     pg = dict(pid=API, repo="payments-api", h1=None, counts=counts_for("mudit", WAITING), desc=ldesc)
@@ -859,7 +921,7 @@ def main() -> None:
     write("rule-team.html", shell(title="Rule 59cf39933e, Reverie", active="/context", body=rule_body(ledger, API), **pg))
     ra = dict(id="e3d2757f37", kind="team", layer="team", folder="orgdocs/platform", section="Rules", owners=[],
               path="orgdocs/platform/rules.md", text=RETRY_A, status="Conflict",
-              conflict=dict(key="http-retries", reason="Both come from team folders at the same level, so neither one wins.", owners=[],
+              conflict=dict(key="http-retries", reason="both come from team folders at the same level, so neither one wins.", owners=[],
                             other=dict(id="887e6b40e1", text=RETRY_B, **{"from": "Team folder orgdocs/payments"}, doc="rules.md",
                                        path="orgdocs/payments/rules.md")))
     write("rule-conflict.html", shell(title="Rule e3d2757f37, Reverie", active="/context", body=rule_body(ra, API), **pg))
@@ -875,13 +937,13 @@ def main() -> None:
                   path=".reverie/context/security.md", paths="app/webhooks/**")))
     write("rule-overridden.html", shell(title="Rule aa00000004 (layout test), Reverie", active="/context", body=rule_body(rv, API, inv), **pg))
     mem = dict(id="932ff77c", text=MIGR, said="You said it", date="2026-11-12")
-    write("rule-remembered.html", shell(title="Rule 932ff77c, Reverie", active="/context", body=rule_body(dict(id=mem["id"], text=MIGR, _html=remembered_html(mem, "Remembered rule")), API), **pg))
+    write("rule-remembered.html", shell(title="Rule 932ff77c, Reverie", active="/context", body=rule_body(dict(id=mem["id"], text=MIGR, _html=remembered_html(mem, "Remembered rule")), API), **{**pg, "desc": "One remembered rule: who said it, when, and how agents used it."}))
     ch = dict(id="23e2645b", text="Refunds over 10,000 INR need manager approval in the admin tool.", said="An agent inferred it",
               evidence="approval gate in `app/refunds/policy.py`", date="2026-11-12", files=["app/refunds/policy.py"],
               usage="Used 3 times, contradicted twice.", challenged=True)
     write("rule-remembered-challenged.html", shell(title="Remembered decision 23e2645b, Reverie", active="/memory", body=rule_body(
         dict(id=ch["id"], text=ch["text"], status="Challenged", home=("Memory", "/memory"),
-             _html=remembered_html(ch, "Remembered decision")), API), **pg))
+             _html=remembered_html(ch, "Remembered decision")), API), **{**pg, "desc": "One remembered decision: who said it, what it is anchored to and how agents used it."}))
     # extra 1: the page right after Mudit accepts "Prefer small PRs" (the one place the teal appears)
     accepted = next(p for p in WAITING if p["slug"].startswith("prefer-small-prs"))
     after = [p for p in WAITING if p is not accepted]
