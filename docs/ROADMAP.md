@@ -62,6 +62,30 @@ and asks when ambiguous** (1911bd0).
 
 ## Next, in order
 
+### Next release (0.3.1): clubbed fixes, one tag (decided 2026-11-17)
+
+No tag per fix. Collect these, re-run the affected cells, then cut one release. Docs-only merges
+(benchmark results, roadmap) do not trigger a release: only a `v*` tag publishes to PyPI.
+
+1. **Ban-lift fix (the one failed promise).** A rule whose reason goes away ("we moved off SQLite,
+   STOR-5150 is gone") must stop being delivered. Run 5c: ban held 3/3, lift worked 0/3 on 0.3.0, 1/3 with
+   the partial fix on `fix/changed-circumstances-lift-rule` (environment/external_context statements now reach
+   the replace judge). Why it still fails: the stored rule text drops its reason, so the lift statement sits
+   below `replace_min_sim` of the rule and the judge never sees the pair. Options, in order of preference:
+   (a) keep the reason on the rule (a `why` field, delivered with it) and match the lift statement against the
+   reason; (b) let a lift statement that shares an identifier (ticket id, symbol, path) with an active item
+   reach the judge regardless of similarity; (c) also show the judge the other items extracted from the same
+   exchange. Done when: run 5c lift is at least 5/6 across two repeats with the released build, ban-only stays
+   3/3, and a unit test covers the stored-reason case.
+2. **Explicit "revoked, replaced by Y" line** in the delivered start block for a superseded item (promised to
+   a reader; research they cited: explicit revocation is respected far more than an implied one). Not built.
+3. **Windows path keys.** Git returns `D:/a/...`, Windows returns `D:\a\...`: the same repo can get two keys
+   (probable cause of the "undecided repo" test failures). 68 of 1,443 tests fail on Windows in CI; fix the
+   keying first, then the test assumptions. Until then Windows stays "experimental" in the README.
+4. **Shared memory across several agents, rule reversed later** (a reader's case): not tested. Needs a
+   two-agent setup; do not claim it before it runs.
+5. **Install on a machine without git** (Fedora image had none): confirm Reverie degrades with a clear message.
+
 ### P0: close the capture gap (DONE except two items waiting on the user / quota)
 1. **Spike: hooks on Codex, Cursor, opencode.** DONE, table in
    `docs/SUPPORTED_HARNESSES.md`. opencode: yes (plugin, no trust step).
