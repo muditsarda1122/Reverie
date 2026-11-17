@@ -618,7 +618,18 @@ def _version() -> str:
         return "unknown (not installed as a package)"
 
 
+def _utf8_streams() -> None:
+    """Reverie prints check marks and dashes; a Windows console in a legacy code page (cp1252) would
+    crash on them. Write UTF-8 and never fail on a character the terminal cannot show."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")    # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_streams()
     argv = list(sys.argv[1:] if argv is None else argv)
     argv = _extract_client(argv)
     if argv is None:
