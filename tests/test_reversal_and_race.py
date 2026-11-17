@@ -113,6 +113,26 @@ def test_a_judge_that_says_none_or_fails_replaces_nothing(env):
     assert res.superseded == [] and items.get(brain._conn, brain2_old["id"])["status"] == "active"
 
 
+def test_a_stated_change_of_circumstances_lifts_the_rule_written_because_of_it(env):
+    """The run-5 failure: "we moved off SQLite, STOR-5150 is gone" is stored as an environment
+    fact, and the judge never ran for that kind, so the no-threads rule kept being delivered."""
+    brain, repo = env
+    ban = "Never use threads anywhere in this repo: the SQLite store deadlocks (ticket STOR-5150)."
+    old = add(brain, repo, ban, emb=FakeEmbed().encode_one(ban).tobytes())
+    lifted = {"kind": "environment", "source": "user", "anchor": "repo",
+              "text": "The store moved off SQLite to Postgres, so the deadlock in STOR-5150 no longer applies.",
+              "quote": "we have moved off SQLite completely"}
+    global PROMPT
+    saved, PROMPT = PROMPT, "FYI, we have moved off SQLite completely; the deadlock in STOR-5150 is gone."
+    try:
+        res = run(brain, repo, [lifted], judge_says("1"))
+    finally:
+        PROMPT = saved
+    assert res.superseded == [old] and items.get(brain._conn, old)["status"] == "superseded"
+    assert old[:8] not in deliver.startup_text(str(repo))
+    assert items.get(brain._conn, res.stored[0])["meta"]["superseded_ids"] == [old]   # undo can bring it back
+
+
 def test_only_user_said_reversible_kinds_can_supersede(env):
     brain, repo = env
     old = _old(brain, repo)

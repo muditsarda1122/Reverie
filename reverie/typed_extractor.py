@@ -43,6 +43,10 @@ _REPO_BOUND = re.compile(r"\b(this|the) (codebase|repo|repository|project|sdk|se
 _USER_WIDE_KINDS = ("preference", "rule")
 #: kinds a user can reverse ("forget what I said about X"); others are facts
 REVERSIBLE_KINDS = ("rule", "decision", "preference", "rejected_approach")
+#: What a user's statement may be, to retire an older item. "We moved off SQLite, the deadlock is
+#: gone" is stored as an environment/external_context fact, and it lifts the rule that was
+#: written because of it; the judge below decides (it fails safe).
+RETIRING_KINDS = REVERSIBLE_KINDS + ("environment", "external_context")
 
 
 class TypedExtractionError(RuntimeError):
@@ -283,7 +287,7 @@ def extract_and_store_items(
             continue
         replaced: list[str] = []
         if cfg.dedupe.replace and cand["source"] == "user_said" \
-                and cand["kind"] in REVERSIBLE_KINDS:
+                and cand["kind"] in RETIRING_KINDS:
             texts = {e[0]: e[1] for e in existing}
             near = [(i, texts[i], sim) for i, sim in
                     dedupe.nearest(cand["text"], vec, existing, int(cfg.dedupe.neighbors) + 2)
