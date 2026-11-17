@@ -25,6 +25,7 @@ htmlcov/
 runs/
 *.db
 *.sqlite
+!tests/fixtures/*.sqlite
 *.sqlite3
 *.log
 

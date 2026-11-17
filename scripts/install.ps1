@@ -12,7 +12,10 @@ $src = if ($env:REVERIE_SRC) { $env:REVERIE_SRC } else { "git+https://github.com
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   Write-Host "Installing uv (a fast Python installer) for your user..."
   Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
-  $env:Path = "$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$env:Path"
+  # uv's installer puts uv in the account's real profile and edits the saved PATH, not this session's.
+  $real = [Environment]::GetFolderPath("UserProfile")
+  $saved = [Environment]::GetEnvironmentVariable("Path", "User")
+  $env:Path = "$real\.local\bin;$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$saved;$env:Path"
   if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw "uv was installed but is not on PATH; open a new terminal and run this again" }
 }
 if ($src -like "git+*" -and -not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git is required to install from GitHub" }
