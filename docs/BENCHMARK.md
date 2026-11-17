@@ -396,3 +396,28 @@ preference. Measured with the real extractor, 5 repeats per cell, in my tests, o
   rejects a tool-sourced rule was not what held; it is covered by unit tests, not by this run.
 - Limits: Claude Code's live capture only; other harnesses and imported transcripts pass no tool
   results. One scenario, not a measure of how often real tool output yields good items.
+
+
+## Results, run 4: the released build, corrected in plain language (2026-11-17; requests, claude)
+
+What was tested: one individual, the build people install from PyPI (`reverie-mem` 0.3.0, ONNX embeddings),
+on a repo never used before (psf/requests, fresh clone per cell, own `REVERIE_HOME`, the real `~/.reverie`
+untouched, real extraction on). Session 1: a task, then a plain-language correction in the same session
+("that is not how we write helpers in this repo ..."). Sessions 2-5: four new tasks in brand-new sessions,
+conventions never restated. Five conventions (name prefix, keyword-only parameters, error-message prefix,
+no print, docstring last line), scored by an AST check written and validated against a compliant and a
+violating file before any agent ran. Reverie on vs off, 3 repeats each, claude only, 30 agent runs.
+
+| | Reverie on | Reverie off |
+|---|---|---|
+| task 1 before the correction | 3.00 violations (0/3 clean) | 3.00 (0/3 clean) |
+| task 1 after the correction | 0.00 (3/3 clean) | 0.00 (3/3 clean) |
+| tasks 2-5, new sessions (violations per task, max 5) | **0.00** (12/12 clean) | **1.75** (4/12 clean) |
+| cost per task, tasks 2-5 | $0.104 | $0.094 |
+| rules it extracted from the correction | 5 of 5 rules in 3 of 3 cells (a sixth, inferred item in 2 cells) | n/a |
+
+Read with these limits: one repo, one model, 3 repeats, tiny single-function tasks, and a correction that
+states five rules at once (explicit, not a hint). The off arm had task 1's corrected file in the repo as an
+example for later tasks, which helps it, so the gap is, if anything, understated; it is also why 4 of 12 off
+tasks were clean. Extraction was done by the configured provider (claude-haiku-5-5 via OpenCode Zen). No cell
+was excluded.
