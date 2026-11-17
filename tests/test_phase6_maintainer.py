@@ -475,3 +475,19 @@ class TestServerStartupCheck:
         finally:
             release.set()
             server.stop_maintenance()
+
+
+class TestClusteringExtraIsOptional:
+    def test_missing_cluster_extra_skips_the_task_and_keeps_the_baseline_unset(self, brain, config):
+        """scipy/hdbscan are the optional `reverie[cluster]` extra: without them clustering is
+        skipped (not an error) and not stamped as examined, so it runs once they are installed."""
+        insert_ecu(brain)
+
+        def no_scipy(*args, **kwargs):
+            raise ImportError("No module named 'scipy'")
+
+        with patch("reverie.clustering.run_clustering", no_scipy):
+            res = maintainer.task_clustering(brain, config)
+        assert res.details["skipped"] == "cluster_extra_not_installed"
+        assert "reverie[cluster]" in res.details["hint"]
+        assert brain.get_maintenance_state(maintainer.STATE_CLUSTERING_ECU_COUNT) is None

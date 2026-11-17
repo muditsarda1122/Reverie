@@ -29,8 +29,9 @@ the configured provider's key is set. `REVERIE_HOME` redirects the brain
 directory to a temp path for isolation. The tests import the installed
 package — the editable install above is required.
 
-Run `pytest` with the virtualenv's Python (`.venv/bin/python -m pytest`), not a system Python: without `sentence-transformers` the embedding tests fail. CI installs the same way, so it matches. The first `pytest` run needs the embedding model cached, because the tests
-run offline: run the product once, or download `all-MiniLM-L6-v2`.
+Run `pytest` with the virtualenv's Python (`.venv/bin/python -m pytest`), not a system Python: without the dev dependencies the tests fail. CI installs the same way, so it matches. The first `pytest` run needs the embedding model on disk, because the tests
+run offline: run `reverie install` once, or `python -c "from reverie.embeddings import ensure_model; ensure_model(print)"`
+(about 90 MB, kept in `~/.cache/reverie/models`; `REVERIE_MODEL_DIR` moves it).
 
 Run all three before opening a pull request; CI runs them on Linux and macOS.
 

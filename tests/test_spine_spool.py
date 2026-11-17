@@ -156,11 +156,12 @@ def test_install_registers_prompt_and_answer_spool_hooks(tmp_path):
     home.mkdir()
     settings = _install_claude(home)
     ups = [h for g in settings["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
-    assert len(ups) == 1 and "shim" in json.dumps(ups[0]) and \
-        ups[0].get("async") is not True
+    # the hook is the console script when one sits next to the interpreter, else `python -m ...shim`
+    runs_shim = lambda h: "shim" in json.dumps(h) or "reverie-claude-hook" in json.dumps(h)  # noqa: E731
+    assert len(ups) == 1 and runs_shim(ups[0]) and ups[0].get("async") is not True
     stop = [h for g in settings["hooks"]["Stop"] for h in g["hooks"]]
     assert any("capture-turn" in json.dumps(h) for h in stop)
-    assert any("shim" in json.dumps(h) for h in stop)
+    assert any(runs_shim(h) for h in stop)
     pre = settings["hooks"]["PreToolUse"]
     assert pre[0]["matcher"] == "Edit|Write|MultiEdit|NotebookEdit"
     assert "pretool" in json.dumps(pre[0]["hooks"][0])

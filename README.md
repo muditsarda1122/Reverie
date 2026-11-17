@@ -12,22 +12,29 @@ Reverie is engineering memory for coding agents. It works across Claude Code, Co
 
 ## Install
 
-You need Python 3.12 and git. Run these commands from a clean machine:
+One command (macOS and Linux; it needs `git` and `curl`, nothing else, because it brings its own Python):
 
 ```bash
-git clone --branch feat/continuity-spine https://github.com/muditsarda1122/Reverie.git
+curl -LsSf https://raw.githubusercontent.com/muditsarda1122/Reverie/feat/continuity-spine/scripts/install.sh | sh
+```
+
+It installs [`uv`](https://docs.astral.sh/uv/) for your user if you do not have it, installs Reverie as an isolated tool, and runs `reverie install`. In our test on a MacBook it took about a minute, most of it downloading the ~90 MB embedding model once; the install is about 170 MB. [Read the script first](scripts/install.sh) if you like: it is short and does nothing else.
+
+Then set **one** LLM API key in your environment (Anthropic, OpenAI, Gemini, OpenRouter or OpenCode Zen; Reverie uses the one it finds, see [Model providers](#model-providers)) and restart your agent. That is all. The key is what Reverie uses for its own extraction calls, so it works the same under every agent.
+
+Prefer to do it by hand? With Python 3.12 and git:
+
+```bash
+git clone --depth 1 --branch feat/continuity-spine https://github.com/muditsarda1122/Reverie.git
 cd Reverie
-python3.12 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python3.12 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -e .
 reverie install
 ```
 
-The first install downloads PyTorch and a sentence-embedding model. Expect several gigabytes and a few minutes.
-
 `reverie install` detects which agents you have, wires the MCP server into each one, writes the per-agent instructions and the `/reverie-review` and `/reverie-status` commands, creates `~/.reverie`, and prints a summary of exactly what it wrote. It then starts the server and checks that it answers, and it reports success or failure for each agent. Restart each agent afterwards.
 
-The installer writes absolute paths into each agent's config, so agents can find the server outside your virtualenv. If you move the `Reverie` folder, run `reverie install` again.
+The installer writes absolute paths into each agent's config, so agents can find the server outside your virtualenv. If you move the `Reverie` folder (manual install), run `reverie install` again.
 
 The clone command above installs the current development branch (hooks, transcript import, resume, provenance, staleness, usage loop). The older `v0.2.0` release does not have these. Once the branch is merged, this command will point at `main`.
 

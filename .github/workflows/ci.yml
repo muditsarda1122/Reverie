@@ -18,9 +18,8 @@ jobs:
       - run: mypy
 
   test:
-    # One supported Python version for now: the pinned heavy deps
-    # (torch==2.2.2, numpy<2, scikit-learn<1.5) ship wheels for 3.12 only,
-    # matching requires-python = ">=3.12" and the mypy/ruff target py312.
+    # One supported Python version for now (requires-python = ">=3.12", and the
+    # mypy/ruff target is py312).
     strategy:
       fail-fast: false
       matrix:
@@ -35,9 +34,8 @@ jobs:
       - name: Cache embedding model
         uses: actions/cache@v4
         with:
-          path: ~/.cache/huggingface
-          key: hf-minilm-l6-v2-${{ runner.os }}-v1
+          path: ~/.cache/reverie
+          key: reverie-minilm-l6-v2-onnx-${{ runner.os }}-v1
       - name: Download embedding model
-        run: |
-          python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+        run: python -c "from reverie.embeddings import ensure_model; ensure_model(print)"
       - run: pytest tests/ -q

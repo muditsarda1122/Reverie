@@ -291,6 +291,28 @@ def _export_hint(entry: providers.Provider) -> str:
     return f"export {entry.api_key_env}='your-key'{url}"
 
 
+def _prepare_embedding_model(dry_run: bool, print_fn) -> bool:
+    """Download the embedding model now (about 90 MB, once, kept in the machine cache), so the
+    first session does not pay for it. A failure is a warning, never an install failure: the same
+    download is retried the first time Reverie needs it."""
+    from . import embeddings
+    print_fn("\nPreparing the embedding model...")
+    if embeddings.model_ready():
+        print_fn("  ✓ already downloaded")
+        return True
+    if dry_run:
+        print_fn("  [dry-run] would download the embedding model (about 90 MB, once)")
+        return True
+    try:
+        embeddings.ensure_model(lambda m: print_fn(f"  {m}"))
+    except embeddings.EmbeddingError as exc:
+        print_fn(f"  ! {exc}")
+        print_fn("    The rest of the install is unaffected; Reverie retries when it first needs it.")
+        return False
+    print_fn("  ✓ downloaded and checked")
+    return True
+
+
 def _provider_guidance() -> str:
     """Provider-agnostic key guidance (non-interactive no-key output)."""
     lines = [
@@ -302,8 +324,8 @@ def _provider_guidance() -> str:
         entry = providers.REGISTRY[key]
         if entry.api_key_env and entry.key_required:
             lines.append(f"  {_export_hint(entry)}")
-    lines.append("  (or run a local model via Ollama — see the Ollama "
-                 "section below when the binary is absent)")
+    lines.append("  (a local model also works: `reverie install --provider ollama`, "
+                 "but extraction quality depends on the model)")
     return "\n".join(lines)
 
 
@@ -1258,12 +1280,15 @@ def _install_rest(home, reverie_home, selected, detected, existing_llm, config_e
     # -- one-time data disclosure ---------------------------------------------
     _show_disclosure(reverie_home, dry_run, print_fn)
 
+    _prepare_embedding_model(dry_run, print_fn)
+
     # -- LLM provider (§28.8 + feat/providers) -----------------------------
     print_fn("\nChecking LLM provider...")
     ollama_path = which(OLLAMA_BINARY)
 
     chosen: providers.Provider | None = None
     verify_existing = False
+    can_ask = input_fn is not input or sys.stdin.isatty()     # a person is there to answer
     if provider is not None:
         entry = providers.get(provider)
         if entry is None or provider == "custom":
@@ -1292,20 +1317,17 @@ def _install_rest(home, reverie_home, selected, detected, existing_llm, config_e
             entry = providers.REGISTRY[key]
             print_fn(f"  ✓ {providers.key_env_for(entry, environ)} detected "
                      f"({entry.name})")
-        if len(detected_keys) == 1:
-            try:
-                answer = input_fn(
-                    f"\nConfigure Reverie for "
-                    f"{providers.REGISTRY[detected_keys[0]].name} "
-                    f"using {providers.key_env_for(providers.REGISTRY[detected_keys[0]], environ)}? "
-                    "(Y/n): ")
-            except EOFError:
-                answer = ""
-            if answer.strip().lower() in ("", "y", "yes"):
-                chosen = providers.REGISTRY[detected_keys[0]]
-        if chosen is None:
-            menu_choice = _provider_menu(input_fn, print_fn, environ)
-            chosen = providers.get(menu_choice)
+        # No question when one key is already set: use it and say how to change it. With several
+        # keys (or none) a person at a terminal gets the menu; a piped, non-interactive run
+        # (`curl ... | sh`) takes the first key found, or none, and names the one thing to do.
+        if len(detected_keys) == 1 or (detected_keys and not can_ask):
+            chosen = providers.REGISTRY[detected_keys[0]]
+            others = [providers.REGISTRY[k].name for k in detected_keys[1:]]
+            print_fn(f"  · using {chosen.name}"
+                     + (f" (also found: {', '.join(others)})" if others else "")
+                     + "; change it with `reverie install --provider <name>`")
+        elif can_ask:
+            chosen = providers.get(_provider_menu(input_fn, print_fn, environ))
 
     ping_ok = True
     if chosen is not None:
@@ -1328,7 +1350,7 @@ def _install_rest(home, reverie_home, selected, detected, existing_llm, config_e
                      "choose \"Local via Ollama\", or set these keys in "
                      "~/.reverie/config.yaml:")
             print_fn(_OLLAMA_CONFIG_SNIPPET)
-        else:
+        elif can_ask:
             print_fn(_OLLAMA_INSTALL_INSTRUCTIONS)
 
     # Record what this run created (folded in, hashes as written) so the
