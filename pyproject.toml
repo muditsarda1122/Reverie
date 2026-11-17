@@ -1,22 +1,24 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "reverie"
-version = "0.2.0"
+version = "0.3.0"
 description = "Engineering memory for coding agents — conclusions, not logs"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["claude-code", "codex", "cursor", "opencode", "mcp", "agent-memory", "coding-agents", "developer-tools"]
 authors = [{ name = "Mudit Sarda", email = "mudit@muditsarda.com" }]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development",
 ]
@@ -78,5 +80,5 @@ python_version = "3.12"
 files = ["reverie"]
 
 [[tool.mypy.overrides]]
-module = ["hdbscan", "scipy.*", "onnxruntime", "sentence_transformers"]
+module = ["hdbscan", "scipy.*", "onnxruntime", "tokenizers", "sentence_transformers"]
 ignore_missing_imports = true

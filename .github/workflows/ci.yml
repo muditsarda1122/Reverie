@@ -39,3 +39,33 @@ jobs:
       - name: Download embedding model
         run: python -c "from reverie.embeddings import ensure_model; ensure_model(print)"
       - run: pytest tests/ -q
+  # The stranger's path: the one-command installer from a clean machine, on every OS we claim.
+  install-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh scripts/smoke_install.sh "$GITHUB_WORKSPACE"
+
+  # Windows is not claimed yet: this job tells us what breaks. Make it required (remove
+  # continue-on-error) once it is green, then drop the "WSL only" line from the README.
+  windows:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install smoke
+        shell: pwsh
+        run: ./scripts/smoke_install.ps1 -Src $env:GITHUB_WORKSPACE
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          pip install -e ".[dev]"
+          python -c "from reverie.embeddings import ensure_model; ensure_model(print)"
+          pytest tests/ -q -x

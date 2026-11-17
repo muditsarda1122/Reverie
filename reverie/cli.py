@@ -610,11 +610,22 @@ def _extract_client(argv: list[str]) -> list[str] | None:
     return rest
 
 
+def _version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("reverie")
+    except PackageNotFoundError:
+        return "unknown (not installed as a package)"
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     argv = _extract_client(argv)
     if argv is None:
         return 2
+    if argv and argv[0] in ("--version", "-V", "version"):
+        print(f"reverie {_version()}")
+        return 0
     if not argv or argv[0] in ("--help", "-h"):
         _build_parser().print_help()    # the multi-command help
         return 0

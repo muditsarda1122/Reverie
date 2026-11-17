@@ -1,7 +1,7 @@
 #!/bin/sh
 # Reverie: one-command install.
 #
-#   curl -LsSf https://raw.githubusercontent.com/muditsarda1122/Reverie/feat/continuity-spine/scripts/install.sh | sh
+#   curl -LsSf https://raw.githubusercontent.com/muditsarda1122/Reverie/main/scripts/install.sh | sh
 #
 # What it does, in order (nothing else):
 #   1. uses `uv` if you have it, otherwise installs uv for your user (https://astral.sh/uv;
@@ -12,11 +12,11 @@
 # You then need one LLM API key in your environment (ANTHROPIC_API_KEY, OPENAI_API_KEY,
 # GEMINI_API_KEY, OPENROUTER_API_KEY or OPENCODE_ZEN_API_KEY). Reverie uses the one it finds.
 #
-# Environment overrides:  REVERIE_SRC  what to install (default: the GitHub branch, later PyPI "reverie")
+# Environment overrides:  REVERIE_SRC  what to install (default: the GitHub main branch)
 #                         REVERIE_REF  the git ref when installing from GitHub
 set -eu
 
-REF="${REVERIE_REF:-feat/continuity-spine}"
+REF="${REVERIE_REF:-main}"
 SRC="${REVERIE_SRC:-git+https://github.com/muditsarda1122/Reverie.git@${REF}}"
 
 say() { printf '%s\n' "$*"; }

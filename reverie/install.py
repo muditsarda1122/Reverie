@@ -1329,6 +1329,14 @@ def _install_rest(home, reverie_home, selected, detected, existing_llm, config_e
         elif can_ask:
             chosen = providers.get(_provider_menu(input_fn, print_fn, environ))
 
+    if chosen is not None:
+        if chosen.key_required:
+            print_fn(f"  · Privacy: to extract rules and decisions, Reverie sends your redacted prompts "
+                     f"and code diffs to {chosen.name}, a third party. Redaction is pattern-based and "
+                     "best-effort. Nothing else leaves your machine; there is no telemetry.")
+        else:
+            print_fn(f"  · Privacy: {chosen.name} runs locally; your prompts and diffs stay on this machine.")
+
     ping_ok = True
     if chosen is not None:
         _configure_provider(reverie_home, home, chosen, dry_run=dry_run,
@@ -1424,9 +1432,10 @@ def _install_rest(home, reverie_home, selected, detected, existing_llm, config_e
         print_fn("  (no agents configured — run `reverie install --only "
                  "<agent>` when ready)")
     print_fn("\nCommands:")
-    print_fn("  reverie review   Review pending candidates (terminal UI)")
-    print_fn("  reverie enable / reverie disable / reverie repos")
-    print_fn("  reverie export / reverie import / reverie reset")
+    print_fn("  reverie digest   See what Reverie remembered (undo any item with `reverie undo <id>`)")
+    print_fn("  reverie status   Check it is working, and that an LLM key is visible")
+    print_fn("  reverie resume   Continue a cut-off session in any agent")
+    print_fn("  reverie enable / reverie disable / reverie repos / reverie export")
     print_fn("\nHow to use:")
     print_fn("  1. Open your coding agent and restart it so the MCP server "
              "loads")
@@ -1434,8 +1443,8 @@ def _install_rest(home, reverie_home, selected, detected, existing_llm, config_e
              "automatic per branch and never need closing")
     print_fn("  3. Reverie is on in every repo; opt a repo out with "
              "`reverie disable` inside it")
-    print_fn("  4. Review candidates with `reverie review`, or say \"show my "
-             "Reverie candidates\" in the agent")
+    print_fn("  4. Check `reverie status` once: it says if no LLM key is visible "
+             "(nothing is extracted without one)")
     return 0
 
 

@@ -26,7 +26,6 @@ Rules the core enforces for every adapter:
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -36,7 +35,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Any, Iterable, Protocol
 
 from .. import spool
 from ..redact import redact
@@ -188,6 +187,36 @@ def mark_captured(cwd: str | Path, session: str, prompt: str) -> None:
         pass
 
 
+_msvcrt: Any = None
+try:                                    # POSIX
+    import fcntl
+except ImportError:                     # Windows has no fcntl; msvcrt locks a byte range instead
+    fcntl = None                        # type: ignore[assignment]
+    import msvcrt
+    _msvcrt = msvcrt
+
+
+def _try_lock(fh, block: bool) -> bool:
+    """Take an exclusive lock on ``fh``. False when someone else holds it (non-blocking)."""
+    try:
+        if fcntl is not None:
+            fcntl.flock(fh, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+        else:
+            fh.seek(0)
+            _msvcrt.locking(fh.fileno(), _msvcrt.LK_LOCK if block else _msvcrt.LK_NBLCK, 1)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock(fh) -> None:
+    if fcntl is not None:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+    else:
+        fh.seek(0)
+        _msvcrt.locking(fh.fileno(), _msvcrt.LK_UNLCK, 1)
+
+
 class _lock:
     def __init__(self, cwd, block=False):
         self.path = spool.repo_dir(cwd) / "import.lock"
@@ -197,15 +226,11 @@ class _lock:
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.fh = open(self.path, "a")
-        try:
-            fcntl.flock(self.fh, fcntl.LOCK_EX | (0 if self.block else fcntl.LOCK_NB))
-            return True
-        except OSError:
-            return False
+        return _try_lock(self.fh, self.block)
 
     def __exit__(self, *exc):
         try:
-            fcntl.flock(self.fh, fcntl.LOCK_UN)
+            _unlock(self.fh)
             self.fh.close()
         except Exception:
             pass

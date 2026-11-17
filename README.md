@@ -19,19 +19,21 @@ A terminal crash interrupted a long session and the state was lost. Many memory 
 One command (macOS and Linux; it needs `git` and `curl`, nothing else, because it brings its own Python):
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/muditsarda1122/Reverie/feat/continuity-spine/scripts/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/muditsarda1122/Reverie/main/scripts/install.sh | sh
 ```
 
 It installs [`uv`](https://docs.astral.sh/uv/) for your user if you do not have it, installs Reverie as an isolated tool, and runs `reverie install`. In our test on a MacBook it took about a minute, most of it downloading the ~90 MB embedding model once; the install is about 170 MB. [Read the script first](scripts/install.sh) if you like: it is short and does nothing else.
 
 Then set **one** LLM API key in your environment (Anthropic, OpenAI, Gemini, OpenRouter or OpenCode Zen; Reverie uses the one it finds, see [Model providers](#model-providers)) and restart your agent. That is all. The key is what Reverie uses for its own extraction calls, so it works the same under every agent.
 
+**Platforms:** macOS and Linux. Windows is supported through WSL; native Windows is not tested yet.
+
 Prefer to do it by hand? With Python 3.12 and git:
 
 ```bash
-git clone --depth 1 --branch feat/continuity-spine https://github.com/muditsarda1122/Reverie.git
+git clone --depth 1 https://github.com/muditsarda1122/Reverie.git
 cd Reverie
-python3.12 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
+python3.12 -m venv .venv && source .venv/bin/activate     
 pip install -e .
 reverie install
 ```
@@ -39,8 +41,6 @@ reverie install
 `reverie install` detects which agents you have, wires the MCP server into each one, writes the per-agent instructions and the `/reverie-review` and `/reverie-status` commands, creates `~/.reverie`, and prints a summary of exactly what it wrote. It then starts the server and checks that it answers, and it reports success or failure for each agent. Restart each agent afterwards.
 
 The installer writes absolute paths into each agent's config, so agents can find the server outside your virtualenv. If you move the `Reverie` folder (manual install), run `reverie install` again.
-
-The clone command above installs the current development branch (hooks, transcript import, resume, provenance, staleness, usage loop). The older `v0.2.0` release does not have these. Once the branch is merged, this command will point at `main`.
 
 To see what the installer would change without writing anything, run `reverie install --dry-run`. Non-interactive: `reverie install --all` configures every detected agent, and `--only claude_code,codex` configures only the ones you name.
 
@@ -53,6 +53,34 @@ You need an LLM provider key before Reverie can extract anything. Set one before
 3. **New session, any tool.** Your rules and a short index arrive at session start; items tied to a file arrive when the agent edits it.
 4. **Session cut off?** In the next agent, say "my previous session got cut off, run `reverie resume`". It prints your rules, every prompt you sent (verbatim, redacted) and the git state, whichever tool the session ran in.
 5. **Keep it true.** `reverie stale check` (also automatic after new commits) flags items a commit contradicts. `reverie stale accept|keep` resolves them.
+
+### What you see
+
+After a few sessions, `reverie digest` lists what Reverie remembered (here from a throwaway repo):
+
+```text
+3 item(s) added since the beginning:
+
+[f48988f3] rule (you said)
+    Never commit directly to main; open a PR.
+[d3c7b2c5] preference (you said)
+    Use pytest, not unittest, for new tests.
+[a4c5003b] decision (you said)
+    Chose Postgres advisory locks over Redis for job dedupe: one less service to run.
+
+Undo any of them with `reverie undo <id>`.
+```
+
+`reverie status` shows what this repo holds, and warns when no key is visible:
+
+```text
+Memory for this repo: 3 items (1 rule, 1 preference, 1 decision). `reverie digest` lists what was added recently.
+
+!! No LLM key found (OPENCODE_ZEN_API_KEY is not set in this shell).
+   Reverie records your prompts, but it cannot extract rules or decisions without a key.
+```
+
+If `reverie status` shows that warning, nothing is being extracted yet. Put the key in your shell profile and restart your agent (an agent started from a desktop icon does not see variables set only in a terminal).
 
 ## Supported agents
 
@@ -92,8 +120,6 @@ To switch provider, run `reverie install --provider anthropic`, or edit the `llm
 | `reverie resume` | Print rules, your prompt log and git state to continue a cut-off session in any tool |
 | `reverie transcripts` | Import new prompts/answers from the harnesses' own transcripts (also automatic) |
 | `reverie rules` | Show or edit the rules Reverie always applies |
-| `reverie context` | Team context as plain markdown in scopes (org, team, repo, paths, you): the narrower scope answers the wider unless locked, sibling teams that contradict make the agent ask (a background judge finds the conflicts when a document or the code changes; a one-line hint nudges asking), anyone can propose, CODEOWNERS accept, and `propose` turns a rule you taught your agent into a team proposal (owners accept or reject with a reason). Early feature on the branch |
-| `reverie ui` | A team workspace on localhost: your projects on one board, and per project what needs action first (conflicts, outdated rules, waiting proposals), team rules (and the repo's shared rules file), what this machine remembers, what agents are told, and how to connect. Three buttons write, through the CLI's own functions and its rules: add a rule or guidance, accept a proposal, reject one with a reason (owners only; secrets refused; same-origin and token checked). Everything else is a command it shows. No telemetry. Early feature on the branch |
 | `reverie show` | Show one memory item in full |
 | `reverie undo` | Undo an item that was added automatically |
 | `reverie digest` | List what was added recently |
@@ -101,13 +127,22 @@ To switch provider, run `reverie install --provider anthropic`, or edit the `llm
 | `reverie stale` | Check memory against new commits; accept or keep what is flagged |
 | `reverie usage` | Show which items agents used, ignored or contradicted |
 | `reverie merge` | Merge near-duplicate items (also runs by itself, at most daily) |
-| `reverie review` | Review legacy candidate conclusions in a terminal interface |
 | `reverie status` | Show the session and brain report |
 | `reverie export` / `reverie import` | Back up or restore your memory as one ZIP file |
 | `reverie reset` | Wipe the brain, or one repo, after an automatic backup |
 | `reverie retry` | Recover failed extractions |
 | `reverie repair` | Check brain integrity and recover safely |
 | `reverie uninstall` | Remove what `reverie install` added (memory is kept unless `--delete-data`) |
+
+### Experimental (team features, not needed for solo use)
+
+These exist for shared team rules and are still changing. You can ignore them.
+
+| Command | What it does |
+|---|---|
+| `reverie context` | Team context as plain markdown in scopes (org, team, repo, paths, you): the narrower scope answers the wider unless locked, sibling teams that contradict make the agent ask (a background judge finds the conflicts when a document or the code changes; a one-line hint nudges asking), anyone can propose, CODEOWNERS accept, and `propose` turns a rule you taught your agent into a team proposal (owners accept or reject with a reason). Early feature on the branch |
+| `reverie ui` | A team workspace on localhost: your projects on one board, and per project what needs action first (conflicts, outdated rules, waiting proposals), team rules (and the repo's shared rules file), what this machine remembers, what agents are told, and how to connect. Three buttons write, through the CLI's own functions and its rules: add a rule or guidance, accept a proposal, reject one with a reason (owners only; secrets refused; same-origin and token checked). Everything else is a command it shows. No telemetry. Early feature on the branch |
+| `reverie review` | Review legacy candidate conclusions in a terminal interface |
 
 The full reference, with flags and examples, is in [`docs/CLI.md`](docs/CLI.md).
 
@@ -116,7 +151,7 @@ The full reference, with flags and examples, is in [`docs/CLI.md`](docs/CLI.md).
 - Everything is local, in one SQLite file: `~/.reverie/reverie.db`. Your configuration, the agent instructions and the slash commands sit beside it. There is no account, no cloud service and no telemetry.
 - **Reverie never writes into your repositories.** Each repo's state (on, off, asked) is stored in `~/.reverie`, not in a file inside your project.
 - **Secrets are redacted before they are stored** (the prompt log, items, the importer's cursor file) and again when shown. Reverie keeps no raw copy. Your harness's own transcript is outside Reverie and may still hold what you typed.
-- **What leaves your machine:** only what the LLM features need, such as the redacted exchange and the working-tree diff for extraction, and candidate pairs for merging. Those go to the provider you configured. With Ollama, nothing leaves your machine.
+- **What leaves your machine:** only what the LLM features need, such as the redacted exchange and the working-tree diff for extraction, and candidate pairs for merging. Those go to the provider you configured, a third party (the default is OpenCode Zen; Anthropic, OpenAI, Gemini and OpenRouter are the alternatives). Redaction is pattern-based and best-effort, so it can miss an unusual secret. With Ollama, nothing leaves your machine. There is no telemetry, and `reverie install` prints this same notice.
 - **API keys** are read from environment variables. Reverie never writes them to disk.
 - **Backups:** `reverie export` writes one ZIP file with a consistent snapshot. `reverie import` restores it. `--replace` makes an automatic backup first.
 
@@ -129,19 +164,17 @@ reverie uninstall --delete-data   # also removes ~/.reverie, after a final expor
 
 Uninstall removes only what `reverie install` wrote: Reverie's server entries, instruction references, slash-command files, hooks and permission entries. Anything else in those files is left alone. If you've edited one of them, Reverie reports it and doesn't touch it. Uninstall shows the full plan and asks for one confirmation. Use `--yes` to skip the prompt. Your memory in `~/.reverie` is kept unless you pass `--delete-data`, which exports a final backup first and prints where it saved it.
 
-The last step prints `pip uninstall reverie` for you to run yourself. A running package can't remove itself.
+The last step prints the command that removes the package itself, because a running package can't remove itself: `uv tool uninstall reverie` if you installed with the one-line script, or `pip uninstall reverie` otherwise.
 
 ## Updating
 
-Reverie is pinned to a release tag. To move to a newer release, use the latest tag from the releases page:
-
 ```bash
-cd Reverie
-git pull
-source .venv/bin/activate
-pip install -e .
-reverie install
+reverie --version                  # what you have now
+uv tool upgrade reverie            # installed with the one-line script (or: pipx upgrade reverie / pip install -U reverie)
+reverie install                    # refresh the agent wiring; safe to repeat
 ```
+
+Upgrades keep your memory. Your database is migrated in place when a newer version opens it (never lowered, never emptied), and `reverie export` makes a backup you can restore with `reverie import` before you upgrade if you want one.
 
 ## Troubleshooting
 
@@ -155,7 +188,7 @@ Your agent learns how to use Reverie from its instruction file and from the serv
 `reverie install` allows Reverie's read tools in each agent's permission settings. If a read tool still prompts, run `reverie install` again. If it still prompts, check your agent's version. Older versions ignore per-tool approval settings. Write tools (`observe`, `reconsolidate`, `set_repo_state`, `review_decide`) prompt on purpose.
 
 **Reverie behaves like an older version.**
-Run `git pull` in your clone, then `pip install -e .` and `reverie install`. (A clone of the old `v0.2.0` tag lacks the newer features: re-clone with the command above.) `reverie uninstall --dry-run` shows which entries are configured and where, before you change anything.
+Run `reverie --version`, then update as in [Updating](#updating). `reverie uninstall --dry-run` shows which entries are configured and where, before you change anything.
 
 ## Documentation
 
@@ -180,7 +213,7 @@ Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for set
   title   = {Reverie},
   year    = {2026},
   url     = {https://reverie.muditsarda.com/},
-  version = {0.2.0}
+  version = {0.3.0}
 }
 ```
 
