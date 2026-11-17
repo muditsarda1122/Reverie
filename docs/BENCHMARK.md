@@ -396,3 +396,69 @@ preference. Measured with the real extractor, 5 repeats per cell, in my tests, o
   rejects a tool-sourced rule was not what held; it is covered by unit tests, not by this run.
 - Limits: Claude Code's live capture only; other harnesses and imported transcripts pass no tool
   results. One scenario, not a measure of how often real tool output yields good items.
+
+
+## Results, run 4: the released build, corrected in plain language (2026-11-17; requests, claude)
+
+What was tested: one individual, the build people install from PyPI (`reverie-mem` 0.3.0, ONNX embeddings),
+on a repo never used before (psf/requests, fresh clone per cell, own `REVERIE_HOME`, the real `~/.reverie`
+untouched, real extraction on). Session 1: a task, then a plain-language correction in the same session
+("that is not how we write helpers in this repo ..."). Sessions 2-5: four new tasks in brand-new sessions,
+conventions never restated. Five conventions (name prefix, keyword-only parameters, error-message prefix,
+no print, docstring last line), scored by an AST check written and validated against a compliant and a
+violating file before any agent ran. Reverie on vs off, 3 repeats each, claude only, 30 agent runs.
+
+| | Reverie on | Reverie off |
+|---|---|---|
+| task 1 before the correction | 3.00 violations (0/3 clean) | 3.00 (0/3 clean) |
+| task 1 after the correction | 0.00 (3/3 clean) | 0.00 (3/3 clean) |
+| tasks 2-5, new sessions (violations per task, max 5) | **0.00** (12/12 clean) | **1.75** (4/12 clean) |
+| cost per task, tasks 2-5 | $0.104 | $0.094 |
+| rules it extracted from the correction | 5 of 5 rules in 3 of 3 cells (a sixth, inferred item in 2 cells) | n/a |
+
+Read with these limits: one repo, one model, 3 repeats, tiny single-function tasks, and a correction that
+states five rules at once (explicit, not a hint). The off arm had task 1's corrected file in the repo as an
+example for later tasks, which helps it, so the gap is, if anything, understated; it is also why 4 of 12 off
+tasks were clean. Extraction was done by the configured provider (claude-haiku-5-5 via OpenCode Zen). No cell
+was excluded.
+
+
+## Results, run 5: cases raised by readers, on the released build (2026-11-17; markupsafe and jinja, claude)
+
+Same method and limits as run 4 (fresh clone per cell, own `REVERIE_HOME`, real `~/.reverie` untouched, real
+extraction on, reverie-mem 0.3.0 from PyPI, hidden AST check written and validated first, 3 repeats, claude
+only, no cell excluded). Readers asked for these cases; each is scored on its own.
+
+**a. Survival, a changed rule, a scoped exception (markupsafe, one sequence per cell, 9 tasks).** Session 1:
+task 1 plus a plain-language correction (five conventions). Tasks 2-3 in new sessions. Task 4 carries the
+change ("errors start with 'bad input:' instead of 'invalid'"); tasks 5-6 are new sessions with nothing
+restated. Task 7 is task 1's prompt again. Task 8 is a legacy file with a stated exception (`legacy_` name,
+all other rules unchanged). Task 9 is a normal task. Violations per task (max 5):
+
+| tasks | Reverie on | Reverie off |
+|---|---|---|
+| 2-9, all new sessions (24 runs on, 24 off) | **0.00** (24/24 clean) | 1.67-2.00 (1 of 24 clean) |
+| 5-7 after the rule change: files using the retired 'invalid' prefix | 0 of 9 | n/a (rule never learned) |
+| 7, task 1 repeated last | 0.00 (3/3) | 1.67 |
+| 8, the legacy exception applied, other rules held | 3/3 | n/a |
+| 9, back to the repo prefix (exception did not leak) | 3/3 | n/a |
+
+Not tested: whether an older file that uses the old rule pulls the agent back over many more turns (here the
+old-prefix files from tasks 1-3 sat in the repo for tasks 5-9 and none leaked).
+
+**b. Two repos, opposite conventions, identical filenames, ONE memory home (markupsafe `aa_`/`-- aa`,
+jinja `bb_`/`-- bb`; correction in each, then alternating tasks).** 24 of 24 tasks followed their own repo's
+conventions; the other repo's prefix or docstring tag appeared in 0 of 24. No control arm was run, so this
+shows keying, not the effect of memory.
+
+**c. A ban, then the ban's reason goes away (a reader's case; ticket STOR-5150).** Ban stated in session 1,
+"we moved off SQLite" in a later session, then a task that needs threads.
+- Ban only: 3 of 3 declined and cited STOR-5150.
+- Ban then lifted: **0 of 3 lifted it.** The change was stored, but as an environment/external_context item,
+  and the check that retires an older rule never ran for those kinds. After a fix on a branch (not released),
+  1 of 3 lifted it. Still open: the stored rule no longer carries its reason, and the check only sees
+  neighbours above a similarity cutoff. An explicit "revoked, replaced by Y" delivery line is not built.
+
+**d. Leakage between arms.** Every cell had its own clone and memory home; the Reverie-off homes held 0 items
+after all 12 off cells of runs 4 and 5. Shared memory across several agents (one bot keeps following the old
+rule) was not tested.
