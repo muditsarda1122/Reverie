@@ -112,7 +112,7 @@ def test_spool_write_and_render_redact(tmp_path, monkeypatch):
     raw = (spool.repo_dir(repo) / "log.jsonl").read_text()
     assert "abc123xyz789" not in raw and B not in raw            # nothing raw on disk
     # an OLD log written before redaction existed is cleaned at render time
-    with open(spool.repo_dir(repo) / "log.jsonl", "a") as fh:
+    with open(spool.repo_dir(repo) / "log.jsonl", "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"t": "2026-01-01T00:00:00+0000", "kind": "prompt",
                              "session": "s1", "branch": "", "harness": "t",
                              "text": "password=oldsecret99"}) + "\n")

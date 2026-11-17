@@ -42,7 +42,7 @@ for line in sys.stdin:
 
 def write_fake_server(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(FAKE_SERVER.format(python=sys.executable))
+    path.write_text(FAKE_SERVER.format(python=sys.executable), encoding="utf-8")
     path.chmod(0o755)
     return path
 

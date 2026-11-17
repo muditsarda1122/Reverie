@@ -193,7 +193,7 @@ def test_end_to_end_stub_agent(spec, repo, tmp_path, stub_agent):
                 assert Path(p["transcript"]).exists()
         # the stub echoed the injected config; per condition
         first = sessions[0]["prompts"][0]
-        echoed = json.loads(Path(first["transcript"]).read_text().strip())
+        echoed = json.loads(Path(first["transcript"]).read_text(encoding="utf-8").strip())
         assert echoed["opencode_config"] == str(
             run_dir / condition / "opencode_config.json")
         assert echoed["cwd"] == str(run_dir / condition / "workdir")
@@ -204,13 +204,13 @@ def test_end_to_end_stub_agent(spec, repo, tmp_path, stub_agent):
     assert stats["canonical_ecus"] == 0            # review=skip promotes nothing
     assert [s["status"] for s in stats["sessions"]] == ["closed", "closed"]
     for s in ec_manifest["sessions"]:
-        assert "Bench session" in Path(s["start"]["log"]).read_text()
-        assert "Review complete." in Path(s["stop"]["log"]).read_text()
+        assert "Bench session" in Path(s["start"]["log"]).read_text(encoding="utf-8")
+        assert "Review complete." in Path(s["stop"]["log"]).read_text(encoding="utf-8")
         assert s["stop"]["diffusion_warning"] is False
     # baseline: no brain, no REVERIE_HOME in the agent env
     base_first = json.loads(Path(
         json.loads((run_dir / "baseline" / "manifest.json").read_text())
-        ["sessions"][0]["prompts"][0]["transcript"]).read_text().strip())
+        ["sessions"][0]["prompts"][0]["transcript"]).read_text(encoding="utf-8").strip())
     assert base_first["reverie_home"] is None
     assert not (run_dir / "baseline" / "reverie_home" / "reverie.db").exists()
     baseline_cfg = json.loads(

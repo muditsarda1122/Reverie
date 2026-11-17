@@ -225,7 +225,7 @@ class _lock:
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.fh = open(self.path, "a")
+        self.fh = open(self.path, "a", encoding="utf-8")
         return _try_lock(self.fh, self.block)
 
     def __exit__(self, *exc):

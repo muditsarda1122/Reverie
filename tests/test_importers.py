@@ -29,7 +29,7 @@ def _claude_file(tmp, repo, lines, name="s1"):
     d = tmp / "claude" / "projects" / importers.slug_of(str(repo))
     d.mkdir(parents=True, exist_ok=True)
     f = d / f"{name}.jsonl"
-    with open(f, "a") as fh:
+    with open(f, "a", encoding="utf-8") as fh:
         for ln in lines:
             fh.write(json.dumps(ln) + "\n")
     return f
@@ -231,12 +231,12 @@ def test_cursor_user_query(env):
 def test_torn_last_line_is_left_for_next_read(env):
     repo, tmp, _ = env
     f = _claude_file(tmp, repo, [_u("complete")])
-    with open(f, "a") as fh:
+    with open(f, "a", encoding="utf-8") as fh:
         fh.write('{"type": "user", "message": {"role": "user", "content": "tor')
     import os
     os.utime(f, (time.time() - 99999,) * 2)
     assert _run(repo).prompts == 1
-    with open(f, "a") as fh:
+    with open(f, "a", encoding="utf-8") as fh:
         fh.write('n now"}}\n')
     os.utime(f, (time.time() - 99990,) * 2)
     assert _run(repo).prompts == 1

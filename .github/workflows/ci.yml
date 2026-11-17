@@ -68,4 +68,4 @@ jobs:
         run: |
           pip install -e ".[dev]"
           python -c "from reverie.embeddings import ensure_model; ensure_model(print)"
-          pytest tests/ -q -x
+          pytest tests/ -q
