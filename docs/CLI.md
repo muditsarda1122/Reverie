@@ -243,6 +243,7 @@ reverie context add --layer org --scope acme/org --locked --tag no-pii "Never lo
 reverie context add --paths "services/billing/**" "Amounts are integer cents"
 reverie context add --guidance --doc deploys "Deploys go through the staging gate"
 reverie context add --why "support asked" "Never blame the user"   # becomes a proposal if the folder has owners
+reverie context add --review "Never blame the user"               # a proposal even if you could add directly
 reverie context proposals                              # open proposals
 reverie context accept <name>                          # an owner moves a proposal into its document
 reverie context reject <name> --why "Ledgers use Decimal"   # an owner declines; the reason is kept

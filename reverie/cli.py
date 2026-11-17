@@ -133,14 +133,16 @@ def _cmd_context(args) -> int:
             added = context.add(root, text, layer=args.layer or "repo", rule=not args.guidance,
                               locked=args.locked, tag=args.tag or "", doc=args.doc or "",
                               scope=args.scope or "", paths=paths, why=args.why or "",
-                              resolves=args.text[0] if args.action == "resolve" else "")
+                              resolves=args.text[0] if args.action == "resolve" else "",
+                              review=bool(args.review))
         except (ValueError, IndexError) as exc:
             print(str(exc) or "usage: reverie context resolve <conflict-key> <decision>",
                   file=sys.stderr)
             return 2
         if added.proposal:
+            who = f"The owners ({', '.join(added.owners)}) review" if added.owners else "An owner reviews"
             print(f"Written as a proposal: {added.path}\n"
-                  f"The owners ({', '.join(added.owners)}) review it like any pull request; "
+                  f"{who} it like any pull request; "
                   f"an owner runs `reverie context accept <name>`.")
         else:
             print(f"Added to {added.path}")
@@ -539,6 +541,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--why", default=None,
                    help="why, written into the proposal for the owners (add, propose); "
                         "the reason an owner gives (reject)")
+    p.add_argument("--review", action="store_true",
+                   help="write a proposal even if you could add directly, so an owner reviews it (add)")
     p.add_argument("--again", action="store_true",
                    help="propose a rule that was rejected before, with --why saying what changed")
     p.add_argument("--since", default=None,

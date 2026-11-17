@@ -781,10 +781,12 @@ def _slug(text: str) -> str:
 def add(root: str, text: str, *, layer: str = "repo", rule: bool = True,
         locked: bool = False, tag: str = "", doc: str = "", scope: str = "",
         paths: tuple[str, ...] = (), resolves: str = "", why: str = "",
-        provenance: dict[str, str] | None = None) -> AddResult:
+        provenance: dict[str, str] | None = None, review: bool = False) -> AddResult:
     """Write a bullet. A direct edit when nobody owns the target document or the
     writer is an owner (CODEOWNERS + git identity); otherwise a PROPOSAL file the
-    owners can review like any pull request. Reverie never asks for a job title."""
+    owners can review like any pull request. ``review=True`` asks for the proposal even
+    when a direct edit would be allowed (an owner who wants a second look). Reverie never
+    asks for a job title."""
     if layer not in LAYERS:
         raise ValueError(f"layer must be one of {', '.join(LAYERS)}")
     text = " ".join(text.split())
@@ -802,7 +804,7 @@ def add(root: str, text: str, *, layer: str = "repo", rule: bool = True,
     path = folder / f"{stem}.md"
     bullet = _bullet(text, locked, tag, resolves)
     owners = owners_of(path)
-    if owners and not is_owner(path):
+    if review or (owners and not is_owner(path)):
         pdir = folder / "proposals"
         pdir.mkdir(parents=True, exist_ok=True)
         who = spool._git(["config", "user.name"], folder if folder.exists() else Path(root)) or "unknown"

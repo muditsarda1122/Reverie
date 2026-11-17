@@ -117,12 +117,30 @@ def _legacy_kind(conclusion_type: str) -> str:
                                              "trade-off") else "observation"
 
 
+def _effective(r, meta: dict) -> float | None:
+    """The stored belief strength after the time decay the brain applies at read time; None if it cannot be computed."""
+    try:
+        # lazy: confidence loads numpy, which the hook process must never load
+        from . import confidence as confidence_mod
+        return round(confidence_mod.effective_confidence(
+            r["confidence"], r["scope_level"], meta.get("last_reinforced") or r["created_at"], status=r["status"]), 2)
+    except (ValueError, TypeError, KeyError):
+        return None
+
+
+def confidence_words(c: float | None) -> str:
+    """"0.72 (high)": the number and its reading band (above 0.7 high, 0.3 to 0.7 medium, below 0.3 low)."""
+    if c is None:
+        return ""
+    return f"{c:.2f} ({'high' if c > 0.7 else 'medium' if c >= 0.3 else 'low'})"
+
+
 def _legacy_conclusions(conn: sqlite3.Connection, root: str) -> list[dict]:
     out: list[dict] = []
     try:
         rows = conn.execute(
             "SELECT id, cognition, conclusion_type, grounding_json, created_at, "
-            "metadata_json "
+            "metadata_json, confidence, scope_level, status "
             "FROM ecus WHERE status IN ('active','challenged')").fetchall()
     except sqlite3.Error:
         return out
@@ -134,14 +152,16 @@ def _legacy_conclusions(conn: sqlite3.Connection, root: str) -> list[dict]:
         if g.get("repo_path") and os.path.realpath(g["repo_path"]) != \
                 os.path.realpath(root):
             continue
+        meta = json.loads(r["metadata_json"] or "{}")
         out.append({
             "id": r["id"], "text": r["cognition"], "origin": "conclusion",
+            "confidence": _effective(r, meta),
             "kind": _legacy_kind(r["conclusion_type"]),
             "anchor": {"type": "file", "files": g.get("files") or [],
                        "symbols": g.get("symbols") or []},
             "source": "agent_inferred", "grounding_commit": g.get("commit_hash"),
             "level": "repo", "status": "active",
-            "meta": json.loads(r["metadata_json"] or "{}")})
+            "meta": meta})
     return out
 
 
@@ -743,6 +763,8 @@ def show(conn: sqlite3.Connection, id_prefix: str, root: str) -> str:
     if it.get("last_verified"):
         lines.append(f"last verified: {str(it['last_verified'])[:10]}")
     meta = it.get("meta") or {}
+    if confidence_words(it.get("confidence")):
+        lines.append(f"confidence: {confidence_words(it['confidence'])}")
     tally = usage.words(meta.get("usage") or {})
     if tally:
         lines.append(f"used by agents: {tally}")

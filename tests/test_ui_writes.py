@@ -141,6 +141,14 @@ def test_sec_fetch_site_alone_is_enough_when_origin_is_absent(env, serve):
     assert status == 303, body
 
 
+def test_pages_do_not_tell_the_browser_to_send_origin_null(env, serve):
+    """With Referrer-Policy no-referrer, browsers send "Origin: null" on our own form POSTs and the
+    same-origin check refuses every Add. same-origin keeps the real Origin for us and sends nothing elsewhere."""
+    _, repo = env
+    s = serve(repo)
+    assert _http(s, "GET", "/add")[2]["Referrer-Policy"] == "same-origin"
+
+
 @pytest.mark.parametrize("token", [None, "", "wrong", "x" * 43])
 def test_missing_or_wrong_token_is_refused(env, serve, token):
     tmp_path, repo = env
@@ -309,6 +317,43 @@ def test_non_owner_add_becomes_one_proposal_file(env, serve):
     assert all(after[k] == before[k] for k in before)
     assert "proposal" in page and "lead@acme.com" in page
     assert not (repo / ".reverie/context/rules.md").exists()
+
+
+def test_owner_can_send_a_rule_for_review_and_then_accept_it(env, serve):
+    _, repo = env
+    _owner(repo)
+    s = serve(repo)
+    page = _follow(s, _add(s, "Prefer small PRs", review="1"))
+    assert "Proposed:" in page and "not in force yet" in page
+    assert not (repo / ".reverie/context/rules.md").exists()          # nothing went straight into the document
+    [prop] = context.proposals(str(repo))
+    body = _http(s, "GET", "/proposals")[1]
+    assert "Accept" in body and "Prefer small PRs" in body             # an owner sees the buttons
+    tok, pid = _form(s, "/proposals")
+    page = _follow(s, _http(s, "POST", "/do/accept", {"token": tok, "p": pid, "slug": prop["slug"]}))
+    assert "Accepted into rules.md" in page
+    assert "Prefer small PRs" in (repo / ".reverie/context/rules.md").read_text()
+
+
+def test_review_is_off_unless_asked_for(env, serve):
+    _, repo = env
+    _owner(repo)
+    s = serve(repo)
+    _follow(s, _add(s, "Always squash merge"))
+    assert context.proposals(str(repo)) == []
+    assert "Always squash merge" in (repo / ".reverie/context/rules.md").read_text()
+
+
+def test_context_add_review_writes_a_proposal_even_where_nobody_owns_the_document(tmp_path, monkeypatch):
+    monkeypatch.setenv("REVERIE_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "solo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)         # no CODEOWNERS: everyone owns everything
+    got = context.add(str(repo), "Prefer small PRs", review=True)
+    assert got.proposal and got.owners == []
+    assert not (repo / ".reverie/context/rules.md").exists()
+    context.accept(str(repo), context.proposals(str(repo))[0]["slug"])
+    assert "Prefer small PRs" in (repo / ".reverie/context/rules.md").read_text()
 
 
 def test_guidance_and_hostile_text_are_stored_and_rendered_escaped(env, serve):

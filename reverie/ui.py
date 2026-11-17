@@ -45,7 +45,7 @@ CSP = ("default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-act
        "frame-ancestors 'none'")
 MAX_BODY = 16 * 1024
 WRITE_PATHS = ("/do/add", "/do/accept", "/do/reject")
-LIMITS = {"text": 1000, "why": 300, "slug": 200, "token": 100, "p": 16, "kind": 16, "target": 120}
+LIMITS = {"text": 1000, "why": 300, "slug": 200, "token": 100, "p": 16, "kind": 16, "target": 120, "review": 4}
 
 def esc(value: object, *, redacted: bool = True) -> str:
     text = redact.redact(str(value)) if redacted else str(value)
@@ -830,6 +830,8 @@ def _memory_facts(m: dict, ctx: dict) -> str:
         rows.append(_fact("Grounded on commit", f'<code>{esc(str(m["grounding_commit"])[:7])}</code>'))
     if m.get("last_verified"):
         rows.append(_fact("Last verified", esc(str(m["last_verified"])[:10])))
+    if deliver.confidence_words(m.get("confidence")):
+        rows.append(_fact("Confidence", esc(deliver.confidence_words(m["confidence"]))))
     words = usage_words(meta.get("usage") or {})
     if words:
         rows.append(_fact("Used by agents", esc(words[0].upper() + words[1:] + ".")))
@@ -1037,6 +1039,8 @@ def _mem_li(m: dict, pid: str, label: str = "") -> str:
         bits.append("<span>" + ", ".join(f'<code title="{esc(a)}">{esc(a)}</code>' for a in files) + "</span>")
     if m.get("created_at"):
         bits.append(f'<span>{esc(str(m["created_at"])[:10])}</span>')
+    if deliver.confidence_words(m.get("confidence")):
+        bits.append(f"<span>Confidence {esc(deliver.confidence_words(m['confidence']))}</span>")
     words = usage_words(meta_d.get("usage") or {})
     if words:
         bits.append(f"<span>{esc(words)}</span>")
@@ -1348,13 +1352,17 @@ def add_page(root: str, proj: dict, plist: list[dict], st: State | None = None, 
     why_field = (f'<label class="why-in">Why (optional)<input type="text" name="why" maxlength="{LIMITS["why"]}" '
                  f'value="{esc(flash.get("why", ""))}"><span class="d">Only a proposal keeps this: the owners read it next to the rule. '
                  f'A direct add does not save it.</span></label>') if any(_leads_to_proposal(t) for t in targets) else ""
+    review_field = ('<label class="opt"><input type="checkbox" name="review" value="1"'
+                    f'{" checked" if flash.get("review") else ""}><span><b>Send for review instead of adding directly</b>'
+                    '<span class="d">Writes a proposal even where you could add straight away. It is not in force until an owner '
+                    'accepts it on the Proposals tab. To attach a reason, use <code>reverie context add --review --why "..."</code>.</span></span></label>')
     form = ('<form class="addf" method="post" action="/do/add">'
             f'<input type="hidden" name="token" value="{html.escape(st.token if st else "")}">'
             f'<input type="hidden" name="p" value="{esc(proj["id"])}">{err}'
             f'<div><label class="visually-hidden" for="text">The rule</label><textarea id="text" name="text" '
             f'maxlength="{LIMITS["text"]}" required{invalid if bad == "text" else ""}>{esc(flash.get("text", ""))}</textarea></div>'
             f'<fieldset><legend>Who is told</legend>{opts}</fieldset><fieldset><legend>How agents get it</legend>{kinds}</fieldset>'
-            + why_field + '<div><button class="btn" type="submit">Add rule</button></div></form>')
+            + review_field + why_field + '<div><button class="btn" type="submit">Add rule</button></div></form>')
     terminal = ('<section class="subtle"><details class="cmd"><summary>From a terminal</summary><p>The same as this form:</p>'
                 + _block('reverie context add "Money is stored as integer cents"')
                 + "<p>Only for your own agents, in every repo:</p>"
@@ -1379,7 +1387,7 @@ class State:
         self.lock = threading.RLock()             # one write at a time
         self._flash: dict[str, dict] = {}
 
-    def put(self, ok: bool, msg: str, **keep: str) -> str:
+    def put(self, ok: bool, msg: str, **keep: object) -> str:
         fid = secrets.token_urlsafe(8)
         with self.lock:
             while len(self._flash) >= 50:
@@ -1404,7 +1412,8 @@ def _do_add(root: str, proj: dict, form: dict[str, str], back) -> str:
     a direct POST exactly as by the form, and never carries a secret back to the page."""
     text, why = " ".join(form.get("text", "").split()), form.get("why", "")
     choice, kind = form.get("target", "repo"), form.get("kind", "rule")
-    keep = {"text": text, "why": why, "target": choice, "kind": kind}
+    review = form.get("review") == "1"
+    keep = {"text": text, "why": why, "target": choice, "kind": kind, "review": review}
     if not text:
         return back(False, NOT_SAVED + "write the rule first.", bad="text", why=why, target=choice, kind=kind)
     if redact.contains_secret(text) or redact.contains_secret(why):
@@ -1419,7 +1428,7 @@ def _do_add(root: str, proj: dict, form: dict[str, str], back) -> str:
     layer, _, scope = choice.partition("|")
     rule = kind != "guidance"
     try:
-        added = context.add(root, text, layer=layer, scope=scope, rule=rule, why=why)
+        added = context.add(root, text, layer=layer, scope=scope, rule=rule, why=why, review=review)
     except ValueError as exc:
         return back(False, NOT_SAVED + str(exc), bad="text", **keep)
     except Exception:
@@ -1430,7 +1439,8 @@ def _do_add(root: str, proj: dict, form: dict[str, str], back) -> str:
     if added.proposal:
         doc = "rules.md" if rule else "guidance.md"
         owners = _or_list([person_html(o, names, me) for o in added.owners])
-        h = (f'Proposed: {quoted} It waits for an owner of <code>{esc(doc)}</code>: {owners}. It is not in force yet. '
+        waits = f"an owner of <code>{esc(doc)}</code>: {owners}" if added.owners else f"an owner of <code>{esc(doc)}</code> (you can accept it yourself)"
+        h = (f'Proposed: {quoted} It waits for {waits}. It is not in force yet. '
              f'<a href="{esc(_u("/proposals", proj))}">See the proposal</a>')
         return back(True, f"Proposed: {text}", html=h)
     h = (f'Added to <code>{esc(added.path.name)}</code>: {quoted} It applies from the next session.{check} '
@@ -1545,7 +1555,9 @@ def make_handler(root: str, allowed_hosts: set[str], state: State | None = None)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Content-Security-Policy", CSP)
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")
+            # same-origin, not no-referrer: with no-referrer browsers send "Origin: null" on our own form
+            # POSTs, which the same-origin check (rightly) refuses. Nothing is sent to other sites either way.
+            self.send_header("Referrer-Policy", "same-origin")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Cache-Control", "no-store")
             for k, v in (extra or {}).items():
