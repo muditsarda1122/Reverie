@@ -447,6 +447,41 @@ def _print_report(report: dict, print_fn=print) -> None:
     print_fn(report["summary"]["message"])
 
 
+def report_items(repo_path, print_fn=print) -> None:
+    """What this repo's memory holds right now (the items `digest` lists), by kind."""
+    from collections import Counter
+
+    from . import deliver, items, spool
+    try:
+        conn = items.connect(spool.reverie_home() / "reverie.db", readonly=True)
+        try:
+            got = items.active(conn, deliver.repo_key(repo_path))
+        finally:
+            conn.close()
+    except Exception:
+        return
+    if not got:
+        print_fn("Memory for this repo: nothing yet. Rules and decisions appear as you work "
+                 "(`reverie digest` lists them).")
+        return
+    kinds = ", ".join(f"{n} {k.replace('_', ' ')}" for k, n in Counter(i["kind"] for i in got).most_common())
+    print_fn(f"Memory for this repo: {len(got)} items ({kinds}). `reverie digest` lists what was added recently.")
+
+
+def report_key_status(print_fn=print) -> None:
+    """Say loudly when no LLM key is visible: without one, nothing is ever extracted (the prompt
+    log, rules, `resume` and the UI still work)."""
+    from . import llm
+    env = llm.key_missing()
+    if env is None:
+        return
+    print_fn("")
+    print_fn(f"!! No LLM key found ({env} is not set in this shell).")
+    print_fn("   Reverie records your prompts, but it cannot extract rules or decisions without a key.")
+    print_fn(f"   Fix:  export {env}='your-key'   (put it in your shell profile, then restart your agent;")
+    print_fn("   an agent launched from a desktop icon does not see variables set only in a terminal).")
+
+
 def _resolve_status_repo(args) -> repos.RepoInfo:
     """The repo status reports on: explicit --repo/--branch, else git/env
     detection (same precedence as everywhere else)."""
@@ -509,10 +544,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         from . import repos
-        from .install import report_configured_servers
+        from .install import (
+            report_configured_servers,
+            report_instruction_staleness,
+            report_integration_notes,
+        )
         if args.all:
             _print_status_all(brain)
             report_configured_servers()
+            report_integration_notes()
+            report_instruction_staleness()
             return 0
         info = _resolve_status_repo(args)
         print(f"Reverie status — {info.repo_path} (branch {info.branch}).")
@@ -524,9 +565,13 @@ def main(argv: list[str] | None = None) -> int:
         manager = SessionManager(brain)
         row = manager.current_session(info.repo_path, info.branch)
         print(brain_summary(brain, row, branch=info.branch)["message"])
+        report_items(info.repo_path)
+        report_key_status()
         # Stale-path check (install fix): a moved/deleted venv breaks the
         # absolute command written to each harness config.
         report_configured_servers()
+        report_integration_notes()
+        report_instruction_staleness()
         return 0
     except (SessionError, review_gate.ReviewGateError, BrainError) as exc:
         print(str(exc), file=sys.stderr)

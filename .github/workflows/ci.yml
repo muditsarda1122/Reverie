@@ -18,9 +18,8 @@ jobs:
       - run: mypy
 
   test:
-    # One supported Python version for now: the pinned heavy deps
-    # (torch==2.2.2, numpy<2, scikit-learn<1.5) ship wheels for 3.12 only,
-    # matching requires-python = ">=3.12" and the mypy/ruff target py312.
+    # One supported Python version for now (requires-python = ">=3.12", and the
+    # mypy/ruff target is py312).
     strategy:
       fail-fast: false
       matrix:
@@ -35,9 +34,38 @@ jobs:
       - name: Cache embedding model
         uses: actions/cache@v4
         with:
-          path: ~/.cache/huggingface
-          key: hf-minilm-l6-v2-${{ runner.os }}-v1
+          path: ~/.cache/reverie
+          key: reverie-minilm-l6-v2-onnx-${{ runner.os }}-v1
       - name: Download embedding model
-        run: |
-          python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+        run: python -c "from reverie.embeddings import ensure_model; ensure_model(print)"
       - run: pytest tests/ -q
+  # The stranger's path: the one-command installer from a clean machine, on every OS we claim.
+  install-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh scripts/smoke_install.sh "$GITHUB_WORKSPACE"
+
+  # Windows is not claimed yet: this job tells us what breaks. Make it required (remove
+  # continue-on-error) once it is green, then drop the "WSL only" line from the README.
+  windows:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install smoke
+        shell: pwsh
+        run: ./scripts/smoke_install.ps1 -Src $env:GITHUB_WORKSPACE
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          pip install -e ".[dev]"
+          python -c "from reverie.embeddings import ensure_model; ensure_model(print)"
+          pytest tests/ -q

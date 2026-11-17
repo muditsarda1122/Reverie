@@ -37,7 +37,10 @@ reverie install                     # interactive: pick harnesses + provider
 reverie install --all               # every detected harness, no prompts
 reverie install --only claude_code,codex --provider anthropic
 reverie install --dry-run           # print every planned write; change nothing
+reverie install --trust-codex-hooks      # default: approve Reverie's own Codex hooks via Codex's API
+reverie install --no-trust-codex-hooks   # leave Codex hook approval to you (/hooks)
 reverie install --import memory.zip # restore an export on a new machine
+reverie install --refresh-instructions   # update only out-of-date instruction text already installed
 ```
 
 | Flag | Effect |
@@ -48,6 +51,7 @@ reverie install --import memory.zip # restore an export on a new machine
 | `--no-verify` | skip the live provider ping |
 | `--import FILE` | import a brain export during setup (only into an empty brain) |
 | `--dry-run` | print every planned write with its full content; write nothing |
+| `--refresh-instructions` | rewrite only Reverie's instruction text that is already installed and out of date (`~/.reverie/AGENTS.md` and the Reverie block in a harness's AGENTS.md, after the usage policy changed in a newer Reverie); nothing else is touched, a missing block is never created, text outside the block's markers is left alone; combine with `--dry-run` to preview. `reverie status` warns when this is needed |
 
 Exit: `0` configured (or dry run); `1` on `InstallError` — malformed agent
 config (invalid JSON/TOML/YAML), unknown `--only`/`--provider` key. No
@@ -93,8 +97,351 @@ reverie repos
 
 Output per repo: path, enablement state, active sessions, review
 candidates, conclusions grounded there, and the origin remote (when known).
-Undecided repos that were asked show `(asked once — still undecided)`.
 Exit: `0` always.
+
+## reverie usage
+
+Shows, per memory item, how often agents **used**, **ignored** or **contradicted**
+it (and how often it was **irrelevant** or rightly **overridden** by what you asked).
+Reverie logs every delivery (session start, before an edit, `query`) and, after an
+exchange is captured, one batched judge call labels the delivered items using your
+prompt, the real diff and the agent's reply. An item that agents keep contradicting is
+marked challenged and delivery says so. Turn the delivery log off with
+`REVERIE_NO_USAGE_LOG=1`.
+
+```bash
+reverie usage [--repo PATH]
+```
+
+Exit: `0` on success, `1` when there is no memory yet.
+
+## reverie merge
+
+Merges near-duplicate memory items for this repo: same kind, embeddings very
+close (`dedupe.merge_sim`), same polarity and numbers (so "never retry 429" is
+never merged with "retry 429"). The keeper is the user's own words, then the
+most-seen, then the oldest, and absorbs the others' "seen" counts; the others
+become `superseded` with the keeper named in `meta.merged_into`. Nothing is
+deleted. Runs by itself at most once a day at session start. Items that are
+near-identical but not yet merged are shown once, with "(seen N times)".
+
+```bash
+reverie merge [--repo PATH]
+```
+
+Exit: `0` on success, `1` when there is no memory yet.
+
+## reverie install: profiles
+
+An agent can have several config directories (`CLAUDE_CONFIG_DIR=~/.claude-work`,
+a second `~/.claude-*`, `CODEX_HOME`, a relocated `XDG_CONFIG_HOME`). Reverie
+never guesses which one your agent reads. If your shell's environment points at
+one, it installs there and lists the others. If several exist and nothing points
+at one, it asks (interactive) or stops and lists them (`--all` / `--only`).
+
+```bash
+reverie install --list-profiles                      # what is on this machine
+reverie install --profile claude_code=~/.claude-work   # choose explicitly (repeatable)
+reverie install --profile codex=~/.codex-alt
+```
+
+## reverie transcripts
+
+Reads the transcripts the harnesses already keep (Claude Code, Codex,
+opencode, Cursor) for this repo and its worktrees, and adds the new prompts
+and answers to the prompt log, redacted. This also runs on its own at session
+start, `summary` and `resume`, so headless, scripted and killed sessions are
+covered. A cursor (file + offset) means nothing is read twice; the raw
+transcripts are never copied. Exchanges not yet run through extraction are
+handed to a background worker. `REVERIE_NO_IMPORT=1` turns the automatic
+import off; a repo disabled with `reverie disable` is never read.
+
+```bash
+reverie transcripts [--repo PATH]
+```
+
+Exit: `0` always.
+
+## reverie resume
+
+Prints what a fresh agent needs to continue a cut-off session, in any
+harness: your rules, every prompt you sent in the session (verbatim, in
+order; the last may be unhandled), and the git state. The prompt log is
+written by the harness hooks (Claude Code: UserPromptSubmit/Stop) to
+`~/.reverie/spool/`, crash-safe and append-only.
+
+```bash
+reverie resume                  # latest session in this repo
+reverie resume --session <id>   # a specific session
+reverie resume --all            # every recorded prompt
+reverie resume --latest         # skip the picker, take the most recent session
+reverie resume --prompt 3       # prompt 3 of the session in full (the card trims long ones)
+```
+
+Chains across tools: when work was started in one tool and finished in another
+(the second session's first prompt asks to resume, for example "my session got cut
+off, run `reverie resume`"), the card links them. It continues the newest earlier
+session that had already ended, in any tool, and shows all of their prompts in
+order with the tool of each, under a line naming the chain. The "please resume"
+message itself is the link, not work, so it is left out. Without such a prompt
+nothing is linked (a heuristic on the log's order and wording, never an invented
+chain); `--session <id>` of the first session shows only that one, and `--all`
+still shows everything.
+
+Exit: `0` always.
+
+## reverie rules
+
+Your always-on rules, stored verbatim as markdown bullets: `~/.reverie/rules.md`
+(personal, every repo) and `<repo>/.reverie/rules.md` (shared through git).
+Agents read them at session start and never edit them.
+
+```bash
+reverie rules add "Never use print() for diagnostics"          # this repo
+reverie rules add --user "Prefer minimal diffs"                # everywhere
+reverie rules list
+```
+
+## reverie context
+
+Team context as plain markdown, in scopes. A document says where it applies: an
+org, a team, this repo, paths inside it, or you. Reverie has no list of roles.
+Anyone can contribute; who may accept or lock things is whatever your git
+setup already says (CODEOWNERS plus the git identity of whoever runs the command).
+
+Where documents live: `.reverie/context/*.md` (repo), `~/.reverie/context/*.md`
+(you), and folders of `.md` named in `.reverie/context.toml` (or `~/.reverie/context.toml`).
+Several orgs and teams can share one repo:
+
+```toml
+[sources]
+org  = ["../acme/org", "../globex/org"]
+team = ["../acme/payments", "../acme/platform"]
+```
+
+Format: a section headed Rules / Always / Never / Must holds rules, one per
+bullet; every other bullet is guidance, delivered as a pointer (`reverie show <id>`).
+A bullet may end with `{id: name}` (so another scope can answer the same rule),
+`{resolves: key}` (a recorded decision) and `(locked)`. Optional lines at the top
+of a document: `applies-to: repo-a, repo-b`, `applies-to-paths: services/billing/**`
+(the rules apply only to files under those paths; the edit hook delivers them
+when you touch such a file), `owner: whom to ask`, `inside: acme` (a team naming
+its org).
+
+How scopes combine: the narrower scope answers the wider (org, then team, then
+repo, then you) unless the wider rule is locked. Sibling scopes (two teams, two
+orgs) have no order; if their rules contradict, the conflict is UNRESOLVED: both
+are shown, neither is applied, and the agent is told to ask you. A lock only
+binds inside its own scope; two locks that contradict are unresolved too.
+Every conflict is listed with both rules, their owners and a status
+(overridden, locked or unresolved); nothing is dropped silently.
+
+```bash
+reverie context list                                   # scopes, conflicts, flags
+reverie context add "Error messages never blame the user"      # a rule, repo scope
+reverie context add --layer org --scope acme/org --locked --tag no-pii "Never log card numbers"
+reverie context add --paths "services/billing/**" "Amounts are integer cents"
+reverie context add --guidance --doc deploys "Deploys go through the staging gate"
+reverie context add --why "support asked" "Never blame the user"   # becomes a proposal if the folder has owners
+reverie context add --review "Never blame the user"               # a proposal even if you could add directly
+reverie context proposals                              # open proposals
+reverie context accept <name>                          # an owner moves a proposal into its document
+reverie context reject <name> --why "Ledgers use Decimal"   # an owner declines; the reason is kept
+reverie context propose "integer cents"                # one of YOUR rules -> a proposal for the team (default --layer team)
+reverie context propose a1b2c3d4 --layer org --scope acme/org --why "bit us twice"   # a memory rule by id
+reverie context propose "integer cents" --again --why "ledgers changed"    # a rule that was rejected before
+reverie context resolve <conflict-key> "Public APIs use REST, internal ones gRPC"
+reverie context check                                  # judge cross-scope conflicts + staleness
+reverie context check --since v1.2                     # recheck commits since a revision
+reverie context check --if-changed                     # quiet; only if a document or the code changed
+```
+
+`add` writes the bullet directly when nobody owns the target document or you are
+one of its owners. Otherwise it writes a proposal file under `proposals/` next to
+the document, to be reviewed like any pull request; an owner runs `accept`.
+`propose` is the promotion path: a rule you taught your agent (a bullet of
+`~/.reverie/rules.md` by its text or a unique fragment, a rule you stated that is stored
+as a memory item by id, or a personal context rule by id; agent-inferred items cannot be
+promoted) becomes a proposal for a team, org or repo document. Nothing leaves your
+personal scope until you run it. It follows the same permission as `add`: an owner of the
+target writes directly (self-approving), anyone else writes a proposal for the owners. The
+proposal carries your words verbatim, where the rule came from, the date, your usage
+counts when they exist, and your `--why`. A rule that looks like a secret is refused, not
+stripped; one already in a document or already proposed is refused as a duplicate.
+`reject` (owners only, `--why` required) moves the proposal to `proposals/rejected/` with
+the reason, who and when: it stays in git history and `context proposals` shows it to the
+proposer. It is never delivered to an agent. `propose` on a rule that was rejected refuses
+and prints the reason; `--again --why "what changed"` is the only way to re-propose it.
+After `accept`, your own copy is not deleted: it is hidden at DELIVERY time while the team
+rule is in force, and shown again as soon as that rule is removed, overridden by a narrower
+rule, or flagged outdated.
+
+**Behaviour change:** `context add` (and so `resolve`, and the UI's add form) now refuses text or a
+`--why` that looks like a secret, as `propose` always did: nothing is written, the value is not echoed.
+It used to accept it. `reverie rules add` is unchanged and still does not check.
+
+`resolve` writes a `{resolves: key}` decision into this repo's context (or a
+proposal for it): it settles the conflict and is remembered because it lives in git.
+An optional `authority` file (`legal = @dana, @sam`) only adds display labels to
+owner names; nothing in Reverie branches on a label.
+
+`check` calls the model (conflicts: one call per rule, cached by content;
+staleness: the diff judge on commits touching a bullet's backticked files and
+symbols). Results are kept in `~/.reverie/context_state.json`, never written into
+the shared documents.
+
+**Detection and the hint are separate.**
+- *Detection* (the judge above) runs only where a model call is allowed, never in a
+  hook: at the end of `context add` and `context accept` (when the document changed),
+  in a detached worker that session start launches when a document's content hash
+  or the repo's HEAD changed since the last run (`context check --if-changed`), and
+  once a day (a full recheck, with the daily merge job's cadence). A missing or
+  failing judge changes nothing: delivery is identical, nothing is recorded as
+  checked, and the next run tries again. Conflicts the judge found are then in the
+  start block as UNRESOLVED before the agent starts.
+- *The hint* is a mitigation, not detection: when more than one org or team source
+  applies, the start block carries one fixed line, "If two rules above seem to
+  contradict, ask before acting." It says nothing about whether a conflict exists;
+  repos with a single source pay no extra context.
+
+## reverie ui
+
+A page in your browser. It is a command, not a daemon: it serves on `127.0.0.1` until you press
+Ctrl-C. Reading changes nothing. Three buttons write, and only through the CLI's own functions
+(see "Writing from the page" below).
+
+```bash
+reverie ui                       # a free port, opens your browser
+reverie ui --port 8765           # a fixed port (says so if it is taken)
+reverie ui --no-open             # print the address only
+reverie ui --repo ~/code/api     # another repo (default: the current directory)
+```
+
+The page is a small team workspace. **Projects** (the home page) is a board of every repo
+Reverie knows on this machine, sorted into "Needs attention", "All clear" and "Turned off", with
+each project's conflicts, outdated rules, waiting proposals, rules in force and remembered items.
+Opening a project gives tabs: **Overview** (what needs action first, as lanes: conflicts between
+rules agents are told to ask about, rules that may be outdated, proposals waiting for an owner,
+each with the command that deals with it), **Rules** (team context: scopes, marks, conflicts),
+**Memory** (the shared memory grouped by kind, 100 items per page), **What agents are told**
+(exactly the text a session starts with, the same function the CLI uses), **Proposals** (waiting,
+and turned down with the reason) and **Connect** (the steps to set an agent up). The search box
+looks through the team rules and memory of the current project. "Add a project" and "Connect"
+are guided screens that show the exact command to run. A project that is turned off shows only
+that (its Connect tab still shows the steps to turn it back on), and refuses writes. Looking at the start block is not a delivery and is not
+counted in usage.
+
+Only repos Reverie already knows about (plus the one `--repo` points at) can be opened, by an
+opaque id; a path in the URL is never read.
+
+### Writing from the page
+
+Slice one is three buttons, nothing else:
+
+| Button | Calls | Same as |
+|---|---|---|
+| **Add** (project, "Add a rule") | `context.add` | `reverie context add` |
+| **Accept** (Proposals tab) | `context.accept` | `reverie context accept <name>` |
+| **Reject** (Proposals tab, a reason is required) | `context.reject` | `reverie context reject <name> --why ...` |
+
+The page has no write code of its own, so it refuses exactly where the CLI refuses. Add writes a
+rule or guidance straight into the document when nobody owns it or you are an owner (CODEOWNERS plus
+your git identity), and otherwise writes a proposal for the owners; the message after the write says
+which. Accept and reject are owner-only; a non-owner gets the CLI's refusal ("only the owners of
+rules.md can accept: ..."). Each screen shows the git identity the action will use and the owners of
+the document. Personal rules, turning a repo on or off, proposing from memory, adding a project and
+connecting an agent stay commands.
+
+- **Secrets:** text or a reason that looks like a secret is refused (nothing is written) and is never
+  shown again: the form comes back with that field empty, and the value is never in a URL. Other
+  refusals keep what you typed. (`context add` now refuses secrets on the CLI too; see above.)
+- **After a write:** the server answers `303` and the browser loads a normal page showing one message
+  ("Added to rules.md", "Written as a proposal ... the owners review it", "Refused: ..."). The message
+  is shown once; refreshing repeats nothing.
+- **The judge:** the page never runs it. Conflict checks stay with the detached session-start worker
+  and the daily job, which notice a changed document by its content hash.
+- **Safety of a POST:** the Host must be the bound address (DNS rebinding); `Origin` must be this
+  page's own origin, or `Sec-Fetch-Site: same-origin` when there is no `Origin`; a request with neither
+  header is refused, as is `cross-site`, `same-site` or `none`; the body must be a url-encoded form of
+  at most 16 KB; every form carries a random per-process token (no cookie) that is checked on every
+  POST. Anything else is 403, 405, 411, 413 or 415 and changes nothing. Writes are POST only, at
+  `/do/add`, `/do/accept` and `/do/reject`; a GET there is a 404. The project is the opaque id,
+  re-checked on every POST; a proposal is named by its exact name. The page cannot be framed
+  (`frame-ancestors 'none'`) and forms may only post to itself (`form-action 'self'`).
+
+Safety and privacy: GET and HEAD never change anything (a test crawls every page and write URL and
+compares the repo and `REVERIE_HOME` byte for byte); the brain is opened read-only (SQLite may
+create its own `-wal`/`-shm` files, the database is not changed); it binds to `127.0.0.1` and
+refuses a Host header that is not its own address; every value is HTML-escaped and passed through
+redaction (the start block is shown exactly as delivered); no script and no external resource, a
+strict Content-Security-Policy; no access log and no telemetry of any kind. The page never
+reports its own usage.
+
+## reverie show
+
+Prints one memory item in full (id prefix is enough), with its anchor,
+source, author and whether its file changed since it was verified.
+
+```bash
+reverie show a1b2c3d4
+```
+
+## reverie undo
+
+Reverses an automatically accepted item. Nothing Reverie remembers is
+permanent: `--restore` brings it back.
+
+```bash
+reverie undo a1b2c3d4
+reverie undo --restore a1b2c3d4
+```
+
+## reverie digest
+
+What Reverie remembered since you last looked, with who said it (you, or the
+agent's inference) and the undo command for each. There is no review gate;
+this is the occasional look. Session start nudges once enough has piled up.
+
+```bash
+reverie digest            # this repo, marks everything seen
+reverie digest --all      # every repo
+reverie digest --no-mark  # look without marking
+```
+
+## reverie stale
+
+Keeps memory true as the code moves. Git is only a trigger: for each commit
+since the last check, only memories whose anchors (files, or symbols in the
+diff) the commit touched are rechecked. The test suite runs first (at HEAD,
+clean tree only) and a failure is passed to the judge as evidence. A memory
+the judge finds CONTRADICTED is never silently rewritten: it is flagged
+(shown as stale wherever it is delivered) and a superseding **candidate** is
+stored for you to accept or reject. Session start launches a background check
+when new commits exist.
+
+```bash
+reverie stale check               # recheck since the last checked commit
+reverie stale check --since v1.2  # or since a revision
+reverie stale check --tests       # also run the project's tests as extra evidence (off by default)
+reverie stale list                # pending superseding candidates
+reverie stale accept <candidate>  # the candidate replaces the old memory
+reverie stale keep <memory>       # the old memory was fine; clear the flag
+```
+
+The first check in a repo only records HEAD as the baseline.
+
+## reverie promote
+
+Makes a memory item user-wide so it is delivered in every repo (the way to
+mark something "always" or "never"), or takes it back. Reverie also promotes
+by itself, but only agent-inferred preferences seen in two repos; repo facts
+and decisions never promote. Things you say that cover all your work ("I
+always ...") are user-wide from the start.
+
+```bash
+reverie promote a1b2c3d4
+reverie promote --demote a1b2c3d4   # back to the repo it came from
+```
 
 ## reverie review
 
@@ -137,7 +484,15 @@ session is reported. Timestamps show local time with the UTC offset. Also
 emitted by the `summary` MCP tool. Additionally checks that the server
 command written to each harness config still exists — a moved or deleted
 virtualenv breaks the absolute path, and the report then says to run
-`reverie install` again.
+`reverie install` again. It also warns when Reverie's Codex hooks are installed
+but not approved: Codex skips an unapproved hook silently, so none of Reverie's
+hooks would fire there. The warning says how many are unapproved and to run
+`reverie install` (which approves Reverie's own hooks) or type `/hooks` in Codex.
+The check is read-only (it asks Codex's own app-server, never approves anything),
+gives up after 10 seconds instead of hanging, and says so when it could not check.
+It also warns when the instruction text Reverie installed (`~/.reverie/AGENTS.md`,
+the Reverie block in a harness's AGENTS.md) is out of date after an upgrade, and
+points to `reverie install --refresh-instructions`.
 
 ```bash
 reverie status
@@ -273,9 +628,9 @@ reverie hook session-start --repo ~/code/app
 plain-text stdout is injected into the conversation at startup, so a fresh
 session sees Reverie's state and usage rules without a first tool call. The
 matching Stop hook (`reverie capture-turn`) captures the completed exchange.
-Three outputs, one per repo state: **enabled** — brain counts (conclusions
-in memory, candidates awaiting review) plus the usage rules; **undecided** —
-the first-time question for Claude to relay; **disabled** — a one-line
+Two outputs: **enabled** (the default for every repo) — brain counts
+(conclusions in memory, candidates awaiting review) plus the usage rules;
+**disabled** — a one-line
 "do not capture or retrieve here". Contract: read-only (no LLM, no writes,
 never creates a brain), quiet on error (not a git repo, unreadable brain →
 no output), always exits `0` — a hook can never break a session.
@@ -307,7 +662,7 @@ reverie capture-turn --repo ~/code/app --branch main
 | `--timeout SECONDS` | Extraction time limit (default: `20`) |
 
 A failed or timed-out capture is left in the pending queue; `reverie retry`
-retries it. Disabled and undecided repos capture nothing. Exit: always `0`.
+retries it. Disabled repos capture nothing. Exit: always `0`.
 
 Hook schemas and per-harness details: [`INTEGRATIONS.md`](INTEGRATIONS.md).
 
@@ -349,3 +704,4 @@ final export failed (nothing removed).
 | `REVERIE_HOME` | relocate the whole `~/.reverie` directory (tests, sandboxes) |
 | `REVERIE_REPO_PATH` + `REVERIE_BRANCH` | override repo/branch detection (both required; used by MCP launches outside a work tree and by tests) |
 | provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_ZEN_API_KEY`) | read from the environment at call time; never written to disk |
+| `REVERIE_PROVENANCE_TOOLS=0` | do not use tool output (test runs, command output) as evidence for a memory item; by default Claude Code's captured exchange includes the real tool results of that exchange (redacted, bounded), which can back facts but never a rule or preference |

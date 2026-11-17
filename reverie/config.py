@@ -294,6 +294,68 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "page_size": 10,
     },
 
+    # -- Continuity spine: typed memory items ---------------------------------
+    "capture": {
+        # "items": typed extractor -> two-stage dedupe -> auto-accepted items
+        # (undoable). "legacy": the old conclusion/candidate/review flow.
+        "mode": "items",
+    },
+    "dedupe": {
+        # Write path: a candidate with cosine similarity >= `high` to an existing
+        # item is dropped (and that item's "seen" counter goes up); everything
+        # else is kept. No LLM judge on write. Near-duplicates that survive are
+        # collapsed at delivery and merged by the periodic job (`merge_sim`).
+        "low": 0.55,              # below: clearly different (stage label only)
+        "high": 0.85,
+        "neighbors": 3,           # nearest items recorded per screen
+        "merge_sim": 0.88,        # periodic merge: cosine at/above which items merge (no LLM)
+        "merge_candidate_sim": 0.60,   # periodic merge: cosine at/above which a judge is asked
+        # A NEW user-said rule/decision/preference whose nearest existing items
+        # are at least this similar is shown to a "did the user reverse one of
+        # these?" judge. A reversal supersedes the old item (reversible with
+        # `reverie undo`); without this a stale rule kept being delivered next
+        # to its replacement. Fails safe: judge error -> nothing superseded.
+        "replace_min_sim": 0.40,
+        "replace": True,
+    },
+    "promotion": {
+        # Cross-repo learning. An AGENT-INFERRED item of one of these kinds
+        # that is seen in `min_repos` repos becomes user-wide. Repo facts and
+        # decisions never promote (their kinds are not listed here).
+        "kinds": ["preference"],
+        "min_repos": 2,
+    },
+    "stale": {
+        # Staleness worker (`reverie stale check`): per commit, only memories
+        # whose anchors the commit touched are rechecked.
+        "judge_workers": 4,
+        "diff_chars": 6000,       # diff shown to the judge per commit
+        # The diff judge is the evidence. Running the project's tests is optional extra
+        # evidence and OFF by default: it is slow, needs the project's environment, and
+        # is meaningless on a repo that is not green (httpx had 10 baseline failures).
+        # Turn on per run with `reverie stale check --tests`, or set this to true.
+        "run_tests": False,
+        "test_command": "",       # "" = `python -m pytest -q -x` when tests/ exists
+        "test_timeout": 300,
+    },
+    "deliver": {
+        # Session-start block size in characters. Rules are always included first;
+        # everything else is a pointer in the index, so a smaller cap loses index
+        # lines, never rules. Hooks harnesses cap injected context near 10 000.
+        "startup_chars": 8000,
+    },
+    "digest": {
+        "min_new_items": 5,       # nudge at session start once this many are new
+        "min_days": 3,            # ...or when the last digest is this old
+    },
+
+    # -- Pending extraction queue --------------------------------------------
+    "pending": {
+        # A queued extraction that has failed this many times is dropped.
+        # Unparseable (prose) model replies are never retried at all.
+        "max_retries": 5,
+    },
+
     # -- Contradiction handling (§12) ----------------------------------------
     "contradiction": {
         # Redundant with confidence.theta_contradiction_flag — that is what
@@ -335,6 +397,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enabled": True,    # spec §15 default; set False to disable for debugging
     },
 }
+
+
+def capture_mode(cfg: Any) -> str:
+    """``items`` (typed, auto-accepted) or ``legacy`` (candidates + review).
+    ``REVERIE_CAPTURE_MODE`` overrides the config (tests, emergencies)."""
+    env = os.environ.get("REVERIE_CAPTURE_MODE")
+    if env in ("items", "legacy"):
+        return env
+    capture = getattr(cfg, "capture", None)
+    return getattr(capture, "mode", "items")
 
 
 # ---------------------------------------------------------------------------

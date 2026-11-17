@@ -88,6 +88,195 @@ def _cmd_disable(args) -> int:
         brain.close()
 
 
+def _cmd_rules(args) -> int:
+    from . import rules
+    cwd = args.repo or "."
+    if args.action == "add":
+        text = " ".join(args.text)
+        try:
+            path = rules.add(text, level="user" if args.user else "repo",
+                             cwd=cwd)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(f"Added to {path}")
+        return 0
+    loaded = rules.load(cwd)
+    for label, key, path in (("personal", "user", rules.personal_path()),
+                             ("repo", "repo", rules.repo_path(cwd))):
+        items = rules.bullets(loaded[key])
+        print(f"{label} ({path}): {len(items)} rule(s)")
+        for item in items:
+            print(f"  - {item}")
+    return 0
+
+
+def _context_detect(root: str) -> None:
+    """After a document changed: judge it now (best effort, this is a command, not a
+    hook). A missing or failing judge changes nothing and prints nothing."""
+    import os
+    if os.environ.get("REVERIE_NO_BACKGROUND"):
+        return
+    from . import context_check
+    res = context_check.auto_check(root)
+    if res and res.get("conflicts"):
+        print(f"{res['conflicts']} conflict(s) between scopes: `reverie context list`.")
+
+
+def _cmd_context(args) -> int:
+    from . import context, spool
+    root = spool.repo_root(args.repo or ".")
+    if args.action in ("add", "resolve"):
+        text = " ".join(args.text[1:] if args.action == "resolve" else args.text)
+        paths = tuple(x.strip() for x in (args.paths or "").split(",") if x.strip())
+        try:
+            added = context.add(root, text, layer=args.layer or "repo", rule=not args.guidance,
+                              locked=args.locked, tag=args.tag or "", doc=args.doc or "",
+                              scope=args.scope or "", paths=paths, why=args.why or "",
+                              resolves=args.text[0] if args.action == "resolve" else "",
+                              review=bool(args.review))
+        except (ValueError, IndexError) as exc:
+            print(str(exc) or "usage: reverie context resolve <conflict-key> <decision>",
+                  file=sys.stderr)
+            return 2
+        if added.proposal:
+            who = f"The owners ({', '.join(added.owners)}) review" if added.owners else "An owner reviews"
+            print(f"Written as a proposal: {added.path}\n"
+                  f"{who} it like any pull request; "
+                  f"an owner runs `reverie context accept <name>`.")
+        else:
+            print(f"Added to {added.path}")
+            _context_detect(root)
+        return 0
+    if args.action == "propose":
+        from . import context_propose
+        paths = tuple(x.strip() for x in (args.paths or "").split(",") if x.strip())
+        try:
+            got = context_propose.propose(root, " ".join(args.text), layer=args.layer or "team",
+                                          scope=args.scope or "", paths=paths, why=args.why or "",
+                                          again=args.again, doc=args.doc or "")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        ar = got.result
+        if ar.proposal:
+            print(f"Proposed: {ar.path}\nThe owners ({', '.join(ar.owners)}) review it like any "
+                  f"pull request; an owner runs `reverie context accept <name>` or "
+                  f"`reverie context reject <name> --why ...`.")
+        else:
+            print(f"You own that document, so the rule was added directly: {ar.path}")
+            _context_detect(root)
+        print("Your own copy stays; it is simply not shown again while the team rule is in force.")
+        return 0
+    if args.action == "reject":
+        try:
+            dest = context.reject(root, args.text[0] if args.text else "", args.why or "")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(f"Rejected; the reason is kept in {dest}")
+        return 0
+    if args.action == "proposals":
+        found = context.proposals(root)
+        if not found:
+            print("No open proposals.")
+        for p in found:
+            print(f"{p['slug']}: {p['bullet']}  (by {p.get('proposed-by', '?')}, "
+                  f"for {p.get('document', '?')})")
+        for rj in context.rejected(root):
+            print(f"rejected {rj.get('rejected-on', '?')} {rj['slug']}: {rj['bullet']}  "
+                  f"-> {rj.get('reason', '')}")
+        return 0
+    if args.action == "accept":
+        try:
+            doc = context.accept(root, args.text[0] if args.text else "")
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(f"Accepted into {doc}")
+        _context_detect(root)
+        return 0
+    if args.action == "check":
+        from . import context_check
+        if args.if_changed:                    # the detached worker: quiet, skips if unchanged
+            context_check.auto_check(root)
+            return 0
+        cfg, judge = context_check._cfg_judge()
+        conflicts = context_check.find_conflicts(root, judge)
+        flags = context_check.check_stale(root, judge, since=args.since,
+                                          diff_chars=int(cfg.stale.diff_chars))
+        print(f"{len(conflicts)} conflict(s) between scopes, {len(flags)} newly outdated.")
+        for f in flags:
+            print(f"  [{f['id']}] {f['file']}: contradicted since commit "
+                  f"{f['commit'][:8]} ({f['reason']})")
+        return 0
+    res = context.resolve(root)
+    if not res.items:
+        print("No team context applies here. Put markdown in .reverie/context/ "
+              "(see docs/CLI.md, `reverie context`).")
+        return 0
+    lost = {o.id for c in res.conflicts for o in c.overridden}
+    for layer in context.LAYERS:
+        mine = [i for i in res.items if i.layer == layer]
+        if not mine:
+            continue
+        print(f"{layer} ({len({i.file for i in mine})} document(s)):")
+        for it in mine:
+            marks = [f for f, on in (("locked", it.locked), ("conflict", it.id in lost),
+                                     ("possibly outdated", it.id in res.stale)) if on]
+            tail = f"  [{', '.join(marks)}]" if marks else ""
+            where = f" (only under {', '.join(it.paths)})" if it.paths else ""
+            who = f" <{it.scope}>" if layer in ("org", "team") else ""
+            print(f"  [{it.id}]{who} {it.kind}{where}: {it.text}{tail}")
+    for c in res.conflicts:
+        names = " vs ".join(f"[{x.label}] {x.id}" for x in c.items)
+        print(f"conflict {c.key} ({c.status}): {names}" + (f" - {c.reason}" if c.reason else ""))
+    return 0
+
+
+def _cmd_stale(args) -> int:
+    from . import deliver, items, spool, staleness
+    from .config import get_config
+    root = spool.repo_root(args.repo or ".")
+    if not deliver.db_path().exists():
+        print("No Reverie memory yet.", file=sys.stderr)
+        return 1
+    conn = items.connect(deliver.db_path())
+    try:
+        key = deliver.repo_key(root)
+        if args.action == "check":
+            cfg = get_config()
+            if args.tests:
+                cfg.stale["run_tests"] = True
+            rep = staleness.check(conn, root, cfg, staleness.default_judge(cfg),
+                                  since=args.since)
+            print(f"Checked {rep.commits} commit(s); {rep.triggered} memory "
+                  f"recheck(s) of {rep.possible} possible; tests: {rep.tests}.")
+            for f in rep.flags:
+                print(f"  STALE [{f.memory_id[:8]}] after {f.commit[:8]} "
+                      f"({f.message}): {f.reason}")
+                print(f"    candidate [{(f.candidate_id or '')[:8]}]: "
+                      f"reverie stale accept {(f.candidate_id or '')[:8]}  |  "
+                      f"reverie stale keep {f.memory_id[:8]}")
+            return 0
+        if args.action == "list":
+            cands = staleness.pending(conn, key)
+            for c in cands:
+                print(f"[{c['id'][:8]}] replaces [{c['meta'].get('candidate_for','')[:8]}]: "
+                      f"{c['text']}\n    why: {c['meta'].get('reason', '')}")
+            if not cands:
+                print("No pending staleness candidates.")
+            return 0
+        if not args.id:
+            print("an id is required", file=sys.stderr)
+            return 2
+        fn = staleness.accept if args.action == "accept" else staleness.keep
+        print(fn(conn, args.id))
+        return 0
+    finally:
+        conn.close()
+
+
 def _strip_git(repo_key: str) -> str:
     return repo_key[: -len("/.git")] if repo_key.endswith("/.git") \
         else repo_key
@@ -117,8 +306,6 @@ def _cmd_repos(_args) -> int:
                   f"here: {conclusions}")
             if row["url"]:
                 print(f"    remote: {row['url']}")
-            if row["state"] == "undecided" and row["asked_at"]:
-                print("    (asked once — still undecided)")
         return 0
     finally:
         brain.close()
@@ -126,8 +313,19 @@ def _cmd_repos(_args) -> int:
 
 def _cmd_install(args) -> int:
     from . import install
+    if getattr(args, "list_profiles", False):
+        from . import profiles
+        for key, plist in profiles.discover().items():
+            print(f"{key}:" + ("" if plist else "  (none found)"))
+            for p in plist:
+                print(f"  {p.label()}")
+        return 0
+    if getattr(args, "refresh_instructions", False):
+        return install.refresh_instructions(dry_run=getattr(args, "dry_run", False))
     try:
         return install.run(
+            profile_args=getattr(args, "profile", None),
+            trust_codex_hooks=getattr(args, "trust_codex_hooks", True),
             all_agents=getattr(args, "all", False),
             only=[k.strip() for k in args.only.split(",") if k.strip()]
             if getattr(args, "only", None) else None,
@@ -194,6 +392,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true")
     p.add_argument("--only", default=None)
     p.add_argument("--provider", default=None)
+    p.add_argument("--profile", action="append", default=None, metavar="KEY=PATH",
+                   help="install into this config directory of a harness that can have "
+                        "several (claude_code=PATH, codex=PATH); repeatable")
+    p.add_argument("--trust-codex-hooks", action=argparse.BooleanOptionalAction, default=True,
+                   help="approve Reverie's own Codex hooks through Codex's API, as /hooks "
+                        "would (default); --no-trust-codex-hooks leaves that to you")
+    p.add_argument("--list-profiles", action="store_true",
+                   help="list every config directory found for each agent and exit")
+    p.add_argument("--refresh-instructions", action="store_true", dest="refresh_instructions",
+                   help="update only Reverie's already-installed instruction text that is out "
+                        "of date (~/.reverie/AGENTS.md and the Reverie block in a harness's "
+                        "AGENTS.md); nothing else is touched or created")
     p.add_argument("--no-verify", action="store_true")
     p.add_argument("--dry-run", action="store_true")
 
@@ -243,6 +453,115 @@ def _build_parser() -> argparse.ArgumentParser:
                              "(read-only; quiet on error; always exit 0)")
     hs.add_argument("--repo", default=None,
                     help="workspace path (default: current directory)")
+    p = sub.add_parser("transcripts", help="import new prompts/answers from the "
+                       "harnesses' own transcripts (Claude, Codex, opencode, "
+                       "Cursor) into the redacted prompt log")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p = sub.add_parser("resume", help="print rules + the verbatim prompt log "
+                       "+ git state, to continue a cut-off session in any "
+                       "harness")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p.add_argument("--session", default=None, help="a specific session id "
+                   "(default: the most recent one)")
+    p.add_argument("--all", action="store_true", dest="all_sessions",
+                   help="every recorded prompt, all sessions")
+    p.add_argument("--latest", action="store_true",
+                   help="the most recent session, without asking which")
+    p.add_argument("--prompt", type=int, default=None, metavar="N",
+                   help="print prompt N of the session in full (the resume card "
+                        "trims long prompts)")
+    p = sub.add_parser("undo", help="undo a remembered item (reversible)")
+    p.add_argument("id")
+    p.add_argument("--restore", action="store_true",
+                   help="bring an undone item back")
+    p = sub.add_parser("digest", help="what Reverie remembered since you "
+                       "last looked")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p.add_argument("--all", action="store_true", dest="all_repos",
+                   help="every repo, not just this one")
+    p.add_argument("--no-mark", action="store_true",
+                   help="do not mark everything as seen")
+    p = sub.add_parser("usage", help="which memory items agents actually used, ignored "
+                       "or contradicted")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p = sub.add_parser("merge", help="merge near-duplicate memory items "
+                       "(periodic; also run lazily at session start)")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p = sub.add_parser("stale", help="keep memory true as the code changes")
+    p.add_argument("action", choices=["check", "list", "accept", "keep"])
+    p.add_argument("id", nargs="?", default=None,
+                   help="accept: candidate id; keep: memory id")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p.add_argument("--since", default=None, metavar="REV",
+                   help="check: recheck commits after REV instead of the "
+                        "last checked commit")
+    p.add_argument("--tests", action="store_true",
+                   help="check: also run the project's tests first and give a "
+                        "failure to the judge as extra evidence (off by default)")
+    p = sub.add_parser("promote", help="make a memory item apply in every "
+                       "repo (always/never), or take it back")
+    p.add_argument("id")
+    p.add_argument("--demote", action="store_true",
+                   help="return a promoted item to the repo it came from")
+    p = sub.add_parser("show", help="print one memory item by id (prefix ok)")
+    p.add_argument("id")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p = sub.add_parser("rules", help="your always-on rules (markdown files)")
+    p.add_argument("action", choices=["add", "list"])
+    p.add_argument("text", nargs="*", help="rule text (add)")
+    p.add_argument("--user", action="store_true",
+                   help="personal rule (~/.reverie/rules.md, every repo); "
+                        "default is this repo's .reverie/rules.md")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p = sub.add_parser("context", help="layered team context (org > team > repo "
+                       "> personal), plain markdown in the repo")
+    p.add_argument("action", choices=["list", "add", "check", "proposals", "accept", "reject", "propose",
+                                         "resolve"])
+    p.add_argument("text", nargs="*", help="the rule or guidance text (add)")
+    p.add_argument("--layer", choices=["org", "team", "repo", "personal"], default=None,
+                   help="which layer's folder to write to (add: default repo; propose: default team)")
+    p.add_argument("--guidance", action="store_true",
+                   help="add as guidance (delivered as a pointer) instead of a rule (add)")
+    p.add_argument("--locked", action="store_true",
+                   help="lower layers cannot override this rule (add)")
+    p.add_argument("--tag", default=None,
+                   help="name the rule so another layer can answer it, {id: NAME} (add)")
+    p.add_argument("--scope", default=None,
+                   help="which org/team folder to write to when several are configured (add)")
+    p.add_argument("--paths", default=None,
+                   help="comma-separated globs: the rule applies only under these paths (add)")
+    p.add_argument("--why", default=None,
+                   help="why, written into the proposal for the owners (add, propose); "
+                        "the reason an owner gives (reject)")
+    p.add_argument("--review", action="store_true",
+                   help="write a proposal even if you could add directly, so an owner reviews it (add)")
+    p.add_argument("--again", action="store_true",
+                   help="propose a rule that was rejected before, with --why saying what changed")
+    p.add_argument("--since", default=None,
+                   help="check: recheck commits since this revision (default: last check)")
+    p.add_argument("--doc", default=None,
+                   help="document file name, without .md (add; default rules or guidance)")
+    p.add_argument("--if-changed", action="store_true", dest="if_changed",
+                   help="check: quiet; judge only if a document or the code changed since the "
+                        "last run (what the detached session-start worker runs)")
+    p.add_argument("--repo", default=None,
+                   help="repo path (default: current directory)")
+    p = sub.add_parser("ui", help="local web page: what agents are told, team context, "
+                       "proposals, memory; it writes only when you press add, accept or "
+                       "reject (stops on Ctrl-C)")
+    p.add_argument("--repo", default=None, help="repo path (default: current directory)")
+    p.add_argument("--port", type=int, default=0,
+                   help="port on 127.0.0.1 (default: a free one)")
+    p.add_argument("--no-open", action="store_true", dest="no_open",
+                   help="print the address but do not open a browser")
     sub.add_parser("capture-turn", help="capture the completed exchange "
                    "(invoked by the installed hook; reads hook JSON on "
                    "stdin)")
@@ -252,7 +571,7 @@ def _build_parser() -> argparse.ArgumentParser:
 #: Every first-class subcommand (order shown by `reverie --help`).
 SUBCOMMANDS = ("enable", "disable", "repos", "review", "status", "export",
                "import", "reset", "uninstall", "retry", "repair", "hook",
-               "capture-turn", "install")
+               "capture-turn", "install", "resume", "transcripts", "merge", "usage", "rules", "show", "undo", "digest", "stale", "promote", "context", "ui")
 
 
 def _unknown_command(word: str) -> int:
@@ -291,11 +610,31 @@ def _extract_client(argv: list[str]) -> list[str] | None:
     return rest
 
 
+def _version() -> str:
+    from .launch import installed_dist
+    found = installed_dist()
+    return found[1] if found else "unknown (not installed as a package)"
+
+
+def _utf8_streams() -> None:
+    """Reverie prints check marks and dashes; a Windows console in a legacy code page (cp1252) would
+    crash on them. Write UTF-8 and never fail on a character the terminal cannot show."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")    # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_streams()
     argv = list(sys.argv[1:] if argv is None else argv)
     argv = _extract_client(argv)
     if argv is None:
         return 2
+    if argv and argv[0] in ("--version", "-V", "version"):
+        print(f"reverie {_version()}")
+        return 0
     if not argv or argv[0] in ("--help", "-h"):
         _build_parser().print_help()    # the multi-command help
         return 0
@@ -326,6 +665,123 @@ def main(argv: list[str] | None = None) -> int:
         return integrations.capture_turn_main(argv[1:])
     args = _build_parser().parse_args(argv)
 
+    if args.command == "transcripts":
+        from . import importers
+        r = importers.run(args.repo or ".")
+        print(f"imported {r.prompts} prompt(s) and {r.answers} answer(s) from "
+              f"{r.sources} changed transcript(s) {r.by_harness or ''}; "
+              f"{r.queued} exchange(s) sent to extraction.")
+        return 0
+    if args.command == "resume":
+        from . import importers, rules, spool
+        cwd = args.repo or "."
+        importers.lazy(cwd)
+        print(spool.render_resume(cwd, session=args.session,
+                                  all_sessions=args.all_sessions,
+                                  latest=args.latest, full_prompt=args.prompt,
+                                  rules_text=rules.render(cwd)))
+        return 0
+    if args.command == "rules":
+        return _cmd_rules(args)
+    if args.command == "context":
+        return _cmd_context(args)
+    if args.command == "ui":
+        from . import spool, ui
+        return ui.serve(spool.repo_root(args.repo or "."), args.port, open_browser=not args.no_open)
+    if args.command == "usage":
+        from . import deliver, items, spool, usage
+        root = spool.repo_root(args.repo or ".")
+        if not deliver.db_path().exists():
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        conn = items.connect(deliver.db_path())
+        try:
+            rows = usage.report(conn, deliver.repo_key(root))
+        finally:
+            conn.close()
+        if not rows:
+            print("No usage recorded yet (it is judged after each captured exchange).")
+        for row in rows:
+            u = row["usage"]
+            tally = " ".join(f"{k.lower()}={u[k]}" for k in usage.LABELS if u.get(k))
+            flag = "  <- CHALLENGED: agents keep contradicting it" if row["challenged"] else ""
+            print(f"[{row['id'][:8]}] {row['kind']}: {row['text'][:80]}\n    {tally}{flag}")
+        return 0
+    if args.command == "merge":
+        from . import deliver, items, merge, spool
+        from .config import get_config
+        root = spool.repo_root(args.repo or ".")
+        if not deliver.db_path().exists():
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        conn = items.connect(deliver.db_path())
+        try:
+            from .dedupe import llm_judge
+            cfg = get_config()
+            rep = merge.run(conn, deliver.repo_key(root), cfg,
+                            judge=llm_judge(cfg, max_tokens=200))
+        finally:
+            conn.close()
+        for gone, keep in rep.merged:
+            print(f"merged [{gone[:8]}] into [{keep[:8]}]")
+        print(f"{len(rep.merged)} near-duplicate item(s) merged.")
+        from . import context_check
+        context_check.auto_check(root, force=True)     # team documents: same daily job
+        return 0
+    if args.command == "stale":
+        return _cmd_stale(args)
+    if args.command == "promote":
+        from . import deliver, items
+        if not deliver.db_path().exists():
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        conn = items.connect(deliver.db_path())
+        try:
+            it = items.get(conn, args.id)
+            if it is None:
+                print(f"No single item matches {args.id!r}.", file=sys.stderr)
+                return 1
+            fn = items.demote if args.demote else items.promote
+            ok = fn(conn, it["id"])
+            word = "back to its repo" if args.demote else "user-wide"
+            print(f"[{it['id'][:8]}] is now {word}." if ok else
+                  f"[{it['id'][:8]}] was not changed (already {word}).")
+            return 0
+        finally:
+            conn.close()
+    if args.command in ("undo", "digest"):
+        from . import deliver, items, spool
+        from . import digest as digest_mod
+        if not deliver.db_path().exists():
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        conn = items.connect(deliver.db_path())
+        try:
+            if args.command == "undo":
+                print(digest_mod.undo(conn, args.id, args.restore))
+            else:
+                key = None if args.all_repos else deliver.repo_key(
+                    spool.repo_root(args.repo or "."))
+                print(digest_mod.digest(conn, key, mark=not args.no_mark))
+        finally:
+            conn.close()
+        return 0
+    if args.command == "show":
+        from . import deliver, spool
+        ro = deliver.open_db()
+        if ro is None:
+            from . import context as team_context
+            text = team_context.show(spool.repo_root(args.repo or "."), args.id)
+            if text:
+                print(text)
+                return 0
+            print("No Reverie memory yet.", file=sys.stderr)
+            return 1
+        try:
+            print(deliver.show(ro, args.id, spool.repo_root(args.repo or ".")))
+        finally:
+            ro.close()
+        return 0
     if args.command == "enable":
         return _cmd_enable(args)
     if args.command == "disable":

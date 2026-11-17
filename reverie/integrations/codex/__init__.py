@@ -10,10 +10,14 @@ manifest proves Reverie created them.
 from __future__ import annotations
 
 import json
+import re
+import shlex
 import shutil
+import sys
 import tomllib
 from pathlib import Path
 
+from ... import launch, profiles
 from ..base import Integration
 from ..common import (
     _REVIEW_COMMAND_BODY,
@@ -34,6 +38,9 @@ from ..common import (
     _server_command,
     _verbatim_file,
 )
+
+HOOKS_START = "# reverie:hooks:start (managed by `reverie install`; do not edit)"
+HOOKS_END = "# reverie:hooks:end"
 
 #: Retired user prompts (Codex 0.163 no longer shows them). Kept so install
 #: and uninstall can clean up files an older Reverie created.
@@ -73,15 +80,15 @@ CODEX_SKILL_OPENAI = "allow_implicit_invocation: false\n"
 
 
 def _config_path(home: Path) -> Path:
-    return Path(home) / ".codex" / "config.toml"
+    return profiles.codex_dir(home) / "config.toml"
 
 
 def _agents_path(home: Path) -> Path:
-    return Path(home) / ".codex" / "AGENTS.md"
+    return profiles.codex_dir(home) / "AGENTS.md"
 
 
 def _prompts_dir(home: Path) -> Path:
-    return Path(home) / ".codex" / "prompts"
+    return profiles.codex_dir(home) / "prompts"
 
 
 def _skills_root(home: Path) -> Path:
@@ -172,8 +179,9 @@ def _table_block_end(lines: list[str], start: int) -> int:
     Reverie subtable."""
     return next(
         (i for i in range(start + 1, len(lines))
-         if lines[i].strip().startswith("[")
-         and not lines[i].strip().startswith("[mcp_servers.reverie.")),
+         if lines[i].strip().startswith(HOOKS_START[:20])
+         or (lines[i].strip().startswith("[")
+             and not lines[i].strip().startswith("[mcp_servers.reverie."))),
         len(lines),
     )
 
@@ -211,6 +219,7 @@ def _toml_plan(path: Path, home: Path, table: str) -> PlannedWrite:
         while end > start + 1 and not lines[end - 1].strip():
             end -= 1
         new = "\n".join(lines[:start] + replacement + lines[end:]) + "\n"
+    new = re.sub(r"\n{3,}(# reverie:hooks:start)", r"\n\n\1", new)   # keep one blank line
     if new == text:
         return PlannedWrite(
             path, "unchanged", None,
@@ -274,13 +283,128 @@ def _uninstall_toml(path: Path, home: Path,
         after=after, removed="[mcp_servers.reverie]")
 
 
+_HOOK_EVENTS = (("SessionStart", "start", 10), ("UserPromptSubmit", "prompt", 5),
+                ("Stop", "stop", 15))
+
+
+def _hook_command(tail: str) -> str:
+    """Shell command Codex runs for a hook (the stdlib shim)."""
+    if launch._is_pip_installed():
+        script = launch._script_path("reverie-codex-hook")
+        if script:
+            return f"{shlex.quote(script)} {tail}"
+    root = Path(__file__).resolve().parents[3]
+    python = root / ".venv" / "bin" / "python"
+    py = str(python if python.is_file() else sys.executable)
+    return (f"PYTHONPATH={shlex.quote(str(root))} {shlex.quote(py)} -m "
+            f"reverie.integrations.codex.shim {tail}")
+
+
+def _hooks_block() -> str:
+    lines = [HOOKS_START, "[features]", "hooks = true"]
+    for event, tail, timeout in _HOOK_EVENTS:
+        lines += ["", f"[[hooks.{event}]]", f"[[hooks.{event}.hooks]]",
+                  'type = "command"', f"command = {json.dumps(_hook_command(tail))}",
+                  f"timeout = {timeout}"]
+    lines.append(HOOKS_END)
+    return "\n".join(lines)
+
+
+def _hooks_plan(path: Path, home: Path, text: str | None) -> PlannedWrite:
+    """Add or refresh the managed hooks block. If the file already has its own
+    ``[features]`` table the block is not added (TOML forbids a duplicate); the
+    user is told to enable ``hooks = true`` there."""
+    disp = _display(path, home)
+    block = _hooks_block()
+    current = text if text is not None else ""
+    if HOOKS_START in current:
+        a = current.index(HOOKS_START)
+        b = current.index(HOOKS_END, a) + len(HOOKS_END)
+        new = current[:a] + block + current[b:]
+    else:
+        if "\n[features]" in "\n" + current:
+            block = block.replace("[features]\nhooks = true\n", "", 1)
+            block = block.replace(HOOKS_START, HOOKS_START + "\n# NOTE: set `hooks = true` "
+                                  "under your existing [features] table", 1)
+        new = current + ("" if current.endswith("\n") or not current else "\n") \
+            + ("\n" if current.strip() else "") + block + "\n"
+    try:
+        tomllib.loads(new)
+    except tomllib.TOMLDecodeError as exc:
+        raise InstallError(f"refusing to write {disp}: the hooks block would not parse "
+                           f"({exc}). No changes were made.") from exc
+    if new == current:
+        return PlannedWrite(path, "unchanged", None, f"{disp} hooks already up to date")
+    return PlannedWrite(path, "merge" if path.exists() else "create", new,
+                        f"Added Reverie hooks to {disp} (Codex runs them only after you "
+                        "approve them: type /hooks in Codex once)")
+
+
+def _strip_hooks(text: str) -> str:
+    if HOOKS_START not in text:
+        return text
+    a = text.index(HOOKS_START)
+    b = text.index(HOOKS_END, a) + len(HOOKS_END)
+    return (text[:a].rstrip("\n") + "\n" + text[b:].lstrip("\n")).lstrip("\n")
+
+
 class CodexIntegration(Integration):
     key = "codex"
     name = "Codex"
     binary = "codex"
     marker = ".codex/config.toml"
-    next_step = ("Restart Codex CLI; the reverie-review and reverie-status "
-                 "skills are available (use /skills or $reverie-review).")
+    next_step = ("Restart Codex CLI and type /hooks once to approve Reverie's three "
+                 "hooks (Codex skips unapproved hooks silently; until you approve, "
+                 "Reverie still reads your sessions from Codex's transcripts). "
+                 "The reverie-review and reverie-status skills are available "
+                 "(use /skills or $reverie-review).")
+
+    def approve_hooks(self, home: Path) -> tuple[bool, str] | None:
+        import os
+        if os.environ.get("REVERIE_NO_CODEX_TRUST"):          # tests never start codex
+            return None
+        from . import trust
+        report = trust.trust_reverie_hooks(profiles.codex_dir(home), Path.cwd())
+        if not report.ok:
+            return False, report.message
+        n = len(report.approved)
+        return True, (f"approved Reverie's {n} hook(s) through Codex's own API "
+                      "(the same thing /hooks does)" if n
+                      else "Reverie's hooks were already approved")
+
+    def status_notes(self, home: Path, environ, status_fn=None) -> list[tuple[bool, str]]:
+        """Codex runs a hook only once it is approved and skips an unapproved one
+        SILENTLY, so a user can believe Reverie works there when none of its hooks fire.
+        Warn when Reverie's hooks are installed in a Codex home but not approved.
+        Nothing is said when Codex has no Reverie hooks. Never approves anything."""
+        if environ.get("REVERIE_NO_CODEX_TRUST"):          # tests never start codex
+            return []
+        from . import trust
+        homes = [p.path for p in profiles.discover(home, environ).get("codex", [])]
+        homes.append(profiles.codex_dir(home, environ))
+        out: list[tuple[bool, str]] = []
+        seen: set[str] = set()
+        for codex_home in homes:
+            if str(codex_home) in seen or not trust.hooks_installed(codex_home):
+                continue
+            seen.add(str(codex_home))
+            counts = trust.untrusted_hooks(codex_home, status_fn=status_fn)
+            if counts is None:
+                out.append((True, f"Codex hooks ({codex_home}): installed, but approval could "
+                                  "not be checked (is `codex` available?)."))
+                continue
+            bad, total = counts
+            if total == 0:
+                continue
+            if bad:
+                out.append((False, f"! Codex hooks ({codex_home}): {bad} of {total} Reverie "
+                                   "hook(s) are NOT approved. Codex skips unapproved hooks "
+                                   "silently, so Reverie's session-start rules, capture and "
+                                   "edit-time rules do not run there. Run `reverie install` "
+                                   "(it approves Reverie's own hooks) or type /hooks in Codex."))
+            else:
+                out.append((True, f"Codex hooks ({codex_home}): all {total} approved."))
+        return out
 
     def install(self, home: Path, reverie_bin: str | None = None,
                 dry_run: bool = False, *,
@@ -289,9 +413,16 @@ class CodexIntegration(Integration):
         home = Path(home)
         reverie_home = Path(reverie_home) if reverie_home else home / ".reverie"
         ref = _agents_ref(home, reverie_home)
-        writes = [_toml_plan(
-            _config_path(home), home,
-            _table(reverie_bin, client=self.client_key))]
+        cfg = _config_path(home)
+        mcp = _toml_plan(cfg, home, _table(reverie_bin, client=self.client_key))
+        base = mcp.content if mcp.content is not None else (
+            cfg.read_text(encoding="utf-8") if cfg.exists() else "")
+        hooks = _hooks_plan(cfg, home, base)
+        if hooks.content is None:
+            writes = [mcp]
+        else:
+            writes = [PlannedWrite(cfg, "merge" if cfg.exists() else "create",
+                                   hooks.content, f"{mcp.detail}; {hooks.detail}")]
         agents = _agents_path(home)
         writes.append(_block_once(
             agents, home, POLICY_BLOCK_MARKER, _policy_block(),
@@ -317,8 +448,24 @@ class CodexIntegration(Integration):
         home = Path(home)
         reverie_home = Path(reverie_home) if reverie_home else home / ".reverie"
         ref = _agents_ref(home, reverie_home)
+        mcp_removal = _uninstall_toml(_config_path(home), home, manifest)
+        cfg = _config_path(home)
+        if cfg.exists() and HOOKS_START in cfg.read_text(encoding="utf-8") \
+                and mcp_removal.action in ("remove-entry", "unchanged", "delete-file"):
+            cur = cfg.read_text(encoding="utf-8")
+            stripped = _strip_hooks(
+                mcp_removal.after if mcp_removal.after is not None else cur)
+            if not stripped.strip() and mcp_removal.action != "unchanged" \
+                    and _owned_by_install(cfg, manifest):
+                mcp_removal = PlannedRemoval(cfg, "delete-file",
+                                             f"Removed {_display(cfg, home)} (Reverie created it)")
+            else:
+                mcp_removal = PlannedRemoval(
+                    cfg, "remove-entry",
+                    f"Removed Reverie's MCP table and hooks from {_display(cfg, home)}",
+                    after=stripped, removed="reverie table and hooks")
         removals = [
-            _uninstall_toml(_config_path(home), home, manifest),
+            mcp_removal,
             _plan_block(
                 _agents_path(home), home, _policy_block(),
                 POLICY_BLOCK_MARKER, self.key, manifest,

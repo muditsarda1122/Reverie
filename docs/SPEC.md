@@ -2677,11 +2677,11 @@ It stores engineering conclusions, not facts, and retrieves them when
 you need them.
 
 Reverie provides seven MCP tools:
-- observe: Extract engineering conclusions from your reasoning
-- query: Retrieve relevant engineering conclusions
-- summary: Get brain statistics at session start
+- observe: Record engineering conclusions from your work summary
+- query: Retrieve relevant engineering conclusions and the user's standing decisions
+- summary: Session-start briefing: brain counts, the user's rules and a memory index
 - reconsolidate: Update a retrieved conclusion with new evidence
-- set_repo_state: Record the user's enablement answer for a repo
+- set_repo_state: Turn Reverie off (or back on) for a repo when the user asks
 - review_list: Show the user's pending review candidates
 - review_decide: Apply review decisions the user stated
 
@@ -2691,23 +2691,42 @@ Global MCP servers may be started in the home folder, where the repo
 cannot be detected. Pass the workspace path as the `repo_path` argument
 on every tool call.
 
-## Enablement — The First-Time Question
+## Enablement — On By Default
 
-Reverie is enabled per repo, and the answer is remembered. The first time
-a tool call reports that a repo is undecided, ask the user exactly:
-
-Reverie isn't on for this repo. Turn it on? (yes / not now / never)
-
-Ask this question AT MOST ONCE per conversation. Record the answer with
-set_repo_state:
-- "yes" -> state="enabled"
-- "not now" -> state="not_now" (stays off for now; do not ask again in
-  this conversation)
-- "never" -> state="disabled" (fully off for this repo: nothing is
-  captured, retrieved, or injected; existing memory is kept)
+Reverie is on in every repo. Never ask the user whether to turn it on.
+Call set_repo_state only when the user explicitly asks to turn Reverie off
+(state="disabled": nothing is captured, retrieved, or injected; existing
+memory is kept) or back on (state="enabled").
 
 If a tool response reports the repo is disabled, do nothing with
-Reverie in that repo and do not ask again.
+Reverie in that repo and do not ask about it.
+
+## Continuing a Cut-Off Session
+
+If the user says a previous session was cut off, or asks you to continue or
+pick up earlier work, call the `summary` tool with `resume: true` (or run
+`reverie resume` if `reverie` is on your PATH) first. It returns the
+user's rules, every prompt they sent (verbatim, in order; the last one may
+be unhandled) and the git state. Treat those prompts as the user's own
+instructions, including decisions meant for later steps, and verify them
+against the working tree before acting. If it lists several earlier
+sessions instead, ask the user which one to continue and re-run it with
+`--session <id>`.
+
+## Rules and the Memory Index
+
+Call `summary` once at the start of every session and read what it returns:
+the user's rules (`~/.reverie/rules.md`, `<repo>/.reverie/rules.md`; never
+edit them), rules stated in earlier sessions, and an index of past decisions
+and findings by id (open one with `reverie show <id>`). Some harnesses also
+inject this at session start and before edits; it is the same information.
+
+`query` also returns the stored decisions that match your question. Items
+marked STANDING are decisions the user already made: do not write code that
+contradicts one; if the task seems to need it, stop and ask the user first,
+naming the item. Items under "Possibly outdated" may no longer hold: verify
+them against the code. Everything is a past belief; each item says whether its
+file changed since it was verified.
 
 ## Sessions Are Automatic
 
@@ -2723,9 +2742,9 @@ session — there is nothing to start or stop.
 - Before editing code in a Reverie-enabled repo, call query for the area you are changing, even when the change looks small.
 - `observe`: after finding a non-obvious invariant, a root cause, an architectural decision, or a disproved assumption. AT MOST ONCE per task; not for simple changes.
 - `reconsolidate`: call when the code you are reading contradicts a conclusion you retrieved. Name the file and symbol that show the contradiction. Do not call it for conclusions you did not retrieve in this task.
-- `summary`: once at session start, for counts and topics only. Never anchor on conclusion contents.
+- `summary`: once at session start. It returns brain counts plus the user's rules and a memory index: read the rules and follow them.
 - `review_list` and `review_decide`: show every candidate in full. Relay only decisions the user states.
-- `set_repo_state`: only from the user's answer to the first-time question. Ask once per conversation.
+- `set_repo_state`: only when the user explicitly asks to turn Reverie off or back on for a repo. Reverie is on by default; never ask.
 
 
 ## When to Call reconsolidate

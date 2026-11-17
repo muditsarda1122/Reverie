@@ -78,11 +78,11 @@ It stores engineering conclusions, not facts, and retrieves them when
 you need them.
 
 Reverie provides seven MCP tools:
-- observe: Extract engineering conclusions from your reasoning
-- query: Retrieve relevant engineering conclusions
-- summary: Get brain statistics at session start
+- observe: Record engineering conclusions from your work summary
+- query: Retrieve relevant engineering conclusions and the user's standing decisions
+- summary: Session-start briefing: brain counts, the user's rules and a memory index
 - reconsolidate: Update a retrieved conclusion with new evidence
-- set_repo_state: Record the user's enablement answer for a repo
+- set_repo_state: Turn Reverie off (or back on) for a repo when the user asks
 - review_list: Show the user's pending review candidates
 - review_decide: Apply review decisions the user stated
 
@@ -92,23 +92,42 @@ Global MCP servers may be started in the home folder, where the repo
 cannot be detected. Pass the workspace path as the `repo_path` argument
 on every tool call.
 
-## Enablement — The First-Time Question
+## Enablement — On By Default
 
-Reverie is enabled per repo, and the answer is remembered. The first time
-a tool call reports that a repo is undecided, ask the user exactly:
-
-Reverie isn't on for this repo. Turn it on? (yes / not now / never)
-
-Ask this question AT MOST ONCE per conversation. Record the answer with
-set_repo_state:
-- "yes" -> state="enabled"
-- "not now" -> state="not_now" (stays off for now; do not ask again in
-  this conversation)
-- "never" -> state="disabled" (fully off for this repo: nothing is
-  captured, retrieved, or injected; existing memory is kept)
+Reverie is on in every repo. Never ask the user whether to turn it on.
+Call set_repo_state only when the user explicitly asks to turn Reverie off
+(state="disabled": nothing is captured, retrieved, or injected; existing
+memory is kept) or back on (state="enabled").
 
 If a tool response reports the repo is disabled, do nothing with
-Reverie in that repo and do not ask again.
+Reverie in that repo and do not ask about it.
+
+## Continuing a Cut-Off Session
+
+If the user says a previous session was cut off, or asks you to continue or
+pick up earlier work, call the `summary` tool with `resume: true` (or run
+`reverie resume` if `reverie` is on your PATH) first. It returns the
+user's rules, every prompt they sent (verbatim, in order; the last one may
+be unhandled) and the git state. Treat those prompts as the user's own
+instructions, including decisions meant for later steps, and verify them
+against the working tree before acting. If it lists several earlier
+sessions instead, ask the user which one to continue and re-run it with
+`--session <id>`.
+
+## Rules and the Memory Index
+
+Call `summary` once at the start of every session and read what it returns:
+the user's rules (`~/.reverie/rules.md`, `<repo>/.reverie/rules.md`; never
+edit them), rules stated in earlier sessions, and an index of past decisions
+and findings by id (open one with `reverie show <id>`). Some harnesses also
+inject this at session start and before edits; it is the same information.
+
+`query` also returns the stored decisions that match your question. Items
+marked STANDING are decisions the user already made: do not write code that
+contradicts one; if the task seems to need it, stop and ask the user first,
+naming the item. Items under "Possibly outdated" may no longer hold: verify
+them against the code. Everything is a past belief; each item says whether its
+file changed since it was verified.
 
 ## Sessions Are Automatic
 
@@ -242,6 +261,15 @@ _OLLAMA_INSTALL_INSTRUCTIONS = (
     "    and set these keys in ~/.reverie/config.yaml:\n"
     f"{_OLLAMA_CONFIG_SNIPPET}"
 )
+#: measured in the httpx product test: the offline default captured 4 of 13 planted facts,
+#: took 145 s on one exchange and timed out on another; a hosted small model got 12 of 13.
+_LOCAL_MODEL_NOTE = (
+    "  ! Local models keep everything on your machine, but what Reverie remembers depends on\n"
+    "    the model. In one test the offline default (qwen2.5-coder:14b) kept 4 of 13 planted\n"
+    "    facts and timed out on a long exchange; a hosted small model kept 12 of 13. If you\n"
+    "    use Ollama, pick a coding-capable model at least that strong (and raise llm.timeout),\n"
+    "    or keep a hosted provider for extraction."
+)
 _OLLAMA_OFFER = (
     f"\nConfigure Reverie for offline use with Ollama ({OLLAMA_MODEL})? "
     "(y/n): "
@@ -263,6 +291,28 @@ def _export_hint(entry: providers.Provider) -> str:
     return f"export {entry.api_key_env}='your-key'{url}"
 
 
+def _prepare_embedding_model(dry_run: bool, print_fn) -> bool:
+    """Download the embedding model now (about 90 MB, once, kept in the machine cache), so the
+    first session does not pay for it. A failure is a warning, never an install failure: the same
+    download is retried the first time Reverie needs it."""
+    from . import embeddings
+    print_fn("\nPreparing the embedding model...")
+    if embeddings.model_ready():
+        print_fn("  ✓ already downloaded")
+        return True
+    if dry_run:
+        print_fn("  [dry-run] would download the embedding model (about 90 MB, once)")
+        return True
+    try:
+        embeddings.ensure_model(lambda m: print_fn(f"  {m}"))
+    except embeddings.EmbeddingError as exc:
+        print_fn(f"  ! {exc}")
+        print_fn("    The rest of the install is unaffected; Reverie retries when it first needs it.")
+        return False
+    print_fn("  ✓ downloaded and checked")
+    return True
+
+
 def _provider_guidance() -> str:
     """Provider-agnostic key guidance (non-interactive no-key output)."""
     lines = [
@@ -274,8 +324,8 @@ def _provider_guidance() -> str:
         entry = providers.REGISTRY[key]
         if entry.api_key_env and entry.key_required:
             lines.append(f"  {_export_hint(entry)}")
-    lines.append("  (or run a local model via Ollama — see the Ollama "
-                 "section below when the binary is absent)")
+    lines.append("  (a local model also works: `reverie install --provider ollama`, "
+                 "but extraction quality depends on the model)")
     return "\n".join(lines)
 
 
@@ -349,6 +399,7 @@ def _configure_provider(reverie_home: Path, home: Path, entry: providers.Provide
     )
     _emit(write, home, dry_run, print_fn)
     if entry.key == "ollama":
+        print_fn(_LOCAL_MODEL_NOTE)
         if ollama_path:
             print_fn(f"  ✓ Ollama detected ({ollama_path})")
         if dry_run:
@@ -379,6 +430,7 @@ def _configure_provider(reverie_home: Path, home: Path, entry: providers.Provide
                      "re-run `reverie install`.")
     if entry.key != "ollama" and ollama_path:
         print_fn(_OLLAMA_FALLBACK_NOTE)
+        print_fn("    (it is a weak extractor for this job: see `reverie install --provider ollama`.)")
 
 
 def _live_ping(config) -> tuple[bool, str]:
@@ -454,7 +506,7 @@ def _provider_menu(input_fn, print_fn, environ) -> str | None:
 
 
 #: The distribution name importlib.metadata looks up (pyproject.toml).
-DIST_NAME = "reverie"
+DIST_NAME = "reverie-mem"
 #: Console script launching the MCP server (pyproject [project.scripts]).
 MCP_CONSOLE_SCRIPT = "reverie-mcp"
 #: The `reverie` console script binding this build expects (pyproject.toml).
@@ -732,6 +784,21 @@ def _command_exists(command: str, which=shutil.which) -> bool:
     return which(command) is not None
 
 
+def supported_agent_names() -> list[str]:
+    """The agents `reverie install` can set up today, by their human names, in install order."""
+    return [agent.name for agent in AGENTS]
+
+
+def configured_agent_names(home: Path | None = None) -> list[str]:
+    """The human names of the agents whose config launches Reverie, in AGENTS order: what `reverie status`
+    lists under "MCP server command", and what the UI's Connect page says is set up."""
+    out = []
+    for server in configured_servers(home):
+        agent = _AGENTS_BY_KEY.get(server.agent)
+        out.append(agent.name if agent else server.agent)
+    return out
+
+
 def report_configured_servers(print_fn=print, home: Path | None = None,
                               which=shutil.which) -> bool:
     """``reverie status``: verify every configured harness's server command
@@ -754,6 +821,78 @@ def report_configured_servers(print_fn=print, home: Path | None = None,
                      "virtualenv was moved or deleted. Run `reverie install` "
                      "again.")
     return ok_all
+
+
+def _instruction_drift(home: Path, reverie_home: Path) -> list[PlannedWrite]:
+    """Planned rewrites of Reverie's own instruction text that is ALREADY installed but out of
+    date: the owned ``~/.reverie/AGENTS.md`` and the marker-delimited block in a harness's
+    AGENTS.md. Only action "update" counts: a block or file that does not exist yet is never
+    created here, and nothing else (MCP entries, hooks, config.yaml) is looked at."""
+    drift: list[PlannedWrite] = []
+    for w in _reverie_home_plans(home, reverie_home):
+        if w.path.name == "AGENTS.md" and w.action == "update":
+            drift.append(w)
+    for agent in AGENTS:
+        try:
+            plans = agent.install(home, None, True, reverie_home=reverie_home)
+        except Exception:
+            continue
+        drift += [w for w in plans if w.path.name == "AGENTS.md" and w.action == "update"]
+    unique: dict[str, PlannedWrite] = {}
+    for w in drift:
+        unique.setdefault(str(w.path), w)
+    return list(unique.values())
+
+
+def report_instruction_staleness(print_fn=print, home: Path | None = None,
+                                 reverie_home: Path | None = None) -> bool | None:
+    """``reverie status``: warn when installed instruction text is out of date (the usage
+    policy changed in a newer Reverie). None when nothing is installed or all is current."""
+    home = Path(home) if home else Path.home()
+    rhome = Path(reverie_home) if reverie_home else _default_reverie_home()
+    try:
+        drift = _instruction_drift(home, rhome)
+    except Exception:
+        return None
+    for w in drift:
+        print_fn(f"! {_display(w.path, home)}: Reverie's instructions there are out of date "
+                 "(the usage policy changed). `reverie install --refresh-instructions` "
+                 "updates only that text.")
+    return False if drift else None
+
+
+def refresh_instructions(home: Path | None = None, reverie_home: Path | None = None,
+                         print_fn=print, dry_run: bool = False) -> int:
+    """Rewrite installed-but-stale Reverie instruction text and nothing else. Text outside
+    the markers of a block is untouched; a missing block is not created."""
+    home = Path(home) if home else Path.home()
+    rhome = Path(reverie_home) if reverie_home else _default_reverie_home()
+    drift = _instruction_drift(home, rhome)
+    if not drift:
+        print_fn("Reverie's installed instructions are up to date.")
+        return 0
+    for w in drift:
+        _emit(w, home, dry_run, print_fn)
+    return 0
+
+
+def report_integration_notes(print_fn=print, home: Path | None = None,
+                             environ=None) -> bool | None:
+    """``reverie status``: let each integration say what needs the user's attention (for
+    example hooks that are installed but that the harness will not run). Read-only.
+    Returns False when any integration printed a warning, True when all were fine,
+    None when nothing was said."""
+    env = os.environ if environ is None else environ
+    result: bool | None = None
+    for agent in AGENTS:
+        try:
+            notes = agent.status_notes(Path(home) if home else Path.home(), env)
+        except Exception:
+            notes = []
+        for ok, line in notes:
+            print_fn(line)
+            result = (result is not False) and ok
+    return result
 
 
 #: Integration lookup for the installer's --only validation and status.
@@ -918,13 +1057,88 @@ def _select_interactive(detected: list[Integration], input_fn, print_fn
 
 
 # ---------------------------------------------------------------------------
+# which profile (config directory) of a harness to install into
+# ---------------------------------------------------------------------------
+
+def _choose_profiles(selected, home: Path, environ, profile_args: list[str] | None,
+                     interactive: bool, input_fn, print_fn) -> dict[str, str]:
+    """-> {ENV VAR: path} overrides for harnesses whose config dir can be relocated.
+
+    Never guesses. One profile: use it. This shell's environment points at one:
+    use it and mention the others. Several and no pointer: ``--profile KEY=PATH``
+    decides; otherwise ask (interactive) or refuse with the list (scripted)."""
+    from . import profiles as prof
+    found = prof.discover(home, environ)
+    wanted: dict[str, str] = {}
+    for arg in profile_args or []:
+        key, _, path = arg.partition("=")
+        if key not in prof.ENV_FOR or not path:
+            raise InstallError(f"--profile expects KEY=PATH with KEY one of "
+                               f"{', '.join(sorted(prof.ENV_FOR))} (got {arg!r})")
+        wanted[key] = str(Path(path).expanduser())
+    overrides: dict[str, str] = {}
+    for agent in selected:
+        var = prof.ENV_FOR.get(agent.key)
+        if var is None:
+            continue
+        if agent.key in wanted:
+            overrides[var] = wanted[agent.key]
+            continue
+        options = found.get(agent.key, [])
+        active = [p for p in options if p.active]
+        others = [p for p in options if not p.active]
+        if active:
+            if others:
+                print_fn(f"\n{agent.name}: installing into {active[0].path} (this shell's "
+                         f"{var}). Also found: {', '.join(str(p.path) for p in others)} "
+                         f"(install there with --profile {agent.key}=PATH).")
+            continue
+        if len(options) <= 1:
+            continue
+        if not interactive:
+            raise InstallError(
+                f"{agent.name} has several config directories and nothing says which one "
+                f"your agent reads:\n  " + "\n  ".join(p.label() for p in options) +
+                f"\nRe-run with --profile {agent.key}=PATH (or set {var}).")
+        print_fn(f"\n{agent.name} has several config directories:")
+        for i, p in enumerate(options, 1):
+            print_fn(f"  [{i}] {p.label()}")
+        try:
+            raw = input_fn("Install into which one? (number): ")
+        except EOFError:
+            raw = ""
+        try:
+            overrides[var] = str(options[int(raw.strip()) - 1].path)
+        except (ValueError, IndexError):
+            raise InstallError(f"no valid choice for {agent.name}; nothing was written. "
+                               f"Use --profile {agent.key}=PATH.") from None
+    return overrides
+
+
+# ---------------------------------------------------------------------------
 # the installer
 # ---------------------------------------------------------------------------
+
+def _approve_hooks(agent, home: Path, print_fn) -> bool:
+    """Approve an integration's own hooks where the harness needs it (Codex).
+    Failure is not an error: the user can still approve them in the harness."""
+    result = agent.approve_hooks(home)
+    if result is None:
+        return False
+    ok, detail = result
+    if ok:
+        print_fn(f"  ✓ {agent.name}: {detail}")
+        return True
+    print_fn(f"  ! {agent.name} hooks not approved automatically ({detail}). "
+             "Type /hooks in Codex once to approve them.")
+    return False
+
 
 def run(*, home: Path | None = None, reverie_home: Path | None = None,
         all_agents: bool = False, only: list[str] | None = None,
         dry_run: bool = False, provider: str | None = None,
-        reconfigure: bool = False,
+        reconfigure: bool = False, profile_args: list[str] | None = None,
+        trust_codex_hooks: bool = True,
         no_verify: bool = False, verify_fn=None, import_file: str | None = None,
         check_fn=None, input_fn=input, print_fn=print,
         which=shutil.which, environ=os.environ,
@@ -996,6 +1210,29 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
         print_fn("  No supported agents detected. Configure one anyway with "
                  "--only (e.g. `python -m reverie.install --only claude_code`).")
 
+    # -- which profile of each relocatable harness ----------------------------
+    interactive = only is None and not all_agents
+    overrides = _choose_profiles(selected, home, environ, profile_args, interactive,
+                                 input_fn, print_fn)
+    saved_env = {k: os.environ.get(k) for k in overrides}
+    os.environ.update(overrides)
+    try:
+        return _install_rest(
+            home, reverie_home, selected, detected, existing_llm, config_existed, dry_run,
+            provider, reconfigure, no_verify, verify_fn, import_file, check_fn, input_fn,
+            print_fn, which, environ, runner, trust_codex_hooks)
+    finally:
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _install_rest(home, reverie_home, selected, detected, existing_llm, config_existed,
+                  dry_run, provider, reconfigure, no_verify, verify_fn, import_file,
+                  check_fn, input_fn, print_fn, which, environ, runner,
+                  trust_codex_hooks=True) -> int:
     # -- per-agent configuration -------------------------------------------
     writes: list[tuple[str | None, PlannedWrite]] = []
     for agent in selected:
@@ -1016,6 +1253,12 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             owned_entries.setdefault(str(Path(write.path).resolve()),
                                      []).extend(write.owned_entries)
 
+    codex_trusted = False
+    if not dry_run and trust_codex_hooks:
+        for agent in selected:
+            if agent.key == "codex":
+                codex_trusted = _approve_hooks(agent, home, print_fn)
+
     # -- ~/.reverie bootstrap (§28.2) -------------------------------------------
     # review fix 48: only announce directory creation when it happens.
     if not reverie_home.exists():
@@ -1034,12 +1277,18 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
     if import_file is not None and not dry_run:
         _import_during_install(reverie_home, import_file, print_fn)
 
+    # -- one-time data disclosure ---------------------------------------------
+    _show_disclosure(reverie_home, dry_run, print_fn)
+
+    _prepare_embedding_model(dry_run, print_fn)
+
     # -- LLM provider (§28.8 + feat/providers) -----------------------------
     print_fn("\nChecking LLM provider...")
     ollama_path = which(OLLAMA_BINARY)
 
     chosen: providers.Provider | None = None
     verify_existing = False
+    can_ask = input_fn is not input or sys.stdin.isatty()     # a person is there to answer
     if provider is not None:
         entry = providers.get(provider)
         if entry is None or provider == "custom":
@@ -1068,20 +1317,25 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
             entry = providers.REGISTRY[key]
             print_fn(f"  ✓ {providers.key_env_for(entry, environ)} detected "
                      f"({entry.name})")
-        if len(detected_keys) == 1:
-            try:
-                answer = input_fn(
-                    f"\nConfigure Reverie for "
-                    f"{providers.REGISTRY[detected_keys[0]].name} "
-                    f"using {providers.key_env_for(providers.REGISTRY[detected_keys[0]], environ)}? "
-                    "(Y/n): ")
-            except EOFError:
-                answer = ""
-            if answer.strip().lower() in ("", "y", "yes"):
-                chosen = providers.REGISTRY[detected_keys[0]]
-        if chosen is None:
-            menu_choice = _provider_menu(input_fn, print_fn, environ)
-            chosen = providers.get(menu_choice)
+        # No question when one key is already set: use it and say how to change it. With several
+        # keys (or none) a person at a terminal gets the menu; a piped, non-interactive run
+        # (`curl ... | sh`) takes the first key found, or none, and names the one thing to do.
+        if len(detected_keys) == 1 or (detected_keys and not can_ask):
+            chosen = providers.REGISTRY[detected_keys[0]]
+            others = [providers.REGISTRY[k].name for k in detected_keys[1:]]
+            print_fn(f"  · using {chosen.name}"
+                     + (f" (also found: {', '.join(others)})" if others else "")
+                     + "; change it with `reverie install --provider <name>`")
+        elif can_ask:
+            chosen = providers.get(_provider_menu(input_fn, print_fn, environ))
+
+    if chosen is not None:
+        if chosen.key_required:
+            print_fn(f"  · Privacy: to extract rules and decisions, Reverie sends your redacted prompts "
+                     f"and code diffs to {chosen.name}, a third party. Redaction is pattern-based and "
+                     "best-effort. Nothing else leaves your machine; there is no telemetry.")
+        else:
+            print_fn(f"  · Privacy: {chosen.name} runs locally; your prompts and diffs stay on this machine.")
 
     ping_ok = True
     if chosen is not None:
@@ -1104,7 +1358,7 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
                      "choose \"Local via Ollama\", or set these keys in "
                      "~/.reverie/config.yaml:")
             print_fn(_OLLAMA_CONFIG_SNIPPET)
-        else:
+        elif can_ask:
             print_fn(_OLLAMA_INSTALL_INSTRUCTIONS)
 
     # Record what this run created (folded in, hashes as written) so the
@@ -1169,25 +1423,58 @@ def run(*, home: Path | None = None, reverie_home: Path | None = None,
         print_fn(f"  {agent.name}:")
         for w in agent_writes:
             print_fn(f"    ✓ {_display(w.path, home)}")
-        if agent.next_step:
+        if agent.key == "codex" and codex_trusted:
+            print_fn("    Next: restart Codex CLI. Reverie's three hooks are approved "
+                     "(`reverie install --no-trust-codex-hooks` leaves that to you).")
+        elif agent.next_step:
             print_fn(f"    Next: {agent.next_step}")
     if not selected:
         print_fn("  (no agents configured — run `reverie install --only "
                  "<agent>` when ready)")
     print_fn("\nCommands:")
-    print_fn("  reverie review   Review pending candidates (terminal UI)")
-    print_fn("  reverie enable / reverie disable / reverie repos")
-    print_fn("  reverie export / reverie import / reverie reset")
+    print_fn("  reverie digest   See what Reverie remembered (undo any item with `reverie undo <id>`)")
+    print_fn("  reverie status   Check it is working, and that an LLM key is visible")
+    print_fn("  reverie resume   Continue a cut-off session in any agent")
+    print_fn("  reverie enable / reverie disable / reverie repos / reverie export")
     print_fn("\nHow to use:")
     print_fn("  1. Open your coding agent and restart it so the MCP server "
              "loads")
     print_fn("  2. Work normally — in an enabled repo, sessions are "
              "automatic per branch and never need closing")
-    print_fn("  3. The agent asks once whether to turn Reverie on for a new "
-             "repo (your answer is remembered)")
-    print_fn("  4. Review candidates with `reverie review`, or say \"show my "
-             "Reverie candidates\" in the agent")
+    print_fn("  3. Reverie is on in every repo; opt a repo out with "
+             "`reverie disable` inside it")
+    print_fn("  4. Check `reverie status` once: it says if no LLM key is visible "
+             "(nothing is extracted without one)")
     return 0
+
+
+#: Shown once at install (a marker file records it). Reverie is on by default
+#: in every repo, so the user must be told what leaves the machine up front.
+DISCLOSURE = """\
+Data disclosure
+  Reverie turns your coding sessions into memory by sending content to an
+  LLM: your prompts, the agent's final answers and its work summaries go to
+  the provider you configure below (nothing is sent anywhere else). Choose
+  a local provider to keep it all on this machine.
+  Reverie is ON by default in every repo. Opt a repo out at any time with
+  `reverie disable` inside it; existing memory is kept."""
+
+_DISCLOSURE_MARKER = ".disclosure-shown"
+
+
+def _show_disclosure(reverie_home: Path, dry_run: bool, print_fn) -> bool:
+    """Print the one-time disclosure. Returns True when it was shown."""
+    marker = reverie_home / _DISCLOSURE_MARKER
+    if marker.exists():
+        return False
+    print_fn("\n" + DISCLOSURE)
+    if not dry_run:
+        try:
+            reverie_home.mkdir(parents=True, exist_ok=True)
+            marker.write_text("shown\n", encoding="utf-8")
+        except OSError:
+            pass
+    return True
 
 
 def _import_during_install(reverie_home: Path, import_file: str, print_fn) -> None:

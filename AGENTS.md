@@ -78,6 +78,12 @@ brain directory for isolation.
 
 These commands were verified from a clean virtualenv with Python 3.12.
 
+Run the tests with that environment's Python (`.venv/bin/python -m pytest -q`), never a system or conda
+Python: the embedding tests need the ONNX embedding model (about 90 MB, downloaded once into
+`~/.cache/reverie/models`, or `$REVERIE_MODEL_DIR`) and fail with `EmbeddingError` without it: run
+`python -c "from reverie.embeddings import ensure_model; ensure_model(print)"` once. CI installs the same
+way (`pip install -e ".[dev]"` plus the cached model).
+
 ## Before you commit
 
 1. `pytest -q`, `ruff check reverie tests bench conftest.py` and `mypy` all

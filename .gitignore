@@ -25,6 +25,7 @@ htmlcov/
 runs/
 *.db
 *.sqlite
+!tests/fixtures/*.sqlite
 *.sqlite3
 *.log
 
@@ -45,6 +46,7 @@ runs/
 /demo/
 /starlette-baseline/
 /prompt.md
+/x-replies.json
 docs/handoffs/
 docs/ASSESSMENT.md
 docs/SPEC_AUDIT.md
@@ -53,3 +55,8 @@ docs/EC_TECHNICAL_REFERENCE.md
 
 # --- Scripts --- #
 find-orgs.sh
+# Hallmark working folder (screenshots, before/after records)
+.hallmark/
+
+# --- Design review screenshots (regenerate: see design/after/README.md and design/live/README.md) ---
+design/*/screenshots/

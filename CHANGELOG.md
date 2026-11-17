@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0]
+
+- **The PyPI package is named `reverie-mem`** (`reverie` was taken). The command is still `reverie`. An install made before the rename keeps working; `reverie --version` and the uninstall hint find either name.
+
+### Changed
+- **Install is one command and about a minute.** `curl -LsSf https://raw.githubusercontent.com/muditsarda1122/Reverie/main/scripts/install.sh | sh` (see `scripts/install.sh`) installs `uv` if needed, installs Reverie as an isolated tool and runs `reverie install`. The embedding model now runs on ONNX Runtime instead of PyTorch: the same `all-MiniLM-L6-v2` vectors (cosine 1.0 against the PyTorch output in our check), a ~170 MB install instead of ~1.2 GB, and a ~0.2 s model load instead of ~10 s. The ~90 MB model files are downloaded once by `reverie install` into `~/.cache/reverie/models` (`REVERIE_MODEL_DIR` moves it) and checked against pinned SHA-256 hashes. PyTorch, `transformers`, `sentence-transformers`, `scikit-learn`, `scipy` and `hdbscan` are no longer dependencies: the legacy conclusion-clustering task is skipped without `pip install 'reverie[cluster]'`, and `pip install 'reverie[torch]'` keeps the PyTorch backend. Existing stored embeddings stay valid.
+- `reverie install` asks no question when an API key is already set: it uses that provider and says how to change it (`--provider`). With no key it names the one thing to do and finishes the rest of the install. The Ollama install walkthrough is gone from the no-key path (`--provider ollama` still works).
+- Remembered conclusions now show their confidence (the stored belief strength after the brain's time decay, e.g. `0.72 (high)`): on the Memory card, on the item page, and in `reverie show`. Items that have no conclusion behind them show nothing, because nothing is measured for them.
+- `reverie ui` is redesigned (the "Ink" design, `design.md`). The project board shows only what waits on you; each project has Overview, Rules, Memory, What agents are told, Proposals and Connect tabs; every rule and remembered item has its own page (`/rule`); Search groups Rules and Memory; Add says what will happen to a rule before you add it, with a link to the result; Turned off, Not found and Something went wrong have their own pages (a failure shows no trace). Names come from git identities, with the email in a tooltip. Still no JavaScript and no external resources, and every check the server made before (token, host, origin, size, ownership, secrets, turned off) is unchanged.
+- `reverie show` prints more of an item: when it was remembered, last verified, how agents have used it (in words), a challenged line, and for a team rule the conflict reason, the winner and the commit message that made it stale.
+- The start text now records which limit cut each rule (line limit, character budget, rules-file limit, whole-text limit) through `deliver.startup_report`; `startup_text` returns exactly what it did.
+- Tests run with the `.venv` Python and need the ONNX embedding model on disk; `AGENTS.md` and `CONTRIBUTING.md` say so.
+
 ## [0.2.0] - 2026-10-26
 
 First release since 0.1.0. Reverie is early: see the README for known limits.

@@ -1,0 +1,243 @@
+"""Typed memory items — storage, STDLIB ONLY (sqlite3), safe for hooks.
+
+See the ``items`` table in schema.sql. Writes are plain INSERT/UPDATE on a WAL
+database with a busy timeout: append-only in spirit (an item is never edited;
+a changed fact is a NEW item that supersedes the old one), no explicit lock.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import time
+import uuid
+from pathlib import Path
+
+from .redact import redact
+
+KINDS = ("rule", "decision", "rejected_approach", "work_state", "preference",
+         "environment", "external_context", "open_question")
+SOURCES = ("user_said", "agent_inferred")
+LEVELS = ("user", "repo", "team")
+STATUSES = ("active", "stale", "superseded", "undone", "candidate")
+
+DDL = """
+CREATE TABLE IF NOT EXISTS items (
+    id TEXT PRIMARY KEY, repo_key TEXT, text TEXT NOT NULL, kind TEXT NOT NULL,
+    anchor_json TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL,
+    author TEXT NOT NULL DEFAULT 'agent', level TEXT NOT NULL DEFAULT 'user',
+    grounding_commit TEXT, last_verified TEXT, status TEXT NOT NULL DEFAULT 'active',
+    evidence TEXT, supersedes TEXT, created_at TEXT NOT NULL, embedding BLOB,
+    meta_json TEXT NOT NULL DEFAULT '{}');
+CREATE INDEX IF NOT EXISTS idx_items_repo ON items(repo_key);
+CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
+CREATE TABLE IF NOT EXISTS stale_state (
+    repo_key TEXT PRIMARY KEY, last_commit TEXT, checked_at TEXT);
+"""
+
+
+def connect(db: str | Path, *, readonly: bool = False) -> sqlite3.Connection:
+    if readonly:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=5)
+    else:
+        conn = sqlite3.connect(str(db), timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.executescript(DDL)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def anchor(files=(), symbols=(), type_: str | None = None) -> dict:
+    files, symbols = list(files), list(symbols)
+    kind = type_ or ("symbol" if symbols else "file" if files else "repo")
+    return {"type": kind, "files": files, "symbols": symbols}
+
+
+def add(conn: sqlite3.Connection, *, text: str, kind: str, source: str,
+        repo_key: str | None, anchor_: dict | None = None, author: str = "agent",
+        level: str = "user", grounding_commit: str | None = None,
+        evidence: str | None = None, supersedes: str | None = None,
+        embedding: bytes | None = None, meta: dict | None = None,
+        status: str = "active") -> str:
+    if kind not in KINDS:
+        raise ValueError(f"unknown kind {kind!r}")
+    if status not in STATUSES:
+        raise ValueError(f"unknown status {status!r}")
+    if source not in SOURCES:
+        raise ValueError(f"unknown source {source!r}")
+    if level not in LEVELS:
+        raise ValueError(f"unknown level {level!r}")
+    text = redact(text)                  # secrets never reach the store
+    evidence = redact(evidence) if evidence else evidence
+    if not text.strip():
+        raise ValueError("empty text")
+    if source == "agent_inferred" and not (evidence or "").strip():
+        raise ValueError("agent-inferred items need evidence")
+    item_id = str(uuid.uuid4())
+    conn.execute(
+        "INSERT INTO items (id, repo_key, text, kind, anchor_json, source, author,"
+        " level, grounding_commit, last_verified, status, evidence, supersedes,"
+        " created_at, embedding, meta_json)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (item_id, repo_key, text if source == "user_said" else text.strip(), kind,
+         json.dumps(anchor_ or anchor()), source, author, level, grounding_commit,
+         _now() if grounding_commit else None, status, evidence, supersedes,
+         _now(), embedding,
+         json.dumps({"seen": 1, "seen_repos": [repo_key] if repo_key else [],
+                     **(meta or {})})))
+    if supersedes and status == "active":
+        conn.execute("UPDATE items SET status='superseded' WHERE id=? "
+                     "AND status='active'", (supersedes,))
+    conn.commit()
+    return item_id
+
+
+def supersede(conn: sqlite3.Connection, new_id: str, old_ids: list[str]) -> list[str]:
+    """``new_id`` replaces ``old_ids`` (the user changed their mind). The old
+    items are kept, marked superseded, and remembered on the new item so
+    ``undo`` of the new one brings them back. Returns the ids superseded."""
+    done = []
+    for old in old_ids:
+        cur = conn.execute("UPDATE items SET status='superseded' WHERE id=? "
+                           "AND status='active' AND id != ?", (old, new_id))
+        if cur.rowcount:
+            done.append(old)
+    if done:
+        conn.commit()
+        set_meta(conn, new_id, {"superseded_ids": done})
+    return done
+
+
+def set_status(conn: sqlite3.Connection, item_id: str, status: str) -> bool:
+    if status not in STATUSES:
+        raise ValueError(status)
+    cur = conn.execute("UPDATE items SET status=? WHERE id=?", (status, item_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def get(conn: sqlite3.Connection, id_or_prefix: str) -> dict | None:
+    rows = conn.execute("SELECT * FROM items WHERE id LIKE ?",
+                        (id_or_prefix + "%",)).fetchall()
+    return _row(rows[0]) if len(rows) == 1 else None
+
+
+def active(conn: sqlite3.Connection, repo_key: str | None,
+           with_embedding: bool = False) -> list[dict]:
+    """Active items for this repo plus user-wide ones (repo_key NULL)."""
+    try:
+        rows = conn.execute(
+            "SELECT * FROM items WHERE status='active' AND "
+            "(repo_key = ? OR repo_key IS NULL) ORDER BY created_at",
+            (repo_key,)).fetchall()
+    except sqlite3.OperationalError:       # table missing: brain pre-dates it
+        return []
+    return [_row(r, with_embedding) for r in rows]
+
+
+def _row(r: sqlite3.Row, with_embedding: bool = False) -> dict:
+    d = dict(r)
+    d["anchor"] = json.loads(d.pop("anchor_json") or "{}")
+    d["meta"] = json.loads(d.pop("meta_json") or "{}")
+    if not with_embedding:
+        d.pop("embedding", None)
+    return d
+
+
+def bump_seen(conn: sqlite3.Connection, item_id: str,
+              repo_key: str | None) -> dict:
+    """A duplicate of this item was seen again: corroboration. Records the
+    repos it was seen in (used to promote user-wide items). Returns meta."""
+    row = conn.execute("SELECT meta_json FROM items WHERE id=?",
+                       (item_id,)).fetchone()
+    if row is None:
+        return {}
+    meta = json.loads(row["meta_json"] or "{}")
+    meta["seen"] = int(meta.get("seen", 1)) + 1
+    repos_seen = list(meta.get("seen_repos") or [])
+    if repo_key and repo_key not in repos_seen:
+        repos_seen.append(repo_key)
+    meta["seen_repos"] = repos_seen
+    conn.execute("UPDATE items SET meta_json=? WHERE id=?",
+                 (json.dumps(meta), item_id))
+    conn.commit()
+    return meta
+
+
+def promote(conn: sqlite3.Connection, item_id: str,
+            seen_in: str | None = None) -> bool:
+    """Make an item user-wide: delivered in every repo. Reversible (demote)."""
+    row = conn.execute("SELECT repo_key, meta_json FROM items WHERE id=?",
+                       (item_id,)).fetchone()
+    if row is None or row["repo_key"] is None:
+        return False
+    meta = json.loads(row["meta_json"] or "{}")
+    meta["origin_repo"] = row["repo_key"]
+    seen = list(meta.get("seen_repos") or [])
+    if seen_in and seen_in not in seen:
+        seen.append(seen_in)
+    meta["seen_repos"] = seen
+    meta["promoted_at"] = _now()
+    conn.execute("UPDATE items SET repo_key=NULL, level='user', anchor_json=?, "
+                 "meta_json=? WHERE id=?",
+                 (json.dumps(anchor(type_="user")), json.dumps(meta), item_id))
+    conn.commit()
+    return True
+
+
+def demote(conn: sqlite3.Connection, item_id: str) -> bool:
+    """Undo a promotion: back to the repo it came from."""
+    row = conn.execute("SELECT repo_key, meta_json FROM items WHERE id=?",
+                       (item_id,)).fetchone()
+    if row is None or row["repo_key"] is not None:
+        return False
+    meta = json.loads(row["meta_json"] or "{}")
+    origin = meta.get("origin_repo")
+    if not origin:
+        return False
+    meta.pop("promoted_at", None)
+    conn.execute("UPDATE items SET repo_key=?, level='repo', anchor_json=?, "
+                 "meta_json=? WHERE id=?",
+                 (origin, json.dumps(anchor()), json.dumps(meta), item_id))
+    conn.commit()
+    return True
+
+
+def set_meta(conn: sqlite3.Connection, item_id: str, patch: dict) -> None:
+    """Merge ``patch`` into an item's meta (None values delete keys)."""
+    row = conn.execute("SELECT meta_json FROM items WHERE id=?", (item_id,)).fetchone()
+    if row is None:
+        return
+    meta = json.loads(row["meta_json"] or "{}")
+    for k, v in patch.items():
+        if v is None:
+            meta.pop(k, None)
+        else:
+            meta[k] = v
+    conn.execute("UPDATE items SET meta_json=? WHERE id=?", (json.dumps(meta), item_id))
+    conn.commit()
+
+
+def max_rowid(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT MAX(rowid) AS m FROM items").fetchone()
+    return int(row["m"] or 0)
+
+
+def recent(conn: sqlite3.Connection, after_rowid: int = 0,
+           repo_key: str | None = None,
+           statuses: tuple[str, ...] = ("active",)) -> list[dict]:
+    """Items added after the watermark ``after_rowid`` (rowid is monotonic for
+    an append-only table, so there is no same-second ambiguity)."""
+    marks = ",".join("?" * len(statuses))
+    sql = (f"SELECT *, rowid AS rid FROM items WHERE rowid > ? "
+           f"AND status IN ({marks})")
+    args: list = [after_rowid, *statuses]
+    if repo_key is not None:
+        sql += " AND (repo_key = ? OR repo_key IS NULL)"
+        args.append(repo_key)
+    return [_row(r) for r in conn.execute(sql + " ORDER BY rowid", args)]

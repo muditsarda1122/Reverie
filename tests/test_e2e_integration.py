@@ -234,8 +234,15 @@ def _call_tool(server: ReverieServer, name: str, arguments: dict | None = None) 
     return json.loads(response["result"]["content"][0]["text"])
 
 
+_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+
 def _group_ecu_ids(payload: dict) -> set[str]:
-    ids = set()
+    """Core ids from the compact wire ``ids`` plus every id in ``formatted``
+    (the wire payload no longer carries the structured ``groups`` twin)."""
+    import re
+    ids = set(payload.get("ids", []))
+    ids.update(re.findall(_UUID, payload.get("formatted", "")))
     for group in payload.get("groups", []):
         ids.add(group["core_ecu"]["id"])
         for slot in ("supporting_evidence", "contradictions",
@@ -387,8 +394,7 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         assert marker in formatted, f"§11.8 marker missing: {marker}"
     assert ("This is past engineering understanding. "
             "Verify against current code before acting.") in formatted
-    has_grounding = "GROUNDING:" in formatted or any(
-        g["core_ecu"]["grounding"].get("files") for g in result["groups"])
+    has_grounding = "GROUNDING:" in formatted
     assert has_grounding, "no grounding surfaced in any retrieved group"
     print("[f4] §11.8 structure verified (CONCLUSION/CONFIDENCE/SCOPE/TYPE/"
           "SOURCE/GROUNDING + framing note)")
@@ -478,10 +484,7 @@ def test_e2e_full_pipeline(model, monkeypatch, capsys):
         "the later conversation must resume the SAME session — sessions "
         "are never closed")
     assert row["status"] == "active"
-    canonical_cores = {
-        g["core_ecu"]["id"] for g in result2["groups"]
-        if g["core_ecu"]["brain"] == "canonical"
-    }
+    canonical_cores = set(result2["ids"])
     assert canonical_cores & promoted_ids, (
         "promoted ECUs not retrievable in the later conversation")
     print("[h] same session resumed (%s); canonical ECUs surfaced: %s"
@@ -856,7 +859,7 @@ class TestE2EOffline:
             "query": "How does auth token refresh work?",
             "mode": "debugging"})
         assert payload["status"] == "ok"
-        core_ids = [g["core_ecu"]["id"] for g in payload["groups"]]
+        core_ids = list(payload["ids"])
         assert set(core_ids) == {old_id, fresh_id}
         assert core_ids[0] == fresh_id and core_ids[1] == old_id, \
             "effective confidence must outrank stored confidence"

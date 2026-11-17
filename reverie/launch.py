@@ -20,14 +20,28 @@ REVERIE_CLI_MODULE = "reverie.cli"
 HOOK_ARGS_TAIL = ["hook", "session-start"]
 
 
-def _is_pip_installed() -> bool:
-    """True when ``reverie`` is pip-installed (editable counts)."""
+#: The PyPI distribution name ("reverie" was taken, so the package is reverie-mem; the command is
+#: still `reverie`). Installs made before the rename used the old name, so both are looked up.
+DIST_NAMES = ("reverie-mem", "reverie")
+
+
+def installed_dist() -> tuple[str, str] | None:
+    """(distribution name, version) of the installed package, or None (not pip-installed)."""
     try:
         from importlib import metadata
-        metadata.version("reverie")
-        return True
-    except Exception:            # not installed / metadata unreadable
-        return False
+    except Exception:
+        return None
+    for name in DIST_NAMES:
+        try:
+            return name, metadata.version(name)
+        except Exception:        # not installed / metadata unreadable
+            continue
+    return None
+
+
+def _is_pip_installed() -> bool:
+    """True when Reverie is pip-installed (editable counts)."""
+    return installed_dist() is not None
 
 
 def _script_candidates(script: str, executable: str | None = None) -> list[Path]:
@@ -65,7 +79,9 @@ def _reverie_script_path(executable: str | None = None,
 
 def reverie_command(tail: list[str] | None = None,
                     executable: str | None = None,
-                    which=shutil.which) -> tuple[str, list[str]]:
+                    which=shutil.which, *,
+                    script_name: str = REVERIE_CONSOLE_SCRIPT,
+                    module: str = REVERIE_CLI_MODULE) -> tuple[str, list[str]]:
     """``(command, args)`` that launch ``reverie <tail>`` from any cwd.
 
     pip install → the ABSOLUTE ``reverie`` console script beside the running
@@ -78,10 +94,12 @@ def reverie_command(tail: list[str] | None = None,
     """
     tail = list(tail or [])
     if _is_pip_installed():
-        script = _reverie_script_path(executable, which)
+        script = (_reverie_script_path(executable, which)
+                  if script_name == REVERIE_CONSOLE_SCRIPT
+                  else _script_path(script_name, executable, which))
         if script is not None:
             return script, tail
-        return executable or sys.executable, ["-m", REVERIE_CLI_MODULE, *tail]
+        return executable or sys.executable, ["-m", module, *tail]
     root = Path(__file__).resolve().parent.parent
     python: str | None = None
     for candidate in (root / ".venv" / "bin" / "python",          # POSIX venv
@@ -92,9 +110,10 @@ def reverie_command(tail: list[str] | None = None,
     if python is None:   # no project venv — the running interpreter has reverie
         python = sys.executable
     argv = " ".join(shlex.quote(part)
-                    for part in (python, "-m", REVERIE_CLI_MODULE, *tail))
+                    for part in (python, "-m", module, *tail))
     return f"PYTHONPATH={shlex.quote(str(root))} {argv}", []
 
 
 #: Descriptive alias for callers that just want "how do I launch it".
 launch_command = reverie_command
+

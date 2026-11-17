@@ -139,11 +139,12 @@ def test_review_list_by_topic_groups(server, brain):
         ["auth-2", "auth-1", "db-1"]
 
 
-def test_review_list_gated_on_undecided_repo(brain):
+def test_review_list_gated_on_disabled_repo(brain):
     manager = SessionManager(brain)
     s = ReverieServer(brain=brain, manager=manager)
+    call_tool(s, "set_repo_state", {"state": "disabled"})
     payload, result = call_tool(s, "review_list")
-    assert payload["status"] == "needs_consent"
+    assert payload["status"] == "disabled"
     assert result["isError"] is True
 
 

@@ -19,7 +19,7 @@ pip install -e ".[dev]"
 ## Test commands
 
 ```bash
-pytest -q                      # ~990 tests, fully offline; live tests self-skip
+pytest -q                      # ~990 tests, fully offline; live tests self-skip (or .venv/bin/python -m pytest -q)
 ruff check reverie tests bench conftest.py
 mypy                           # config in pyproject.toml
 ```
@@ -29,8 +29,9 @@ the configured provider's key is set. `REVERIE_HOME` redirects the brain
 directory to a temp path for isolation. The tests import the installed
 package — the editable install above is required.
 
-The first `pytest` run needs the embedding model cached, because the tests
-run offline: run the product once, or download `all-MiniLM-L6-v2`.
+Run `pytest` with the virtualenv's Python (`.venv/bin/python -m pytest`), not a system Python: without the dev dependencies the tests fail. CI installs the same way, so it matches. The first `pytest` run needs the embedding model on disk, because the tests
+run offline: run `reverie install` once, or `python -c "from reverie.embeddings import ensure_model; ensure_model(print)"`
+(about 90 MB, kept in `~/.cache/reverie/models`; `REVERIE_MODEL_DIR` moves it).
 
 Run all three before opening a pull request; CI runs them on Linux and macOS.
 
@@ -82,3 +83,11 @@ part of the user documentation:
 
 By contributing, you agree that your contributions will be licensed under
 the [Apache License 2.0](LICENSE).
+
+## Keep the README current
+
+The README describes what the product does today. `tests/test_readme_sync.py`
+fails when a CLI command or a supported harness is missing from it, so a change
+that adds one updates the README in the same commit. Behaviour changes that the
+test cannot see (what is captured, how memory is delivered, what is redacted)
+belong in the README's intro, Quick start and Supported agents sections too.

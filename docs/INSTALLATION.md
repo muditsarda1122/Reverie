@@ -210,7 +210,7 @@ and deletes a whole file only when the install manifest shows Reverie
 created it and it is still unedited — a file that existed before install
 survives with just Reverie's entry removed. Keeps `~/.reverie` unless
 `--delete-data` (a final export is written outside it first), and prints
-the `pip uninstall reverie` command for the last step. See `docs/CLI.md`
+the `pip uninstall reverie-mem` command for the last step. See `docs/CLI.md`
 for every flag.
 
 ## Smoke test

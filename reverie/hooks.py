@@ -19,7 +19,6 @@ Output states:
 
 - enabled  — the canonical summary message: counts and the pending-review
   count (never conclusion text);
-- undecided — the first-time question (verbatim) and how to record it;
 - disabled — one line: off means off.
 
 Harness hook schemas live in the integration packages; this module only
@@ -37,10 +36,6 @@ from . import core_api, repos
 from .brain import Brain
 from .config import SCHEMA_VERSION, default_db_path
 
-#: Exact first-time question (shared with the MCP gate — repos.FIRST_TIME_QUESTION
-#: is the same string; imported here so the hook and the gate can never drift).
-UNDECIDED_TEXT = repos.FIRST_TIME_QUESTION
-
 #: Disabled repos are fully off: nothing captured, retrieved or injected.
 DISABLED_TEXT = "Reverie is off for this repo. Do not capture or retrieve here."
 
@@ -51,17 +46,6 @@ def enabled_block(summary: dict) -> str:
     not grow a parallel formatting path that can drift from the MCP tool.
     Counts only — never conclusion text (anti-anchoring, §11.3)."""
     return summary["message"]
-
-
-def undecided_block(repo_path: str) -> str:
-    """The undecided-repo block: the first-time question (verbatim) plus the
-    instruction to ask once and record the answer."""
-    return (
-        f"{UNDECIDED_TEXT}\n"
-        "Ask the user this once — at most once per conversation — then "
-        "record the answer with reverie_set_repo_state "
-        f"(repo_path: {repo_path})."
-    )
 
 
 def _db_ready(db: Path) -> bool:
@@ -82,18 +66,146 @@ def _db_ready(db: Path) -> bool:
     return int(version) == SCHEMA_VERSION
 
 
+def _memory_blocks(info, print_fn) -> None:
+    """Rules, rules from earlier sessions, headline index (all in
+    ``deliver.startup_text``, size-capped), then the digest nudge. Read-only;
+    never raises."""
+    try:
+        from . import deliver, digest
+        from .config import get_config
+        text = deliver.startup_text(info.repo_path)
+        if text:
+            print_fn(text)
+        _spawn_context_check(info.repo_path)
+        conn = deliver.open_db()
+        if conn is None:
+            return
+        try:
+            key = deliver.repo_key(info.repo_path)
+            d = get_config().digest
+            line = digest.nudge(conn, key, int(d.min_new_items),
+                                float(d.min_days))
+            if line:
+                print_fn(line)
+            if deliver.memory(conn, key, info.repo_path):
+                _spawn_stale_check(conn, key, info.repo_path)
+                _spawn_merge(info.repo_path)
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def _spawn_stale_check(conn, key: str, root: str) -> None:
+    """If commits landed since the last check, recheck memory in a detached
+    background process (the hook itself stays fast and read-only). A lock file
+    stops a burst of sessions from piling up workers."""
+    import os
+    import subprocess
+    import time
+
+    from . import launch, spool, staleness
+    if os.environ.get("REVERIE_NO_BACKGROUND"):
+        return                                   # tests / locked-down setups
+    if staleness.get_state(conn, key) == staleness.head(root):
+        return
+    lock = spool.repo_dir(root) / "stale.lock"
+    try:
+        if lock.exists() and time.time() - lock.stat().st_mtime < 600:
+            return
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(str(time.time()))
+        command, args = launch.reverie_command(["stale", "check", "--repo", root])
+        subprocess.Popen(f"{command} {' '.join(args)}" if not args else [command, *args],
+                         shell=not args, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
+        pass
+
+
+def _spawn_context_check(root: str) -> None:
+    """Team documents changed, or commits landed, since the judge last ran: run
+    `reverie context check --if-changed` in a detached process. The hook only reads
+    files and compares a hash; it never calls a model, never waits, and any failure
+    leaves the session start exactly as it was."""
+    import os
+    import subprocess
+    import time
+
+    from . import context, launch, spool, staleness
+    if os.environ.get("REVERIE_NO_BACKGROUND"):
+        return
+    try:
+        if not context.documents(root):
+            return
+        state = context.load_state()
+        same_docs = (state.get("doc_sig") or {}).get(root) == context.doc_signature(root)
+        same_head = (state.get("stale_commit") or {}).get(root) == staleness.head(root)
+        stamp = spool.repo_dir(root) / "context.stamp"
+        daily = not stamp.exists() or time.time() - stamp.stat().st_mtime >= MERGE_EVERY_SECS
+        if same_docs and same_head and not daily:
+            return
+        lock = spool.repo_dir(root) / "context.lock"
+        if lock.exists() and time.time() - lock.stat().st_mtime < 600:
+            return
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(str(time.time()))
+        tail = ["context", "check", "--repo", root]
+        if not daily:
+            tail.insert(2, "--if-changed")
+        else:
+            stamp.write_text(str(time.time()))      # the daily job: a full recheck
+        command, args = launch.reverie_command(tail)
+        subprocess.Popen(f"{command} {' '.join(args)}" if not args else [command, *args],
+                         shell=not args, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except Exception:
+        pass
+
+
+MERGE_EVERY_SECS = 86400
+
+
+def _spawn_merge(root: str) -> None:
+    """At most once a day per repo, merge near-duplicates in a detached process."""
+    import os
+    import subprocess
+    import time
+
+    from . import launch, spool
+    if os.environ.get("REVERIE_NO_BACKGROUND"):
+        return
+    stamp = spool.repo_dir(root) / "merge.stamp"
+    try:
+        if stamp.exists() and time.time() - stamp.stat().st_mtime < MERGE_EVERY_SECS:
+            return
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(str(time.time()))
+        command, args = launch.reverie_command(["merge", "--repo", root])
+        subprocess.Popen(f"{command} {' '.join(args)}" if not args else [command, *args],
+                         shell=not args, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
+        pass
+
+
 def session_start(cwd: str | Path | None = None, *, print_fn=print) -> int:
     """Print the session-start block for the repo at ``cwd`` (default: the
     current directory). Always returns 0 and never raises.
 
     The brain is read only when its database already exists at the current
     schema version — the hook never creates or migrates one. A missing brain
-    reads as undecided (Reverie has no state for this repo yet)."""
+    stays silent (Reverie has nothing stored for this repo yet)."""
     try:
         info = repos.resolve_repo(cwd=cwd)
+        from . import importers
+        importers.lazy(info.repo_path)         # harnesses' own transcripts -> log
         db = default_db_path()
         if not db.exists():
-            print_fn(undecided_block(info.repo_path))
+            _memory_blocks(info, print_fn)   # rules are plain files: no brain needed
             return 0
         if not _db_ready(db):
             return 0                  # broken or outdated brain — stay quiet
@@ -109,10 +221,9 @@ def session_start(cwd: str | Path | None = None, *, print_fn=print) -> int:
         return 0                      # never break a session — print nothing
     if payload.get("status") == "ok":
         print_fn(enabled_block(payload))
+        _memory_blocks(info, print_fn)
     elif payload.get("status") == "disabled":
         print_fn(DISABLED_TEXT)
-    elif payload.get("status") == "needs_consent":
-        print_fn(undecided_block(info.repo_path))
     return 0
 
 

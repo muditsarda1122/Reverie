@@ -14,11 +14,11 @@ harness package.
 
 from __future__ import annotations
 
-from pathlib import Path
+import re
 from typing import Any
 
-from . import repos
-from .config import default_db_path
+from . import provenance, repos
+from .redact import redact
 from .session import brain_summary
 
 #: One lazily-created server per process. Reusing it keeps the review-token
@@ -55,8 +55,52 @@ def _repo_and_error(server, repo_path: str | None):
     return server._resolve_repo({"repo_path": repo_path} if repo_path else {})
 
 
+def _with_typed_memory(payload: dict, repo_path: str | None) -> dict:
+    """Add the typed memory (rules + headline index) to a summary payload, so
+    harnesses with no session-start hook still receive it. Without this a
+    codex/opencode agent was told "the brain holds 0 conclusions" while a
+    standing rule existed."""
+    if payload.get("status") != "ok":
+        return payload
+    repo = (payload.get("session") or {}).get("repo") or repo_path
+    if not repo:
+        return payload
+    try:
+        from . import deliver
+        text = deliver.startup_text(str(repo))
+        if text:
+            payload["memory"] = text
+            payload["message"] = (payload.get("message", "") +
+                                  "\n\n" + text).strip()
+    except Exception:
+        pass
+    return payload
+
+
+def _with_continuation(payload: dict, repo_path: str | None, resume: bool) -> dict:
+    """A recent cut-off session is announced in one line; ``resume=True`` returns the
+    bounded resume card itself (rules, prompts, git state)."""
+    repo = (payload.get("session") or {}).get("repo") or repo_path
+    if not repo or payload.get("status") != "ok":
+        return payload
+    try:
+        from . import rules, spool
+        if resume:
+            payload["resume"] = spool.render_resume(repo, latest=True,
+                                                    rules_text=rules.render(repo))
+            payload["message"] = (payload.get("message", "") + "\n\n" + payload["resume"]).strip()
+        else:
+            hint = spool.cutoff_hint(repo)
+            if hint:
+                payload["continuation"] = hint
+                payload["message"] = (payload.get("message", "") + "\n\n" + hint).strip()
+    except Exception:
+        pass
+    return payload
+
+
 def summary(repo_path: str | None = None, branch: str | None = None, *,
-            read_only: bool = False, _server=None) -> dict:
+            read_only: bool = False, resume: bool = False, _server=None) -> dict:
     """Brain statistics (and the review nudge), never individual conclusions.
 
     Default matches the MCP ``summary`` tool exactly: gated on enablement,
@@ -66,6 +110,9 @@ def summary(repo_path: str | None = None, branch: str | None = None, *,
     latency-sensitive SessionStart hook uses.
     """
     server = _server_for(_server)
+    if repo_path and not read_only:         # the hook path imports on its own
+        from . import importers
+        importers.lazy(repo_path)
     if read_only:
         info, error = _repo_and_error(server, repo_path)
         if error is not None:
@@ -79,13 +126,6 @@ def summary(repo_path: str | None = None, branch: str | None = None, *,
                 "repo": info.repo_path,
                 "error": "Reverie is disabled for this repo. Nothing was "
                          "captured or retrieved.",
-            }
-        if state != "enabled":
-            return {
-                "status": "needs_consent", "state": "undecided",
-                "repo": info.repo_path,
-                "question": repos.FIRST_TIME_QUESTION,
-                "error": repos.FIRST_TIME_QUESTION,
             }
         row = server._ensure_manager().current_session(
             info.repo_path, wanted_branch)
@@ -105,20 +145,21 @@ def summary(repo_path: str | None = None, branch: str | None = None, *,
         else:
             row = server._enabled_session(info)
         wanted_branch = branch or info.branch
-    return _summary_payload(server, info if ctx is not None else None, row,
-                            wanted_branch)
+    return _with_continuation(_with_typed_memory(
+        _summary_payload(server, info if ctx is not None else None, row,
+                         wanted_branch), repo_path), repo_path, resume)
 
 
-def observe(user_prompt: str, reasoning_trace: str,
+def observe(user_prompt: str, work_summary: str,
             final_output: str | None = None, repo_path: str | None = None,
             *, _server=None) -> dict:
-    """Extract conclusions from agent reasoning into the Session Brain."""
+    """Record conclusions from the agent's work summary into the Session Brain."""
     args: dict[str, Any] = {
-        "user_prompt": user_prompt,
-        "reasoning_trace": reasoning_trace,
+        "user_prompt": redact(user_prompt),
+        "work_summary": redact(work_summary),
     }
     if final_output is not None:
-        args["final_output"] = final_output
+        args["final_output"] = redact(final_output)
     if repo_path:
         args["repo_path"] = repo_path
     return _server_for(_server)._tool_observe(args)
@@ -169,7 +210,7 @@ def review_decide(review_token: str, decisions: list[dict], *,
 
 def _no_capture(state: str, repo_path: str | None, **extra) -> dict:
     payload = {
-        "status": "disabled" if state == "disabled" else "needs_consent",
+        "status": "disabled",
         "state": state,
         "repo": repo_path,
         "captured": False,
@@ -179,9 +220,30 @@ def _no_capture(state: str, repo_path: str | None, **extra) -> dict:
     return payload
 
 
+#: Markers of Reverie's own housekeeping conversations (reviewing candidates,
+#: the review/brag skills, the install flow). They are not engineering work;
+#: feeding them to the extractor produced prose answers that stuck in the
+#: pending queue forever.
+_HOUSEKEEPING_MARKERS = (
+    "review_token", "review_decide", "review_list", "reverie review",
+    "reverie_review", "<command-name>/reverie",
+    "reverie-review", "pending review candidates",
+)
+#: a slash command ("/reverie-review ...") only; NOT any path containing /reverie
+_SLASH_COMMAND = re.compile(r"(?:^|\s)/reverie[\w-]*(?=\s|$)")
+
+
+def is_housekeeping_exchange(user_request: str, assistant_reply: str) -> bool:
+    """True when the exchange is about operating Reverie itself."""
+    head = (user_request or "")[:4000].lower()
+    reply = (assistant_reply or "")[:4000].lower()
+    return (any(m in head or m in reply for m in _HOUSEKEEPING_MARKERS)
+            or bool(_SLASH_COMMAND.search(head)))
+
+
 def capture_turn(repo_path: str | None, branch: str | None,
                  user_request: str, assistant_reply: str, *,
-                 timeout: float = 20.0, _server=None) -> dict:
+                 timeout: float = 20.0, tool_results: str = "", _server=None) -> dict:
     """Capture one completed exchange into the Session Brain.
 
     Never raises. Only an enabled repo is captured. The exchange is saved to
@@ -197,27 +259,27 @@ def capture_turn(repo_path: str | None, branch: str | None,
             return {"status": "skipped", "captured": False,
                     "ecus_extracted": 0,
                     "message": "No completed user/assistant exchange."}
+        if is_housekeeping_exchange(user_request, assistant_reply):
+            return {"status": "skipped", "captured": False,
+                    "ecus_extracted": 0,
+                    "message": "Reverie housekeeping exchange; not captured."}
+        user_request, assistant_reply = redact(user_request), redact(assistant_reply)
         server = _server_for(_server)
         info, error = _repo_and_error(server, repo_path)
         if error is not None:
             return {**error, "captured": False, "ecus_extracted": 0}
-        if server._brain is None and not Path(default_db_path()).exists():
-            return _no_capture("undecided", info.repo_path,
-                               question=repos.FIRST_TIME_QUESTION)
         brain = server._ensure_brain()
-        state = repos.state_readonly(brain, info)
-        if state == "disabled":
+        if repos.state_of(brain, info) == "disabled":   # default on
             return _no_capture(
                 "disabled", info.repo_path,
                 message="Reverie is disabled for this repo; nothing captured.")
-        if state != "enabled":
-            return _no_capture("undecided", info.repo_path,
-                               question=repos.FIRST_TIME_QUESTION)
         row = server._ensure_manager().ensure_session(
             info.repo_path, branch or info.branch)
         interaction = {
             "prompt": user_request,
             "output": assistant_reply,
+            "diff": provenance.working_diff(info.repo_path),
+            "tool_results": provenance.tool_text(tool_results),
             "session_context": {
                 "session_id": row["id"],
                 "repo": row["repo_path"],

@@ -7,6 +7,8 @@ Owns every Claude-specific file, key and hook schema:
 - ``~/.claude/CLAUDE.md`` → ``@~/.reverie/AGENTS.md``
 - ``~/.claude/commands/reverie-{review,status}.md``
 
+(all four move under ``$CLAUDE_CONFIG_DIR`` when that variable is set)
+
 The command *behaviour* is harness-neutral (``reverie/hooks.py`` renders
 SessionStart context, ``reverie capture-turn`` captures a completed
 exchange); this package owns Claude's handler shape and its config format.
@@ -15,6 +17,7 @@ exchange); this package owns Claude's handler shape and its config format.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -90,7 +93,19 @@ _STOP_TIMEOUT_SECONDS = 20
 
 
 def _claude_dir(home: Path) -> Path:
-    return Path(home) / ".claude"
+    """Claude Code's config directory: ``$CLAUDE_CONFIG_DIR`` when the user
+    relocated it (settings.json, CLAUDE.md, commands/ and the global
+    ``.claude.json`` all live there), else ``~/.claude``."""
+    env = os.environ.get("CLAUDE_CONFIG_DIR")
+    return Path(env).expanduser() if env else Path(home) / ".claude"
+
+
+def _claude_json(home: Path) -> Path:
+    """The global config holding ``mcpServers``: ``<config dir>/.claude.json``
+    under ``CLAUDE_CONFIG_DIR``, else ``~/.claude.json``."""
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        return _claude_dir(home) / ".claude.json"
+    return Path(home) / ".claude.json"
 
 
 def _settings_path(home: Path) -> Path:
@@ -161,11 +176,40 @@ def _session_start_handler(reverie_bin: str | None = None) -> dict:
 
 def _stop_handler(reverie_bin: str | None = None) -> dict:
     """The Stop handler: the same launch form as session-start, with the
-    capture command tail."""
+    capture command tail. NOT async: a headless ``claude -p`` cancels async
+    hooks on exit, and capture-turn detaches its own worker anyway."""
     handler = _command_handler(["capture-turn"], reverie_bin)
     handler["timeout"] = _STOP_TIMEOUT_SECONDS
-    handler["async"] = True
+    return handler          # synchronous: it only spawns a detached worker
+
+
+_SHIM_SCRIPT = "reverie-claude-hook"
+_SHIM_MODULE = "reverie.integrations.claude.shim"
+
+
+def _spool_handler(tail: str, reverie_bin: str | None = None) -> dict:
+    """UserPromptSubmit / Stop handler for the stdlib-only prompt-log shim.
+    Synchronous and fast (it only appends a line); not async, so it is not
+    killed when a headless run exits."""
+    if reverie_bin:
+        # a pinned `reverie` binary sits beside its `reverie-spool` script
+        sibling = str(Path(reverie_bin).with_name(_SHIM_SCRIPT))
+        return {"type": "command", "command": f"{sibling} {tail}",
+                "timeout": 5}
+    command, args = launch.reverie_command(
+        [tail], script_name=_SHIM_SCRIPT, module=_SHIM_MODULE)
+    handler: dict = {"type": "command", "command": command, "timeout": 5}
+    if args:
+        handler["args"] = args
     return handler
+
+
+#: Spool hooks installed beside the capture hooks: (kind, hook event, tail).
+_SPOOL_HOOKS = (("SpoolPrompt", "UserPromptSubmit", "prompt"),
+                ("SpoolAnswer", "Stop", "answer"),
+                ("SpoolPretool", "PreToolUse", "pretool"))
+#: PreToolUse fires on edits only: matches file anchors and symbols in the file.
+_PRETOOL_MATCHER = "Edit|Write|MultiEdit|NotebookEdit"
 
 
 def _is_reverie_hook(hook: object, event: str) -> bool:
@@ -180,6 +224,15 @@ def _is_reverie_hook(hook: object, event: str) -> bool:
     if event == "Stop":
         return (isinstance(args, list) and args[-1:] == ["capture-turn"]) or \
             command.endswith(" capture-turn")
+    if event in ("SpoolPrompt", "SpoolAnswer", "SpoolPretool"):
+        tail = {"SpoolPrompt": "prompt", "SpoolAnswer": "answer",
+                "SpoolPretool": "pretool"}[event]
+        spool_cmd = (_SHIM_SCRIPT, _SHIM_MODULE)
+        return (isinstance(args, list) and args[-1:] == [tail]
+                and any(c in command or any(c in str(a) for a in args)
+                        for c in spool_cmd)) or \
+            (command.endswith(f" {tail}")
+             and any(c in command for c in spool_cmd))
     return False
 
 
@@ -208,8 +261,8 @@ def _upsert_handler(groups: list, handler: dict, event: str,
     groups.append(new_group)
 
 
-def _settings_plan(home: Path, session_handler: dict, stop_handler: dict
-                   ) -> PlannedWrite:
+def _settings_plan(home: Path, session_handler: dict, stop_handler: dict,
+                   spool_handlers: dict | None = None) -> PlannedWrite:
     path = _settings_path(home)
     disp = _display(path, home)
     existed = path.exists()
@@ -245,6 +298,15 @@ def _settings_plan(home: Path, session_handler: dict, stop_handler: dict
         )
     _upsert_handler(session_groups, session_handler, "SessionStart", "startup")
     _upsert_handler(stop_groups, stop_handler, "Stop", None)
+    for kind, event, _tail in _SPOOL_HOOKS:
+        if spool_handlers and kind in spool_handlers:
+            groups = hooks.setdefault(event, [])
+            if not isinstance(groups, list):
+                raise InstallError(
+                    f"{disp}: `hooks.{event}` must be a list. Fix or remove "
+                    "it, then re-run `reverie install`.")
+            _upsert_handler(groups, spool_handlers[kind], kind,
+                            _PRETOOL_MATCHER if kind == "SpoolPretool" else None)
     added_permission = _add_permission_entry(data, _CLAUDE_PERMISSION, disp)
     if original and json.dumps(data, sort_keys=True) == original:
         return PlannedWrite(
@@ -283,7 +345,10 @@ def _uninstall_settings(home: Path,
     removed_labels = []
     hooks = data.get("hooks")
     if isinstance(hooks, dict):
-        for event in ("SessionStart", "Stop"):
+        for kind in ("SessionStart", "Stop", "SpoolPrompt", "SpoolAnswer",
+                     "SpoolPretool"):
+            event = {"SpoolPrompt": "UserPromptSubmit", "SpoolAnswer": "Stop",
+                     "SpoolPretool": "PreToolUse"}.get(kind, kind)
             groups = hooks.get(event)
             if not isinstance(groups, list):
                 continue
@@ -297,10 +362,10 @@ def _uninstall_settings(home: Path,
                     kept_groups.append(group)
                     continue
                 kept = [hook for hook in entries
-                        if not _is_reverie_hook(hook, event)]
+                        if not _is_reverie_hook(hook, kind)]
                 if len(kept) != len(entries):
                     changed = True
-                    removed_labels.append(event)
+                    removed_labels.append(kind)
                 if kept:
                     group = dict(group)
                     group["hooks"] = kept
@@ -351,7 +416,7 @@ class ClaudeIntegration(Integration):
         writes: list[PlannedWrite] = []
         command, args, env = _server_command(reverie_bin,
                                              client=self.client_key)
-        mcp_path = home / ".claude.json"
+        mcp_path = _claude_json(home)
         writes.append(_json_merge(
             mcp_path, home, "mcpServers",
             _mcp_entry(command, args, env,
@@ -369,7 +434,9 @@ class ClaudeIntegration(Integration):
                 f"Wrote {_display(path, home)} (/{path.stem})"))
         writes.append(_settings_plan(
             home, _session_start_handler(reverie_bin),
-            _stop_handler(reverie_bin)))
+            _stop_handler(reverie_bin),
+            {kind: _spool_handler(tail, reverie_bin)
+             for kind, _event, tail in _SPOOL_HOOKS}))
         return writes
 
     def uninstall(self, home: Path, dry_run: bool = False, *,
@@ -384,7 +451,7 @@ class ClaudeIntegration(Integration):
             str(_settings_path(home).resolve()), ()))
         removals: list[PlannedRemoval] = []
         removals.append(_plan_json_entry(
-            home / ".claude.json", home, "mcpServers", "claude", False,
+            _claude_json(home), home, "mcpServers", "claude", False,
             manifest))
         removals.append(_reference_removal(home, ref, manifest))
         removals.append(_uninstall_settings(home, manifest, owned))
@@ -396,7 +463,7 @@ class ClaudeIntegration(Integration):
 
     def configured_server(self, home: Path) -> ConfiguredServer | None:
         return _json_configured_server(
-            self.key, Path(home) / ".claude.json", ("mcpServers", "reverie"))
+            self.key, _claude_json(home), ("mcpServers", "reverie"))
 
 
 INTEGRATION = ClaudeIntegration()

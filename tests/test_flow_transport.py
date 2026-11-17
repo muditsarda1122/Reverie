@@ -447,7 +447,9 @@ def test_repo_state_ambiguous_url_starts_fresh(brain):
                       state="disabled")
     info = repos.RepoInfo(repo_path="/clone3", branch="main",
                           repo_key="/clone3/.git", url="https://x/a.git")
-    assert repos.state_of(brain, info) == "undecided"
+    # no unambiguous rematch: starts fresh, which is enabled by default
+    assert repos.state_of(brain, info) == "enabled"
+    assert brain.get_repo("/clone3/.git")["state"] == "enabled"
 
 
 def test_repo_state_no_url_starts_fresh(brain):
@@ -455,7 +457,9 @@ def test_repo_state_no_url_starts_fresh(brain):
                       state="enabled")
     info = repos.RepoInfo(repo_path="/mine", branch="main",
                           repo_key="/mine/.git", url=None)
-    assert repos.state_of(brain, info) == "undecided"
+    # no unambiguous rematch: starts fresh, which is enabled by default
+    assert repos.state_of(brain, info) == "enabled"
+    assert brain.get_repo("/mine/.git")["state"] == "enabled"
 
 
 # ---------------------------------------------------------------------------

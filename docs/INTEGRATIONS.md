@@ -77,7 +77,6 @@ matcher `startup`. Its plain-text stdout is injected before the first prompt:
 
 - **enabled** — brain statistics (conclusions, candidates) plus the usage
   rules, never conclusion text;
-- **undecided** — the first-time enablement question for Claude to relay;
 - **disabled** — a one-line "do not capture or retrieve here".
 
 The hook is read-only: no LLM, no embeddings, no session creation, no writes.
@@ -99,7 +98,7 @@ Stop hook with a 20-second timeout. Claude sends `transcript_path`, `cwd`, and
 3. calls `core_api.capture_turn`.
 
 The Stop hook is fire-and-forget: it prints nothing, never blocks Claude,
-and always exits `0`. A disabled/undecided repo is a no-op. A failed or
+and always exits `0`. A disabled repo is a no-op. A failed or
 timed-out extraction is left in the pending queue and can be retried with
 `reverie retry`.
 

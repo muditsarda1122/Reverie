@@ -396,7 +396,11 @@ def task_clustering(brain, config, repo_path=None, now=None) -> TaskResult:
                 "threshold": threshold,
             })
 
-    result = run_clustering(brain, config)
+    try:
+        result = run_clustering(brain, config)
+    except ImportError:          # scipy / hdbscan are the optional `reverie[cluster]` extra
+        return TaskResult("clustering", 0, {"skipped": "cluster_extra_not_installed",
+                                            "hint": "pip install 'reverie[cluster]'"})
     brain.set_maintenance_state(STATE_CLUSTERING_ECU_COUNT,
                                 str(brain.count_ecus()))
     return result

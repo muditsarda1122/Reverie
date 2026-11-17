@@ -10,7 +10,7 @@ pinned venv): ``initialize``, ``notifications/initialized`` (ignored), ``ping``,
 payload as JSON text; ``isError`` mirrors the payload's ``status == "error"``.
 
 Tools (feat/flow surface — the §28.3 four plus review/enablement, D55-D57):
-  - ``observe``       — extract + lightweight-diffuse reasoning into the
+  - ``observe``       — extract + lightweight-diffuse the work summary into the
                            Session Brain (§28.13)
   - ``query``         — demand-driven retrieval over both brains (§11.3)
   - ``summary``   — brain statistics at session start (§11.3 awareness
@@ -21,8 +21,7 @@ Tools (feat/flow surface — the §28.3 four plus review/enablement, D55-D57):
                             entered). Only ECUs retrieved in this session are
                             labile (D39): the server marks surfaced canonical
                             ids during query and refuses others.
-  - ``set_repo_state``— record the user's answer to the first-time
-                           enablement question (or turn Reverie off/on here)
+  - ``set_repo_state``— turn Reverie off (opt-out) or back on for a repo
   - ``review_list``   — the review queue page, for the agent to relay
   - ``review_decide`` — apply decisions the USER stated, through the
                            review gate (channel "agent", D57)
@@ -33,7 +32,7 @@ falls back to the server's working directory; some harnesses start global
 MCP servers in the home folder). An ``undecided`` repo gets a short,
 structured ask-the-user response instead of action; a ``disabled`` repo
 gets a structured "off" response and NOTHING happens (no capture, no
-retrieval); an ``enabled`` repo proceeds.
+retrieval); every other repo proceeds (Reverie is on by default).
 
 Automatic sessions (feat/flow, D56 — replaces D15 for the MCP surface):
 in an enabled repo every tool call resolves or creates the session for
@@ -81,7 +80,7 @@ import subprocess
 import sys
 import threading
 from contextlib import contextmanager
-from typing import cast
+from typing import Any, cast
 
 from . import (
     __version__,
@@ -94,11 +93,12 @@ from . import (
     repos,
     retrieval,
     review_queue,
+    typed_extractor,
 )
 from .brain import Brain, BrainError, _now_iso
 from .client import get_client, set_client
 from .confidence import FROZEN_STATUSES, reinforce_stored_confidence
-from .config import MODES, SCOPE_LEVELS, get_config
+from .config import MODES, SCOPE_LEVELS, capture_mode, get_config
 from .diffuser import DiffuserError
 from .extractor import ExtractorError
 from .policy import RECONSOLIDATE_TRIGGER, USAGE_POLICY
@@ -164,7 +164,7 @@ NO_REPO_ERROR = (
     "are working in) and try again."
 )
 EXTRACTION_FAILED = (
-    "Extraction failed: {reason}. The reasoning trace may be too short or "
+    "Extraction failed: {reason}. The work summary may be too short or "
     "contain no engineering conclusions. This is not an error — not every "
     "response produces conclusions."
 )
@@ -212,13 +212,30 @@ METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
+def _compact_query_payload(payload: dict) -> dict:
+    """The wire form of a query result.
+
+    ``retrieval.retrieve`` returns every conclusion twice — structured
+    ``groups`` and the human/agent-readable ``formatted`` text — which doubled
+    the tokens of every retrieval (the lab measured 20-47 KB of JSON for 1.3-3k
+    tokens of content). The agent reads ``formatted`` (ids, confidence,
+    grounding and framing are all in it); the wire carries only a compact
+    ``ids`` list beside it, for callers that need to act on the ids.
+    """
+    if not isinstance(payload, dict) or "groups" not in payload:
+        return payload
+    out = {k: v for k, v in payload.items() if k != "groups"}
+    out["ids"] = [g["core_ecu"]["id"] for g in payload["groups"]]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Tool definitions — descriptions verbatim from §28.3 (§28.12: they are the
 # primary way the agent learns how to use Reverie).
 # ---------------------------------------------------------------------------
 
 _OBSERVE_DESCRIPTION = """\
-Extract engineering conclusions from your reasoning trace and store them
+Record engineering conclusions from your work summary and store them
 in the Session Brain for immediate use. Call this AFTER you:
 - Discover a non-obvious invariant or dependency
 - Debug a tricky issue and find the root cause
@@ -234,17 +251,15 @@ Call observe AT MOST ONCE per task — batch everything worth saving into a
 single call after you have the insight, not after every response — unless a
 separate new insight appears.
 
-observe runs the Extractor on your reasoning, produces candidate
+observe runs the Extractor on your work summary, produces candidate
 conclusions, and stores them in the Session Brain. They are immediately
 available for retrieval via query. The USER reviews these candidates
 (via `reverie review` or by asking you to show them) — never promote or judge
 them yourself.
 
 Sessions are automatic: in an enabled repo the session for the current
-branch resolves or is created by this call. If the response asks you to
-turn Reverie on for this repo, ask the user the question it contains
-exactly once per conversation, and record their answer with
-set_repo_state. Pass the workspace path as 'repo_path' on every call."""
+branch resolves or is created by this call. Pass the workspace path as
+'repo_path' on every call."""
 
 _QUERY_DESCRIPTION = """\
 Retrieve engineering conclusions relevant to your current task. Call this
@@ -267,26 +282,27 @@ branch resolves or is created by this call. Pass the workspace path as
 'repo_path' on every call."""
 
 _SUMMARY_DESCRIPTION = """\
-Get a summary of what the Reverie brain knows. Call this ONCE at session
-start for counts and topics only. Returns brain statistics and scope
-distribution — never individual conclusions; never anchor on conclusion
-contents.
+Session-start briefing. Call this ONCE at session start. Returns brain
+statistics and scope distribution, plus the user's rules, rules stated in
+earlier sessions and an index of past decisions (`memory`). Read the rules and
+follow them; items marked as possibly outdated need verifying against the code.
+Use query for the details of anything that looks relevant.
+
+If the user asks you to continue earlier work that was cut off, call summary
+again with resume=true: it returns their rules, every prompt they sent and the
+git state.
 
 If the response contains a pending-review nudge, mention it to the user at
 most once per conversation (counts only, never contents)."""
 
 _REPO_STATE_DESCRIPTION = """\
-Record the user's answer about enabling Reverie for the current repo, or
-turn Reverie on/off for it. Use this only from the user's answer to the
-first-time question, and ask that question once per conversation. Call this
-with:
-- state="enabled"   — the user said yes (or wants it on)
-- state="not_now"   — the user said "not now": stays off for now; do not
-                      ask again in this conversation
-- state="disabled"  — the user said never (or wants it off): fully off for
-                      this repo, existing memory is kept
-- state="undecided" — reset to the not-configured state
-Pass the workspace path as 'repo_path'. The answer is remembered globally —
+Turn Reverie off for the current repo, or back on. Reverie is on by default
+in every repo; call this ONLY when the user explicitly asks to turn it off
+(or on) here:
+- state="disabled" — the user wants it off: fully off for this repo, nothing
+                     captured or retrieved, existing memory is kept
+- state="enabled"  — the user wants it back on
+Pass the workspace path as 'repo_path'. The choice is remembered globally —
 never stored inside the repo."""
 
 _REVIEW_LIST_DESCRIPTION = """\
@@ -366,15 +382,15 @@ def _observe_schema() -> dict:
             "description": (
                 "The user's prompt that triggered this response. The "
                 "Extractor processes the full interaction — prompt, "
-                "reasoning, and output — not just the reasoning alone."
+                "work summary, and output — not just the summary alone."
             ),
         },
-        "reasoning_trace": {
+        "work_summary": {
             "type": "string",
             "description": (
-                "Your reasoning trace since the last observe call. "
-                "Include your thinking, decisions, and rationale — not "
-                "just the final code output."
+                "A short summary of your work since the last observe call: "
+                "what you investigated, what you found, the decisions "
+                "made and why."
             ),
         },
         "final_output": {
@@ -386,7 +402,7 @@ def _observe_schema() -> dict:
             ),
         },
         "repo_path": dict(_REPO_PATH_PROP),
-    }, ["user_prompt", "reasoning_trace"])
+    }, ["user_prompt", "work_summary"])
 
 
 def _query_schema() -> dict:
@@ -422,7 +438,11 @@ def _query_schema() -> dict:
 
 
 def _summary_schema() -> dict:
-    return _schema({"repo_path": dict(_REPO_PATH_PROP)}, [])
+    return _schema({"repo_path": dict(_REPO_PATH_PROP),
+                    "resume": {"type": "boolean", "description": (
+                        "Set true when the user asks you to continue earlier work that was "
+                        "cut off: returns the resume card (their rules, every prompt they "
+                        "sent, git state).")}}, [])
 
 
 def _reconsolidate_schema() -> dict:
@@ -438,7 +458,7 @@ def _reconsolidate_schema() -> dict:
             "type": "string",
             "description": (
                 "The new evidence you discovered. This should be "
-                "your reasoning trace explaining what you found and "
+                "your notes explaining what you found and "
                 "why it affects the conclusion. The Diffuser will use this "
                 "to re-evaluate its confidence and edges."
             ),
@@ -459,7 +479,7 @@ def _set_repo_state_schema() -> dict:
     return _schema({
         "state": {
             "type": "string",
-            "enum": ["enabled", "disabled", "not_now", "undecided"],
+            "enum": ["enabled", "disabled"],
             "description": (
                 "The user's answer: yes -> enabled; not now -> not_now; "
                 "never -> disabled."
@@ -704,6 +724,8 @@ class ReverieServer:
             )
         try:
             payload = handler(arguments)
+            if name == "query":
+                payload = _compact_query_payload(payload)
         except (BrainError, SessionError) as exc:
             payload = {"status": "error", "session_active": False,
                        "error": str(exc)}
@@ -750,11 +772,9 @@ class ReverieServer:
         Returns ``(gate_payload, context)``: exactly one is None.
 
         - repo unresolvable and required → error payload (no context)
-        - ``undecided`` repo → short structured ask-the-user response; the
-          ask is recorded (``asked_at``) so the agent's once-per-
-          conversation rule has a timestamp to anchor on
         - ``disabled`` repo → structured off-response; NOTHING happens
-        - ``enabled`` repo → context with the RepoInfo; missing-branch
+        - any other repo → enabled by default (a first-seen repo is recorded
+          as enabled); context with the RepoInfo; missing-branch
           sessions are archived here (D56) so the queue never shows
           zombie branches as active
         """
@@ -764,24 +784,7 @@ class ReverieServer:
                 return None, None          # e.g. summary works repo-less
             return error, None
         brain = self._ensure_brain()
-        state_row = repos.resolve_repo_state(brain, info)
-        state = state_row["state"] if state_row else "undecided"
-        if state == "undecided":
-            repos.mark_asked(brain, info)
-            return {
-                "status": "needs_consent",
-                "state": "undecided",
-                "repo": info.repo_path,
-                "question": repos.FIRST_TIME_QUESTION,
-                "error": repos.FIRST_TIME_QUESTION,
-                "instructions": (
-                    "Ask the user this exact question once per conversation. "
-                    "Record their answer with set_repo_state: 'yes' -> "
-                    "enabled, 'not now' -> not_now, 'never' -> disabled. If "
-                    "they say 'not now', do not ask again in this "
-                    "conversation and continue without Reverie."
-                ),
-            }, None
+        state = repos.state_of(brain, info)     # default on; opt-out only
         if state == "disabled":
             return {
                 "status": "disabled",
@@ -806,6 +809,10 @@ class ReverieServer:
         return self._ensure_manager().ensure_session(info.repo_path,
                                                      info.branch)
 
+    def _items_mode(self) -> bool:
+        """Typed items pipeline (default) vs the legacy candidate flow."""
+        return capture_mode(self.config) == "items"
+
     def _extract_interaction(self, row: dict, interaction: dict, *,
                              prequeue: bool = False,
                              timeout: float | None = None) -> dict:
@@ -828,11 +835,19 @@ class ReverieServer:
             )
         try:
             with _time_limit(timeout):
-                result, ids = extractor.extract_and_store_session(
-                    brain, row["id"], interaction,
-                    embedding_model=self.embedding_model, config=self.config,
-                    commit_hash=commit_hash, repo_path=row["repo_path"],
-                )
+                if self._items_mode():
+                    result: Any = typed_extractor.extract_and_store_items(
+                        brain, interaction, repo_path=row["repo_path"],
+                        embedding_model=self.embedding_model,
+                        config=self.config, commit_hash=commit_hash)
+                    ids = result.stored
+                else:
+                    result, ids = extractor.extract_and_store_session(
+                        brain, row["id"], interaction,
+                        embedding_model=self.embedding_model,
+                        config=self.config, commit_hash=commit_hash,
+                        repo_path=row["repo_path"],
+                    )
         except _ExtractionTimeout:
             if pending_id is not None:
                 brain.mark_pending_extraction_attempt(
@@ -847,6 +862,16 @@ class ReverieServer:
                     "Capture did not finish within the time limit; the "
                     "exchange is queued for retry (`reverie retry`)."),
             }
+        except extractor.ExtractionError as exc:
+            # The model replied in prose or malformed JSON; the same input
+            # will fail the same way. Terminal: never queue it for retry.
+            if pending_id is not None:
+                brain.delete_pending_extraction(pending_id)
+            return {"status": "skipped", "session_active": True,
+                    "ecus_extracted": 0, "unextractable": True,
+                    "message": "The exchange could not be turned into "
+                               f"conclusions ({str(exc)[:120]}); dropped, "
+                               "not retried."}
         except ExtractorError as exc:
             if pending_id is not None:
                 brain.mark_pending_extraction_attempt(pending_id, str(exc))
@@ -881,7 +906,7 @@ class ReverieServer:
             brain.delete_pending_extraction(pending_id)
 
         diffusion_failures = 0
-        for ecu_id in ids:
+        for ecu_id in ([] if self._items_mode() else ids):
             try:
                 diffuser.diffuse_session_ecu(
                     brain, row["id"], ecu_id,
@@ -901,7 +926,17 @@ class ReverieServer:
 
         count = brain.count_session_ecus(row["id"])
         plural = "s" if result.rejected_count != 1 else ""
-        if ids:
+        if self._items_mode():
+            message = (
+                f"Remembered {len(ids)} item{'s' if len(ids) != 1 else ''} "
+                f"({result.deduped} duplicate{'s' if result.deduped != 1 else ''} "
+                f"dropped, {result.rejected_count} rejected"
+                + (f", {len(result.superseded)} older item"
+                   f"{'s' if len(result.superseded) != 1 else ''} superseded"
+                   if result.superseded else "")
+                + "). Undo any with "
+                "`reverie undo <id>`; `reverie digest` lists what was added.")
+        elif ids:
             message = (
                 f"Extracted {len(ids)} conclusion{'s' if len(ids) != 1 else ''} into "
                 f"session memory ({result.rejected_count} rejected by the "
@@ -996,16 +1031,19 @@ class ReverieServer:
         info = ctx["info"]
         row = self._enabled_session(info)
         user_prompt = args.get("user_prompt")
-        trace = args.get("reasoning_trace")
+        # ``reasoning_trace`` is the pre-0.3 name, still accepted.
+        trace = args.get("work_summary")
+        if not (isinstance(trace, str) and trace.strip()):
+            trace = args.get("reasoning_trace")
         if not isinstance(user_prompt, str) or not user_prompt.strip() \
                 or not isinstance(trace, str) or not trace.strip():
             return {
                 "status": "error",
                 "session_active": True,
                 "error": "observe requires 'user_prompt' and "
-                         "'reasoning_trace' (non-empty strings). Pass the "
-                         "user's prompt and your reasoning since the last "
-                         "observe call.",
+                         "'work_summary' (non-empty strings). Pass the "
+                         "user's prompt and a summary of your work since "
+                         "the last observe call.",
             }
         interaction = {
             "prompt": user_prompt,
@@ -1059,9 +1097,25 @@ class ReverieServer:
                                         session_id=row["id"])
         activation.save(brain)                       # D22 — §6.6 resume
         payload = {**result, "session_active": True}
+        typed = self._typed_memory_for(info.repo_path, query)
         if result["groups_retrieved"] == 0:
-            payload["message"] = NO_ECUS_FOUND.format(query=query)
+            payload["message"] = (
+                "No older conclusions matched; the typed memory below applies."
+                if typed else NO_ECUS_FOUND.format(query=query))
+        if typed:
+            payload["memory"] = typed
+            payload["formatted"] = typed + "\n\n" + str(payload.get("formatted", ""))
         return payload
+
+    def _typed_memory_for(self, repo_path: str, query: str) -> str:
+        """Typed items (rules, decisions, findings) for this question. This is
+        how hook-less harnesses receive them; hooks never see it."""
+        try:
+            from . import deliver
+            return deliver.query_context(repo_path, query,
+                                         self.embedding_model.encode_one)
+        except Exception:
+            return ""
 
     def _tool_summary(self, args: dict) -> dict:
         """§16.3 summary — the nudge line included (feat/flow §4).
@@ -1070,7 +1124,8 @@ class ReverieServer:
         global server in the home folder still reports brain stats). The
         harness-neutral implementation lives in ``core_api.summary`` so the
         SessionStart hook can reuse the exact same formatting."""
-        return core_api.summary(args.get("repo_path"), _server=self)
+        return core_api.summary(args.get("repo_path"), resume=bool(args.get("resume")),
+                                _server=self)
 
     def _tool_reconsolidate(self, args: dict) -> dict:
         """D37 — reconsolidate (design doc §5.2): re-evaluate a labile
@@ -1156,7 +1211,7 @@ class ReverieServer:
                 "session_active": True,
                 "ecu_id": ecu_id,
                 "reason": "missing_evidence",
-                "error": "reconsolidate requires 'evidence' — your reasoning "
+                "error": "reconsolidate requires 'evidence' — your notes "
                          "about what changed and why it affects the "
                          "conclusion.",
             }
@@ -1214,41 +1269,32 @@ class ReverieServer:
     # -- enablement + agent review (feat/flow, D55/D57) ----------------------
 
     def _tool_set_repo_state(self, args: dict) -> dict:
-        """Record the user's enablement answer (D55): enabled | disabled |
-        not_now (asked, stays off) | undecided (reset). Not gated — this is
-        the tool that RECORDS the gate answer."""
+        """Opt a repo out (``disabled``) or back in (``enabled``). Reverie is
+        on by default, so this is only for an explicit user request. Not
+        gated — it is the tool that records the gate choice."""
         info, error = self._resolve_repo(args)
         if error is not None:
             return error
         state = args.get("state")
-        if state not in ("enabled", "disabled", "not_now", "undecided"):
+        if state == "undecided":                # legacy: reset == default on
+            state = "enabled"
+        if state not in ("enabled", "disabled"):
             return {
                 "status": "error",
-                "error": "state must be one of enabled | disabled | "
-                         "not_now | undecided",
+                "error": "state must be one of enabled | disabled",
             }
         brain = self._ensure_brain()
-        if state == "not_now":
-            repos.mark_asked(brain, info)           # undecided-but-asked
-            row = brain.get_repo(info.repo_key)
-            effective = "undecided"
-            message = ("Recorded: not now. Reverie stays off for this repo; "
-                       "do not ask again in this conversation.")
-        else:
-            row = repos.set_repo_state(brain, info, state)
-            effective = state
-            message = {
-                "enabled": "Reverie is on for this repo. Sessions are "
-                           "automatic per branch; memory is shared across "
-                           "branches.",
-                "disabled": "Reverie is off for this repo. Nothing will be "
-                            "captured or retrieved; existing memory is kept.",
-                "undecided": "Reset: Reverie will ask about this repo again "
-                             "on its next use.",
-            }[state]
+        repos.set_repo_state(brain, info, state)
+        message = {
+            "enabled": "Reverie is on for this repo. Sessions are "
+                       "automatic per branch; memory is shared across "
+                       "branches.",
+            "disabled": "Reverie is off for this repo. Nothing will be "
+                        "captured or retrieved; existing memory is kept.",
+        }[state]
         return {"status": "ok", "repo": info.repo_path,
-                "repo_key": info.repo_key, "state": effective,
-                "asked_at": cast(dict, row)["asked_at"], "message": message}
+                "repo_key": info.repo_key, "state": state,
+                "message": message}
 
     def _duplicate_notes(self, rows: list[dict]) -> dict[str, list[str]]:
         """Item 22: rows sharing a conclusion_type AND grounding signature

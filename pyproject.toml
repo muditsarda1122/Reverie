@@ -1,39 +1,42 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reverie"
-version = "0.2.0"
+name = "reverie-mem"
+version = "0.3.0"
 description = "Engineering memory for coding agents — conclusions, not logs"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["claude-code", "codex", "cursor", "opencode", "mcp", "agent-memory", "coding-agents", "developer-tools"]
 authors = [{ name = "Mudit Sarda", email = "mudit@muditsarda.com" }]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development",
 ]
 dependencies = [
-    "torch==2.2.2",
-    "numpy<2",
-    "scipy<1.13",
-    "scikit-learn<1.5",
-    "transformers<5",
-    "sentence-transformers==3.0.1",
-    "hdbscan>=0.8.33",
+    "numpy",
+    "onnxruntime",
+    "tokenizers",
     "requests",
     "pyyaml",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "ruff>=0.4", "mypy>=2.0", "types-PyYAML"]
+dev = ["pytest>=7.0", "ruff>=0.4", "mypy>=2.0", "types-PyYAML",
+       "scikit-learn", "scipy", "hdbscan>=0.8.33"]
+# Only the legacy conclusion-clustering task uses these; without them it is skipped.
+cluster = ["scikit-learn", "scipy", "hdbscan>=0.8.33"]
+# The embedding model also runs on PyTorch if you prefer it (same vectors, ~1 GB larger).
+torch = ["sentence-transformers>=3.0.1"]
 
 [project.urls]
 Homepage = "https://reverie.muditsarda.com/"
@@ -43,6 +46,9 @@ Issues = "https://github.com/muditsarda1122/Reverie/issues"
 [project.scripts]
 reverie = "reverie.cli:main"
 reverie-mcp = "reverie.mcp_server:main"
+reverie-claude-hook = "reverie.integrations.claude.shim:main"
+reverie-opencode-hook = "reverie.integrations.opencode.shim:main"
+reverie-codex-hook = "reverie.integrations.codex.shim:main"
 
 [tool.setuptools.packages.find]
 include = ["reverie*"]
@@ -74,5 +80,5 @@ python_version = "3.12"
 files = ["reverie"]
 
 [[tool.mypy.overrides]]
-module = ["hdbscan", "scipy.*"]
+module = ["hdbscan", "scipy.*", "onnxruntime", "tokenizers", "sentence_transformers"]
 ignore_missing_imports = true
