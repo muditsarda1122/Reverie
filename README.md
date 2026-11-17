@@ -28,6 +28,8 @@ Then set **one** LLM API key in your environment (Anthropic, OpenAI, Gemini, Ope
 
 **Platforms:** macOS and Linux (tested on every change). On native Windows the installer (`scripts/install.ps1`) and the CLI run in CI, but 68 of our 1,443 tests still fail there, mostly path handling, so treat Windows as experimental and prefer WSL.
 
+Prefer your own tool? The package is called `reverie-mem` (the command is `reverie`): `uv tool install reverie-mem` or `pipx install reverie-mem`, then `reverie install`.
+
 Prefer to do it by hand? With Python 3.12 and git:
 
 ```bash
@@ -164,13 +166,13 @@ reverie uninstall --delete-data   # also removes ~/.reverie, after a final expor
 
 Uninstall removes only what `reverie install` wrote: Reverie's server entries, instruction references, slash-command files, hooks and permission entries. Anything else in those files is left alone. If you've edited one of them, Reverie reports it and doesn't touch it. Uninstall shows the full plan and asks for one confirmation. Use `--yes` to skip the prompt. Your memory in `~/.reverie` is kept unless you pass `--delete-data`, which exports a final backup first and prints where it saved it.
 
-The last step prints the command that removes the package itself, because a running package can't remove itself: `uv tool uninstall reverie` if you installed with the one-line script, or `pip uninstall reverie` otherwise.
+The last step prints the command that removes the package itself, because a running package can't remove itself: `uv tool uninstall reverie-mem` if you installed with the one-line script, or `pip uninstall reverie-mem` otherwise.
 
 ## Updating
 
 ```bash
 reverie --version                  # what you have now
-uv tool upgrade reverie            # installed with the one-line script (or: pipx upgrade reverie / pip install -U reverie)
+uv tool upgrade reverie-mem        # installed with the one-line script (or: pipx upgrade reverie-mem / pip install -U reverie-mem)
 reverie install                    # refresh the agent wiring; safe to repeat
 ```
 

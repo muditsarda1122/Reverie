@@ -7,7 +7,8 @@
 # Overrides: $env:REVERIE_SRC (what to install), $env:REVERIE_REF (git ref when installing from GitHub).
 $ErrorActionPreference = "Stop"
 $ref = if ($env:REVERIE_REF) { $env:REVERIE_REF } else { "main" }
-$src = if ($env:REVERIE_SRC) { $env:REVERIE_SRC } else { "git+https://github.com/muditsarda1122/Reverie.git@$ref" }
+$gitSrc = "git+https://github.com/muditsarda1122/Reverie.git@$ref"
+$src = $env:REVERIE_SRC   # empty: PyPI package "reverie-mem" first, the GitHub branch as the fallback
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   Write-Host "Installing uv (a fast Python installer) for your user..."
@@ -18,11 +19,18 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   $env:Path = "$real\.local\bin;$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$saved;$env:Path"
   if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw "uv was installed but is not on PATH; open a new terminal and run this again" }
 }
-if ($src -like "git+*" -and -not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git is required to install from GitHub" }
-
 Write-Host "Installing Reverie..."
-uv tool install --quiet --python 3.12 --force $src
-if ($LASTEXITCODE -ne 0) { throw "uv could not install Reverie from $src" }
+if ($src) {
+  uv tool install --quiet --python 3.12 --force $src
+  if ($LASTEXITCODE -ne 0) { throw "uv could not install Reverie from $src" }
+} else {
+  uv tool install --quiet --python 3.12 --force reverie-mem 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "reverie-mem is not on PyPI yet and git is missing; install git, then run this again" }
+    uv tool install --quiet --python 3.12 --force $gitSrc
+    if ($LASTEXITCODE -ne 0) { throw "uv could not install Reverie from $gitSrc" }
+  }
+}
 
 $bin = (uv tool dir --bin).Trim()
 $exe = Join-Path $bin "reverie.exe"

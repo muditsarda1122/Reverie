@@ -3,7 +3,7 @@
 One-time setup (about five minutes, no token to store):
 1. Create an account at https://pypi.org and turn on two-factor authentication.
 2. Make the name yours **before** the first release: PyPI → Publishing → "Add a pending publisher" with
-   project `reverie`, owner `muditsarda1122`, repository `Reverie`, workflow `release.yml`, environment `pypi`.
+   project `reverie-mem`, owner `muditsarda1122`, repository `Reverie`, workflow `release.yml`, environment `pypi`.
 3. In the GitHub repo: Settings → Environments → New environment `pypi` (add yourself as a required reviewer if you want a manual gate).
 
 Each release:

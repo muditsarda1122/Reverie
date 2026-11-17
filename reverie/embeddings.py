@@ -210,7 +210,7 @@ class EmbeddingModel:
         except ImportError as exc:
             raise EmbeddingError(
                 "no embedding backend is installed. Install Reverie's dependencies "
-                "(pip install reverie) — embeddings are required for all operations."
+                "(pip install reverie-mem) — embeddings are required for all operations."
             ) from exc
         except Exception as exc:
             raise EmbeddingError(

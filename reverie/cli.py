@@ -611,11 +611,9 @@ def _extract_client(argv: list[str]) -> list[str] | None:
 
 
 def _version() -> str:
-    from importlib.metadata import PackageNotFoundError, version
-    try:
-        return version("reverie")
-    except PackageNotFoundError:
-        return "unknown (not installed as a package)"
+    from .launch import installed_dist
+    found = installed_dist()
+    return found[1] if found else "unknown (not installed as a package)"
 
 
 def _utf8_streams() -> None:

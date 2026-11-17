@@ -119,12 +119,15 @@ def _emit(removal: PlannedRemoval, home: Path, dry_run: bool, print_fn,
 def package_removal_command() -> str:
     """The exact command the user still has to run by hand, detecting a
     pipx/uv tools install where possible."""
-    prefix = sys.prefix
+    from .launch import installed_dist
+    found = installed_dist()
+    name = found[0] if found else DIST_NAME     # an install made before the rename keeps its old name
+    prefix = sys.prefix.replace("\\", "/")
     if "pipx" in prefix:
-        return f"pipx uninstall {DIST_NAME}"
+        return f"pipx uninstall {name}"
     if "uv/tools" in prefix or "uv-tool" in prefix:
-        return f"uv tool uninstall {DIST_NAME}"
-    return f"pip uninstall {DIST_NAME}"
+        return f"uv tool uninstall {name}"
+    return f"pip uninstall {name}"
 
 
 # ---------------------------------------------------------------------------

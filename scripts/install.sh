@@ -12,17 +12,18 @@
 # You then need one LLM API key in your environment (ANTHROPIC_API_KEY, OPENAI_API_KEY,
 # GEMINI_API_KEY, OPENROUTER_API_KEY or OPENCODE_ZEN_API_KEY). Reverie uses the one it finds.
 #
-# Environment overrides:  REVERIE_SRC  what to install (default: the GitHub main branch)
+# Environment overrides:  REVERIE_SRC  what to install (default: PyPI "reverie-mem", else the GitHub main branch)
 #                         REVERIE_REF  the git ref when installing from GitHub
 set -eu
 
 REF="${REVERIE_REF:-main}"
-SRC="${REVERIE_SRC:-git+https://github.com/muditsarda1122/Reverie.git@${REF}}"
+GIT_SRC="git+https://github.com/muditsarda1122/Reverie.git@${REF}"
+SRC="${REVERIE_SRC:-}"      # empty: PyPI package "reverie-mem" first, the GitHub branch as the fallback
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'reverie install: %s\n' "$*" >&2; exit 1; }
 
-command -v git >/dev/null 2>&1 || case "$SRC" in git+*) die "git is required to install from GitHub (install git, then run this again)";; esac
+case "$SRC" in git+*) command -v git >/dev/null 2>&1 || die "git is required to install from GitHub (install git, then run this again)";; esac
 
 if ! command -v uv >/dev/null 2>&1; then
   say "Installing uv (a fast Python installer) for your user..."
@@ -33,7 +34,12 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 say "Installing Reverie..."
-uv tool install --quiet --python 3.12 --force "$SRC" || die "uv could not install Reverie from $SRC"
+if [ -n "$SRC" ]; then
+  uv tool install --quiet --python 3.12 --force "$SRC" || die "uv could not install Reverie from $SRC"
+elif ! uv tool install --quiet --python 3.12 --force reverie-mem 2>/dev/null; then
+  command -v git >/dev/null 2>&1 || die "reverie-mem is not on PyPI yet and git is missing; install git, then run this again"
+  uv tool install --quiet --python 3.12 --force "$GIT_SRC" || die "uv could not install Reverie from $GIT_SRC"
+fi
 
 BIN="$(uv tool dir --bin 2>/dev/null || true)"
 [ -n "$BIN" ] && [ -x "$BIN/reverie" ] || BIN="$(dirname "$(command -v reverie 2>/dev/null || echo "$HOME/.local/bin/reverie")")"

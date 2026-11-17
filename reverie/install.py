@@ -506,7 +506,7 @@ def _provider_menu(input_fn, print_fn, environ) -> str | None:
 
 
 #: The distribution name importlib.metadata looks up (pyproject.toml).
-DIST_NAME = "reverie"
+DIST_NAME = "reverie-mem"
 #: Console script launching the MCP server (pyproject [project.scripts]).
 MCP_CONSOLE_SCRIPT = "reverie-mcp"
 #: The `reverie` console script binding this build expects (pyproject.toml).

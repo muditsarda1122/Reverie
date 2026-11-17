@@ -20,14 +20,28 @@ REVERIE_CLI_MODULE = "reverie.cli"
 HOOK_ARGS_TAIL = ["hook", "session-start"]
 
 
-def _is_pip_installed() -> bool:
-    """True when ``reverie`` is pip-installed (editable counts)."""
+#: The PyPI distribution name ("reverie" was taken, so the package is reverie-mem; the command is
+#: still `reverie`). Installs made before the rename used the old name, so both are looked up.
+DIST_NAMES = ("reverie-mem", "reverie")
+
+
+def installed_dist() -> tuple[str, str] | None:
+    """(distribution name, version) of the installed package, or None (not pip-installed)."""
     try:
         from importlib import metadata
-        metadata.version("reverie")
-        return True
-    except Exception:            # not installed / metadata unreadable
-        return False
+    except Exception:
+        return None
+    for name in DIST_NAMES:
+        try:
+            return name, metadata.version(name)
+        except Exception:        # not installed / metadata unreadable
+            continue
+    return None
+
+
+def _is_pip_installed() -> bool:
+    """True when Reverie is pip-installed (editable counts)."""
+    return installed_dist() is not None
 
 
 def _script_candidates(script: str, executable: str | None = None) -> list[Path]:
