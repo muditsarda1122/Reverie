@@ -26,7 +26,7 @@ It installs [`uv`](https://docs.astral.sh/uv/) for your user if you do not have 
 
 Then set **one** LLM API key in your environment (Anthropic, OpenAI, Gemini, OpenRouter or OpenCode Zen; Reverie uses the one it finds, see [Model providers](#model-providers)) and restart your agent. That is all. The key is what Reverie uses for its own extraction calls, so it works the same under every agent.
 
-**Platforms:** macOS and Linux. Windows is supported through WSL; native Windows is not tested yet.
+**Platforms:** macOS and Linux (tested on every change). On native Windows the installer (`scripts/install.ps1`) and the CLI run in CI, but 68 of our 1,443 tests still fail there, mostly path handling, so treat Windows as experimental and prefer WSL.
 
 Prefer to do it by hand? With Python 3.12 and git:
 
