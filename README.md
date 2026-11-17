@@ -10,6 +10,10 @@ Reverie is engineering memory for coding agents. It works across Claude Code, Co
 
 > **Status: early.** Reverie has been used on a small number of projects. Expect rough edges and tell us where it fails.
 
+## Why it was built
+
+A terminal crash interrupted a long session and the state was lost. Many memory tools load past notes into the prompt at the start of a session. In an informal test, that made the agent trust the notes over the code in front of it. Reverie retrieves on demand instead, and the agent is told to read the code first.
+
 ## Install
 
 One command (macOS and Linux; it needs `git` and `curl`, nothing else, because it brings its own Python):
@@ -162,7 +166,7 @@ Run `git pull` in your clone, then `pip install -e .` and `reverie install`. (A 
 
 ## Contributing
 
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup and ground rules, and read the [code of conduct](CODE_OF_CONDUCT.md). Reverie also includes a benchmark harness (`bench/`) that runs a real agent through sequential sessions on a target repository, with and without memory. It's published as a research tool, not as proof of an advantage.
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup and ground rules, and read the [code of conduct](CODE_OF_CONDUCT.md). Reverie also includes an evaluation harness (`bench/`) that runs a real agent through sequential sessions on a target repository, with and without memory. It's published as a research tool, not as proof of an advantage.
 
 ## License
 
